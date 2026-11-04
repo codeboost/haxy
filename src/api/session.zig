@@ -180,7 +180,8 @@ fn stringField(object: std.json.ObjectMap, name: []const u8) error{WrongType}![]
     };
 }
 
-fn isJson(content_type: []const u8) bool {
+/// whether a Content-Type names JSON, ignoring parameters such as charset
+pub fn isJson(content_type: []const u8) bool {
     const media_type = std.mem.trim(u8, content_type[0 .. std.mem.indexOfScalar(u8, content_type, ';') orelse content_type.len], " \t");
     return std.ascii.eqlIgnoreCase(media_type, "application/json");
 }
@@ -235,7 +236,7 @@ fn respondCurrent(io: std.Io, request: *std.http.Server.Request, allocator: std.
     const token = csrfToken(nonce);
     var cookie_buf: [128]u8 = undefined;
     const cookie = if (set_nonce) try std.fmt.bufPrint(&cookie_buf, csrf_cookie_fmt, .{nonce}) else null;
-    try respondSession(request, &arena, .{ .viewer = viewer, .csrf_token = &token }, &.{cookie});
+    try respondSession(request, &arena, .{ .viewer = viewer, .csrf_token = &token }, &.{cookie}, .ok);
 }
 
 fn login(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allocator, admin_repo_path: []const u8, session_store: web.SessionStore) !void {
@@ -274,29 +275,58 @@ fn login(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Alloc
         };
     }) orelse return api.respondError(request, allocator, .{ .code = .unauthenticated, .message = "Incorrect username or password." }, .{});
 
+    try respondLoggedIn(io, request, &arena, session_store, previous_token, user.id, user.name, .ok);
+}
+
+/// answers a request that logged `user_id` in (a login, or a registration):
+/// replaces the browser's previous session, if any, with a new one, and
+/// rotates the CSRF nonce. `previous_token` must be copied before the body
+/// read, which invalidates the request's headers.
+pub fn respondLoggedIn(
+    io: std.Io,
+    request: *std.http.Server.Request,
+    arena: *std.heap.ArenaAllocator,
+    session_store: web.SessionStore,
+    previous_token: ?[]const u8,
+    user_id: [evt.event_id_size]u8,
+    name: []const u8,
+    status: std.http.Status,
+) !void {
     // a login replaces any session this browser already had
     if (previous_token) |token| session_store.remove(token);
-    const session_token = try session_store.create(&user.id);
+    const session_token = try session_store.create(&user_id);
     const nonce = newNonce(io);
     const token = csrfToken(&nonce);
     var session_cookie_buf: [256]u8 = undefined;
     const session_cookie = try std.fmt.bufPrint(&session_cookie_buf, web.session_cookie_fmt, .{session_token});
     var nonce_cookie_buf: [128]u8 = undefined;
     const nonce_cookie = try std.fmt.bufPrint(&nonce_cookie_buf, csrf_cookie_fmt, .{nonce});
-    try respondSession(request, &arena, .{ .viewer = .{ .name = user.name }, .csrf_token = &token }, &.{ session_cookie, nonce_cookie });
+    try respondSession(request, arena, .{ .viewer = .{ .name = name }, .csrf_token = &token }, &.{ session_cookie, nonce_cookie }, status);
 }
 
 fn logout(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allocator, session_store: web.SessionStore) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    // revoke the session server-side so the cookie is dead for anyone
-    // holding a copy, as the web UI's logout does
-    if (web.getCookieValue(request, web.cookie_name)) |session_token| session_store.remove(session_token);
+    try respondLoggedOut(io, request, &arena, session_store, web.getCookieValue(request, web.cookie_name));
+}
+
+/// answers a request that ended the browser's session (a logout, or deleting
+/// the account): revokes `session_token`'s session server-side, so the cookie
+/// is dead for anyone holding a copy, clears the cookie and rotates the CSRF
+/// nonce.
+pub fn respondLoggedOut(
+    io: std.Io,
+    request: *std.http.Server.Request,
+    arena: *std.heap.ArenaAllocator,
+    session_store: web.SessionStore,
+    session_token: ?[]const u8,
+) !void {
+    if (session_token) |value| session_store.remove(value);
     const nonce = newNonce(io);
     const token = csrfToken(&nonce);
     var nonce_cookie_buf: [128]u8 = undefined;
     const nonce_cookie = try std.fmt.bufPrint(&nonce_cookie_buf, csrf_cookie_fmt, .{nonce});
-    try respondSession(request, &arena, .{ .viewer = null, .csrf_token = &token }, &.{ session_cookie_clear, nonce_cookie });
+    try respondSession(request, arena, .{ .viewer = null, .csrf_token = &token }, &.{ session_cookie_clear, nonce_cookie }, .ok);
 }
 
 fn readActiveUser(io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, admin_repo_path: []const u8, user_id: [evt.event_id_size]u8) !?evt.User.Record {
@@ -309,8 +339,8 @@ fn readActiveUser(io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.Are
     return try ui.activeUser(moment, arena, user_id);
 }
 
-fn respondSession(request: *std.http.Server.Request, arena: *std.heap.ArenaAllocator, body: Body, cookies: []const ?[]const u8) !void {
+fn respondSession(request: *std.http.Server.Request, arena: *std.heap.ArenaAllocator, body: Body, cookies: []const ?[]const u8, status: std.http.Status) !void {
     var out: std.Io.Writer.Allocating = .init(arena.allocator());
     try writeBody(&out.writer, body);
-    try api.respondJson(request, out.written(), .{ .set_cookies = cookies });
+    try api.respondJson(request, out.written(), .{ .set_cookies = cookies, .status = status });
 }

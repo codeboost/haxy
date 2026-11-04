@@ -5,6 +5,7 @@ const obj = xit.object;
 const hash = xit.hash;
 const evt = @import("./event.zig");
 const api = @import("./api.zig");
+const api_account = @import("./api/account.zig");
 const api_discovery = @import("./api/discovery.zig");
 const api_repo = @import("./api/repo.zig");
 const api_session = @import("./api/session.zig");
@@ -204,6 +205,13 @@ fn routeApiRequest(
     if (!try api_session.guardWrite(request, allocator)) return;
     if (std.mem.eql(u8, path, api_session.path))
         return api_session.handle(io, request, allocator, host);
+    if (api_account.route(path)) |route| {
+        const server: ?api_account.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .session_store = server.session_store },
+            .local => null,
+        };
+        return api_account.handle(io, request, allocator, server, route);
+    }
     if (api_discovery.route(path)) |route| {
         const server: ?api_discovery.Server = switch (host) {
             .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir },

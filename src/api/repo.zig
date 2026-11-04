@@ -152,7 +152,7 @@ pub fn handle(
 }
 
 // one message for missing and hidden repos alike
-const not_found_repo: api.Error = .{ .code = .not_found, .message = "There is no repository with this name." };
+pub const not_found_repo: api.Error = .{ .code = .not_found, .message = "There is no repository with this name." };
 
 const Overview = struct {
     // null in local mode, which has no accounts

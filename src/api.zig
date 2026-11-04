@@ -167,3 +167,35 @@ pub fn respondError(request: *std.http.Server.Request, allocator: std.mem.Alloca
     with_status.status = options.status orelse err.code.status();
     try respondJson(request, body.written(), with_status);
 }
+
+/// an instant as the API writes it: RFC 3339 in UTC with whole seconds and a
+/// `Z` suffix, e.g. "2026-11-04T14:03:00Z". haxy stores unix seconds.
+pub const Instant = struct {
+    seconds: u64,
+
+    pub const max_len = "YYYY-MM-DDTHH:MM:SSZ".len;
+    // 9999-12-31T23:59:59Z: a commit can claim any time, and RFC 3339 years
+    // have four digits
+    const latest = 253402300799;
+
+    /// `seconds` formatted into `buffer`, past the year 9999 as its last second
+    pub fn format(buffer: *[max_len]u8, seconds: u64) []const u8 {
+        const epoch: std.time.epoch.EpochSeconds = .{ .secs = @min(seconds, latest) };
+        const year_day = epoch.getEpochDay().calculateYearDay();
+        const month_day = year_day.calculateMonthDay();
+        const day = epoch.getDaySeconds();
+        return std.fmt.bufPrint(buffer, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+            year_day.year,
+            month_day.month.numeric(),
+            month_day.day_index + 1,
+            day.getHoursIntoDay(),
+            day.getMinutesIntoHour(),
+            day.getSecondsIntoMinute(),
+        }) catch unreachable;
+    }
+
+    pub fn jsonStringify(self: Instant, json: *std.json.Stringify) std.Io.Writer.Error!void {
+        var buffer: [max_len]u8 = undefined;
+        try json.write(format(&buffer, self.seconds));
+    }
+};

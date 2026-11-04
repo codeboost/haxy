@@ -701,10 +701,10 @@ pub fn init(
         }
     }
     const thread_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
-    var open_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, open_sets, open_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    var closed_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, closed_sets, closed_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    var merged_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, merged_sets, merged_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    var conflicts_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, if (conflict_set) |*set| set[0..1] else &.{}, conflicts_root, conflict_set, empty.selected_id, thread_comments_start, "", viewer);
+    var open_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, open_sets, open_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer, page_size);
+    var closed_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, closed_sets, closed_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer, page_size);
+    var merged_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, merged_sets, merged_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer, page_size);
+    var conflicts_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, if (conflict_set) |*set| set[0..1] else &.{}, conflicts_root, conflict_set, empty.selected_id, thread_comments_start, "", viewer, page_size);
     try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, session.users_dir, haxy_moment, repo, &open_window);
     try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, session.users_dir, haxy_moment, repo, &closed_window);
     try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, session.users_dir, haxy_moment, repo, &merged_window);

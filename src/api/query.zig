@@ -58,16 +58,22 @@ pub const Page = struct {
             page.start = parseCount(text) orelse
                 return .{ .invalid = invalid("cursor", "This cursor isn't one Haxy gave out; start from the first page.") };
         }
-        const size = param(arena, query, "page_size") catch |err| switch (err) {
+        page.limit = switch (try size(arena, query, limits)) {
+            .ok => |limit| limit,
+            .invalid => |err| return .{ .invalid = err },
+        };
+        return .{ .ok = page };
+    }
+
+    /// reads `page_size` alone, for a route whose cursor isn't an offset
+    pub fn size(arena: std.mem.Allocator, query: []const u8, limits: Limits) !union(enum) { ok: usize, invalid: api.Error } {
+        const text = param(arena, query, "page_size") catch |err| switch (err) {
             error.InvalidPercentEncoding => return .{ .invalid = invalid("page_size", "The page size must be a positive whole number.") },
             else => |e| return e,
-        };
-        if (size) |text| {
-            const value = parseCount(text) orelse 0;
-            if (value == 0) return .{ .invalid = invalid("page_size", "The page size must be a positive whole number.") };
-            page.limit = @min(value, limits.max);
-        }
-        return .{ .ok = page };
+        } orelse return .{ .ok = limits.default };
+        const value = parseCount(text) orelse 0;
+        if (value == 0) return .{ .invalid = invalid("page_size", "The page size must be a positive whole number.") };
+        return .{ .ok = @min(value, limits.max) };
     }
 
     /// the cursor for the page starting at `next_start`, or null without one

@@ -123,22 +123,35 @@ pub const RespondOptions = struct {
     status: ?std.http.Status = null,
     // the methods a route accepts, sent with a 405
     allow: ?[]const u8 = null,
+    // false closes the connection, e.g. when the request body goes unread
+    keep_alive: bool = true,
+    // set-cookie values; null entries are skipped
+    set_cookies: []const ?[]const u8 = &.{},
 };
 
 /// sends an already-encoded JSON body with the API's headers. API responses
 /// are viewer-specific, so they are never cached.
 pub fn respondJson(request: *std.http.Server.Request, body: []const u8, options: RespondOptions) !void {
-    var headers: [3]std.http.Header = .{
-        .{ .name = "content-type", .value = "application/json; charset=utf-8" },
-        .{ .name = "cache-control", .value = "no-store" },
-        undefined,
-    };
+    const max_cookies = 4;
+    std.debug.assert(options.set_cookies.len <= max_cookies);
+    var headers: [3 + max_cookies]std.http.Header = undefined;
+    headers[0] = .{ .name = "content-type", .value = "application/json; charset=utf-8" };
+    headers[1] = .{ .name = "cache-control", .value = "no-store" };
     var header_count: usize = 2;
     if (options.allow) |allow| {
-        headers[2] = .{ .name = "allow", .value = allow };
-        header_count = 3;
+        headers[header_count] = .{ .name = "allow", .value = allow };
+        header_count += 1;
     }
-    try request.respond(body, .{ .status = options.status orelse .ok, .extra_headers = headers[0..header_count] });
+    for (options.set_cookies) |cookie_maybe| if (cookie_maybe) |cookie| {
+        headers[header_count] = .{ .name = "set-cookie", .value = cookie };
+        header_count += 1;
+    };
+    // a client still waiting for "100 Continue" hasn't sent the body this
+    // response leaves unread. keeping the connection would make std try to
+    // discard that body, soliciting it with a still-buffered 100 Continue
+    // and waiting forever, so close instead.
+    const keep_alive = options.keep_alive and request.head.expect == null;
+    try request.respond(body, .{ .status = options.status orelse .ok, .keep_alive = keep_alive, .extra_headers = headers[0..header_count] });
 }
 
 /// sends an error envelope, with the code's conventional status unless overridden

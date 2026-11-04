@@ -5,6 +5,7 @@ const obj = xit.object;
 const hash = xit.hash;
 const evt = @import("./event.zig");
 const api = @import("./api.zig");
+const api_session = @import("./api/session.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
 const ui = @import("./ui.zig");
@@ -16,11 +17,11 @@ const wgt = xitui.widget;
 const Focus = xitui.focus.Focus;
 const Grid = xitui.grid.Grid;
 
-const cookie_name = "haxy_session";
+pub const cookie_name = "haxy_session";
 // the session cookie a login or a claimed auto-login sets; both must scope
 // it the same way. lax so links from other sites arrive logged in, and a
 // max-age (chrome's 400 day cap) so it outlives the browser.
-const session_cookie_fmt = cookie_name ++ "={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000";
+pub const session_cookie_fmt = cookie_name ++ "={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000";
 const form_flash_cookie = "haxy_form_flash";
 const local_flash_cookie = "haxy_local_flash";
 const local_required_title_prefix = "required_title:";
@@ -167,11 +168,35 @@ fn isApiTarget(target: []const u8) bool {
 
 // the JSON API under /api/. see api.zig for the shared response shapes.
 fn handleApiRequest(
+    io: std.Io,
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    host: Host,
+    path: []const u8,
+    error_writer: *std.Io.Writer,
+) void {
+    routeApiRequest(io, request, allocator, host, path) catch |err| {
+        // the details go to the log; the client gets the generic envelope,
+        // never the text/plain fallback. a failed write means the connection
+        // is gone, so there is no one to answer.
+        serve_common.logError(io, error_writer, "api request failed: {s} {s}: {s}\n", .{ @tagName(request.head.method), path, @errorName(err) });
+        if (err == error.WriteFailed) return;
+        api.respondError(request, allocator, .{ .code = .internal, .message = "Haxy couldn't complete this request. Try again later." }, .{ .keep_alive = false }) catch {};
+    };
+}
+
+fn routeApiRequest(
+    io: std.Io,
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     host: Host,
     path: []const u8,
 ) !void {
+    // every state-changing request passes the same-origin and CSRF check
+    // before routing, so no write route can skip it
+    if (!try api_session.guardWrite(request, allocator)) return;
+    if (std.mem.eql(u8, path, api_session.path))
+        return api_session.handle(io, request, allocator, host);
     if (!std.mem.eql(u8, path, "/api/v1/status"))
         return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{});
     const method = request.head.method;
@@ -192,14 +217,16 @@ fn handleRequest(
     error_writer: *std.Io.Writer,
 ) !void {
     const method = request.head.method;
-    const owned_target = if (method == .POST) try allocator.dupe(u8, request.head.target) else null;
+    // reading a body invalidates the head's strings, so a request that may
+    // carry one keeps its own copy of the target
+    const owned_target = if (method != .GET and method != .HEAD) try allocator.dupe(u8, request.head.target) else null;
     defer if (owned_target) |target| allocator.free(target);
     const uri = try std.Uri.parseAfterScheme("", owned_target orelse request.head.target);
     const path = uri.path.percent_encoded;
 
     // Reserve the API namespace before matching page/form routes.
     if (isApiPath(path))
-        return handleApiRequest(request, allocator, host, path);
+        return handleApiRequest(io, request, allocator, host, path, error_writer);
 
     // POST routes can be scoped by any page, so they can redirect using
     // the base of the URL. this allows logging in to keep you on the page
@@ -653,7 +680,7 @@ fn mayRead(
 }
 
 // the logged-in user the request's session cookie names
-fn requestUserId(request: *std.http.Server.Request, session_store: SessionStore) ?[evt.event_id_size]u8 {
+pub fn requestUserId(request: *std.http.Server.Request, session_store: SessionStore) ?[evt.event_id_size]u8 {
     const token = getCookieValue(request, cookie_name) orelse return null;
     var user_id: [evt.event_id_size]u8 = undefined;
     return if (session_store.lookup(token, &user_id)) user_id else null;
@@ -3081,7 +3108,7 @@ fn appendEscapedHtml(allocator: std.mem.Allocator, out: *std.ArrayList(u8), inpu
 
 // --- helpers --------------------------------------------------------------
 
-fn getCookieValue(request: *std.http.Server.Request, name: []const u8) ?[]const u8 {
+pub fn getCookieValue(request: *std.http.Server.Request, name: []const u8) ?[]const u8 {
     var iter = request.iterateHeaders();
     while (iter.next()) |header| {
         if (!std.ascii.eqlIgnoreCase(header.name, "cookie")) continue;

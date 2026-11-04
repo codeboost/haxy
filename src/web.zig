@@ -5,6 +5,7 @@ const obj = xit.object;
 const hash = xit.hash;
 const evt = @import("./event.zig");
 const api = @import("./api.zig");
+const api_discovery = @import("./api/discovery.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
 const ui = @import("./ui.zig");
@@ -167,11 +168,21 @@ fn isApiTarget(target: []const u8) bool {
 
 // the JSON API under /api/. see api.zig for the shared response shapes.
 fn handleApiRequest(
+    io: std.Io,
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     host: Host,
     path: []const u8,
+    // the still-encoded query string, "" when absent
+    query: []const u8,
 ) !void {
+    if (api_discovery.route(path)) |route| {
+        const server: ?api_discovery.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir },
+            .local => null,
+        };
+        return api_discovery.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
     if (!std.mem.eql(u8, path, "/api/v1/status"))
         return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{});
     const method = request.head.method;
@@ -182,6 +193,18 @@ fn handleApiRequest(
     defer body.deinit();
     try api.writeStatus(&body.writer, host);
     return api.respondJson(request, body.written(), .{});
+}
+
+// the viewer an API request's session cookie names, or null when anonymous.
+// unlike page loads, API reads never claim a seeded auto-login.
+fn apiViewerId(request: *std.http.Server.Request, host: Host) ?[evt.event_id_size]u8 {
+    const server = switch (host) {
+        .server => |server| server,
+        .local => return null,
+    };
+    const token = getCookieValue(request, cookie_name) orelse return null;
+    var user_id: [evt.event_id_size]u8 = undefined;
+    return if (server.session_store.lookup(token, &user_id)) user_id else null;
 }
 
 fn handleRequest(
@@ -199,7 +222,7 @@ fn handleRequest(
 
     // Reserve the API namespace before matching page/form routes.
     if (isApiPath(path))
-        return handleApiRequest(request, allocator, host, path);
+        return handleApiRequest(io, request, allocator, host, path, if (uri.query) |query| query.percent_encoded else "");
 
     // POST routes can be scoped by any page, so they can redirect using
     // the base of the URL. this allows logging in to keep you on the page

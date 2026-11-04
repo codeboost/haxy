@@ -1,5 +1,6 @@
 comptime {
     _ = @import("test/api.zig");
+    _ = @import("test/api_discovery.zig");
     _ = @import("test/event.zig");
     _ = @import("test/event/admin.zig");
     _ = @import("test/event/notify.zig");

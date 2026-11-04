@@ -13,6 +13,7 @@ const ui = @import("./ui.zig");
 const fork = @import("./fork.zig");
 const pch = @import("./patch.zig");
 const notify = @import("./notify.zig");
+const same_origin = @import("./origin.zig");
 const xitui = xit.xitui;
 const wgt = xitui.widget;
 const Focus = xitui.focus.Focus;
@@ -251,6 +252,10 @@ fn handleRequest(
     // Reserve the API namespace before matching page/form routes.
     if (isApiPath(path))
         return handleApiRequest(io, request, allocator, host, path, if (uri.query) |query| query.percent_encoded else "", error_writer);
+
+    // every other state-changing request must come from this host's own
+    // pages, checked before any form route is matched
+    if (!try same_origin.guardForm(request)) return;
 
     // POST routes can be scoped by any page, so they can redirect using
     // the base of the URL. this allows logging in to keep you on the page

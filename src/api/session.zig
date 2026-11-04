@@ -11,6 +11,7 @@ const xit = @import("xit");
 const rp = xit.repo;
 const api = @import("../api.zig");
 const evt = @import("../event.zig");
+const same_origin = @import("../origin.zig");
 const ui = @import("../ui.zig");
 const web = @import("../web.zig");
 
@@ -63,34 +64,13 @@ pub const WriteCheck = enum { allowed, foreign_origin, missing_token, bad_token 
 /// be this host's own, and the token must be the one bound to the request's
 /// nonce cookie.
 pub fn checkWrite(input: WriteInput) WriteCheck {
-    if (input.origin) |origin| if (!sameOrigin(origin, input.host)) return .foreign_origin;
+    if (input.origin) |origin| if (!same_origin.sameOrigin(origin, input.host)) return .foreign_origin;
     const token = input.token orelse return .missing_token;
     if (token.len == 0) return .missing_token;
     const nonce = input.nonce orelse return .bad_token;
     if (!isNonce(nonce) or token.len != token_hex_len) return .bad_token;
     const expected = csrfToken(nonce);
     return if (std.crypto.timing_safe.eql([token_hex_len]u8, expected, token[0..token_hex_len].*)) .allowed else .bad_token;
-}
-
-// whether `origin` (scheme://host[:port]) names the server `host` (the Host
-// header) addresses. a default port matches its absence for its own scheme.
-fn sameOrigin(origin: []const u8, host_maybe: ?[]const u8) bool {
-    const host = host_maybe orelse return false;
-    const separator = std.mem.indexOf(u8, origin, "://") orelse return false;
-    const scheme = origin[0..separator];
-    const default_port = if (std.ascii.eqlIgnoreCase(scheme, "http"))
-        ":80"
-    else if (std.ascii.eqlIgnoreCase(scheme, "https"))
-        ":443"
-    else
-        return false;
-    const authority = origin[separator + 3 ..];
-    if (authority.len == 0 or std.mem.indexOfAny(u8, authority, "/?#@") != null) return false;
-    return std.ascii.eqlIgnoreCase(withoutPort(authority, default_port), withoutPort(host, default_port));
-}
-
-fn withoutPort(authority: []const u8, default_port: []const u8) []const u8 {
-    return if (std.mem.endsWith(u8, authority, default_port)) authority[0 .. authority.len - default_port.len] else authority;
 }
 
 fn isNonce(value: []const u8) bool {

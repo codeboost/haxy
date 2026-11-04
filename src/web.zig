@@ -26,6 +26,8 @@ pub const cookie_name = "haxy_session";
 // it the same way. lax so links from other sites arrive logged in, and a
 // max-age (chrome's 400 day cap) so it outlives the browser.
 pub const session_cookie_fmt = cookie_name ++ "={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000";
+// the header that ends a browser's session, on logout and account deletion
+pub const session_cookie_clear = cookie_name ++ "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
 const form_flash_cookie = "haxy_form_flash";
 const local_flash_cookie = "haxy_local_flash";
 const local_required_title_prefix = "required_title:";
@@ -202,7 +204,7 @@ fn routeApiRequest(
 ) !void {
     // every state-changing request passes the same-origin and CSRF check
     // before routing, so no write route can skip it
-    if (!try api_session.guardWrite(request, allocator)) return;
+    if (!try api_session.guardWrite(io, request, allocator, host)) return;
     if (std.mem.eql(u8, path, api_session.path))
         return api_session.handle(io, request, allocator, host);
     if (api_account.route(path)) |route| {
@@ -287,7 +289,7 @@ fn handleRequest(
                         const base = path[0 .. path.len - suffix.len];
                         return switch (@field(PostRoute, name)) {
                             .login => handleLogin(io, request, allocator, base, server.admin_repo_path, server.session_store),
-                            .logout => handleLogout(request, allocator, base, server.session_store),
+                            .logout => handleLogout(io, request, allocator, base, server.session_store),
                             .@"repo/new" => handleRepoNew(io, request, allocator, path, server.admin_repo_path, server.users_dir, server.session_store),
                             .@"user/new" => handleUserNew(io, request, allocator, path, server.admin_repo_path, server.users_dir, server.session_store, error_writer),
                             .user => handleUserSettings(io, request, allocator, base, server.admin_repo_path, server.users_dir, server.session_store),
@@ -413,9 +415,10 @@ fn handleRequest(
         var sync_failure: ?[]const u8 = null;
         var sync_failure_allocated: ?[]u8 = null;
         defer if (sync_failure_allocated) |value| allocator.free(value);
-        // backs the cookie a claimed auto-login sets
+        // backs the cookies a claimed auto-login sets
         var cookie_buf: [256]u8 = undefined;
         var session_cookie: ?[]const u8 = null;
+        var auto_login_nonce: ?api_session.CsrfNonce = null;
         switch (host) {
             .server => |server| {
                 user_id = blk: {
@@ -428,6 +431,8 @@ fn handleRequest(
                 if (user_id == null) {
                     if (server.session_store.autoLogin(&token_buf) and server.session_store.lookup(&token_buf, &user_id_buf)) {
                         session_cookie = try std.fmt.bufPrint(&cookie_buf, session_cookie_fmt, .{token_buf});
+                        // claiming it starts a session, as a login does
+                        auto_login_nonce = api_session.CsrfNonce.rotate(io);
                         session_token = &token_buf;
                         user_id = user_id_buf[0..evt.event_id_size];
                     }
@@ -494,12 +499,13 @@ fn handleRequest(
         else
             null;
         defer if (expired_form_cookie) |cookie| allocator.free(cookie);
-        var header_buf: [4]std.http.Header = undefined;
+        var header_buf: [5]std.http.Header = undefined;
         var headers: std.ArrayList(std.http.Header) = .initBuffer(&header_buf);
         headers.appendAssumeCapacity(.{ .name = "content-type", .value = "text/html; charset=utf-8" });
         if (expired_form_cookie) |cookie| headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = cookie });
         if (local_flash_seen) headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = local_flash_cookie ++ "=; Path=/; Max-Age=0" });
         if (session_cookie) |cookie| headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = cookie });
+        if (auto_login_nonce) |*nonce| headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = nonce.setCookie() });
         try request.respond(html, .{
             .status = if (session_data.current_page == .not_found) .not_found else .ok,
             .extra_headers = headers.items,
@@ -543,11 +549,14 @@ fn handleLogin(
             const token = try session_store.create(&user_id);
             var cookie_buf: [256]u8 = undefined;
             const cookie = try std.fmt.bufPrint(&cookie_buf, session_cookie_fmt, .{token});
+            // a token issued under the previous session must stop passing
+            const nonce = api_session.CsrfNonce.rotate(io);
             try request.respond("", .{
                 .status = .see_other,
                 .extra_headers = &.{
                     .{ .name = "location", .value = success_location },
                     .{ .name = "set-cookie", .value = cookie },
+                    .{ .name = "set-cookie", .value = nonce.setCookie() },
                 },
             });
         },
@@ -636,7 +645,7 @@ fn userTabPageRoot(arena: *std.heap.ArenaAllocator, base: []const u8) ![]const u
     return route.pageRoot().toUrl(arena);
 }
 
-fn handleLogout(request: *std.http.Server.Request, allocator: std.mem.Allocator, base: []const u8, session_store: SessionStore) !void {
+fn handleLogout(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allocator, base: []const u8, session_store: SessionStore) !void {
     // revoke the session server-side so the cookie is dead for anyone holding
     // a copy, not just this browser.
     if (getCookieValue(request, cookie_name)) |token| session_store.remove(token);
@@ -649,12 +658,15 @@ fn handleLogout(request: *std.http.Server.Request, allocator: std.mem.Allocator,
     // discard it — which asserts on a bodyless POST that carries no
     // content-length, and would block on one with no framing at all. a logout
     // is just a redirect, so the browser reconnects for the follow-up GET.
+    // a token issued under the ended session must stop passing.
+    const nonce = api_session.CsrfNonce.rotate(io);
     try request.respond("", .{
         .status = .see_other,
         .keep_alive = false,
         .extra_headers = &.{
             .{ .name = "location", .value = location },
-            .{ .name = "set-cookie", .value = cookie_name ++ "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" },
+            .{ .name = "set-cookie", .value = session_cookie_clear },
+            .{ .name = "set-cookie", .value = nonce.setCookie() },
         },
     });
 }
@@ -1022,6 +1034,8 @@ fn handleUserNew(
     const token = try session_store.create(&user_id);
     var cookie_buf: [256]u8 = undefined;
     const cookie = try std.fmt.bufPrint(&cookie_buf, session_cookie_fmt, .{token});
+    // signing up logs in: a token issued before must stop passing
+    const nonce = api_session.CsrfNonce.rotate(io);
     const location = try allocator.print("/{s}", .{name});
     defer allocator.free(location);
     try request.respond("", .{
@@ -1029,6 +1043,7 @@ fn handleUserNew(
         .extra_headers = &.{
             .{ .name = "location", .value = location },
             .{ .name = "set-cookie", .value = cookie },
+            .{ .name = "set-cookie", .value = nonce.setCookie() },
         },
     });
 }
@@ -1183,12 +1198,14 @@ fn handleDelete(io: std.Io, request: *std.http.Server.Request, allocator: std.me
         // log the deleted user out, as a logout does
         .user => {
             if (token) |value| server.session_store.remove(value);
+            const nonce = api_session.CsrfNonce.rotate(io);
             try request.respond("", .{
                 .status = .see_other,
                 .keep_alive = false,
                 .extra_headers = &.{
                     .{ .name = "location", .value = "/" },
-                    .{ .name = "set-cookie", .value = cookie_name ++ "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" },
+                    .{ .name = "set-cookie", .value = session_cookie_clear },
+                    .{ .name = "set-cookie", .value = nonce.setCookie() },
                 },
             });
         },

@@ -4,7 +4,9 @@
 //! and call the operations the TUI and the web forms use (evt.createUser,
 //! evt.updateUser, evt.addUserKey, evt.removeUserKey, ui.Delete.perform), so
 //! their rules live in one place. a local host has no accounts, so every
-//! route answers `unsupported` there.
+//! route answers `unsupported` there. a change naming someone other than the
+//! session's viewer in `X-Haxy-Viewer` never gets here: api/session.zig's
+//! guardWrite refuses it for every write.
 
 const std = @import("std");
 const xit = @import("xit");
@@ -109,25 +111,6 @@ pub fn parseBody(comptime T: type, arena: std.mem.Allocator, content_type: ?[]co
         };
     }
     return .{ .ok = result };
-}
-
-// --- the viewer a change is for ---------------------------------------------
-
-/// the optional request header a change to an existing account may name
-/// that account's user in. the session cookie is shared by every tab, so
-/// another tab may have logged in as someone else since a form was loaded;
-/// the CSRF token is bound to the browser, not the session, so it can't tell.
-/// naming the intended user makes such a change fail instead of landing on
-/// the wrong account. Haxy Hub always sends it; other clients needn't.
-pub const viewer_header = "x-haxy-viewer";
-
-/// whether a change naming `expected` (the viewer_header, null when absent)
-/// may act on the session's viewer `actual`: refused only when it names
-/// someone else
-pub fn checkViewer(expected: ?[]const u8, actual: []const u8) ?api.Error {
-    const name = expected orelse return null;
-    if (std.mem.eql(u8, name, actual)) return null;
-    return .{ .code = .conflict, .message = "You're signed in as a different user now, so this change wasn't made. Reload to continue." };
 }
 
 // --- errors -----------------------------------------------------------------
@@ -310,20 +293,6 @@ fn viewerAccount(io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.Aren
     return .{ .id = user_id, .record = record };
 }
 
-// answers a change that isn't for the session's viewer `name` and returns
-// false; must run before the body read, which invalidates the headers
-fn guardViewer(request: *std.http.Server.Request, allocator: std.mem.Allocator, name: []const u8) !bool {
-    var expected: ?[]const u8 = null;
-    var iter = request.iterateHeaders();
-    while (iter.next()) |header| {
-        if (std.ascii.eqlIgnoreCase(header.name, viewer_header)) expected = header.value;
-    }
-    const err = checkViewer(expected, name) orelse return true;
-    // the body goes unread, so the connection closes
-    try api.respondError(request, allocator, err, .{ .keep_alive = false });
-    return false;
-}
-
 fn respondUnauthenticated(request: *std.http.Server.Request, allocator: std.mem.Allocator) !void {
     return api.respondError(request, allocator, .{ .code = .unauthenticated, .message = "Log in to manage your account." }, .{ .keep_alive = false });
 }
@@ -392,7 +361,6 @@ fn updateViewer(io: std.Io, request: *std.http.Server.Request, allocator: std.me
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const viewer = (try viewerAccount(io, allocator, &arena, server, request)) orelse return respondUnauthenticated(request, allocator);
-    if (!try guardViewer(request, allocator, viewer.record.event.name)) return;
     const fields = (try readBody(T, request, allocator, &arena)) orelse return;
     const email: ?[]const u8, const passwords = switch (T) {
         EmailChange => .{ fields.email, PasswordChange{ .current_password = "", .new_password = "", .new_password_again = "" } },
@@ -453,7 +421,6 @@ fn addKey(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allo
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const viewer = (try viewerAccount(io, allocator, &arena, server, request)) orelse return respondUnauthenticated(request, allocator);
-    if (!try guardViewer(request, allocator, viewer.record.event.name)) return;
     const fields = (try readBody(KeyAddition, request, allocator, &arena)) orelse return;
     {
         var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
@@ -489,7 +456,6 @@ fn removeKey(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.A
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const viewer = (try viewerAccount(io, allocator, &arena, server, request)) orelse return respondUnauthenticated(request, allocator);
-    if (!try guardViewer(request, allocator, viewer.record.event.name)) return;
     const not_found: api.Error = .{ .code = .not_found, .message = "You have no SSH key with that fingerprint." };
     const decoded = std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, encoded));
     if (decoded.len != evt.User.fingerprint_len) return api.respondError(request, allocator, not_found, .{});
@@ -522,7 +488,6 @@ fn deleteAccount(io: std.Io, request: *std.http.Server.Request, allocator: std.m
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const viewer = (try viewerAccount(io, allocator, &arena, server, request)) orelse return respondUnauthenticated(request, allocator);
-    if (!try guardViewer(request, allocator, viewer.record.event.name)) return;
     // copied before the body read, which invalidates the request's headers
     const session_token = if (web.getCookieValue(request, web.cookie_name)) |value| try arena.allocator().dupe(u8, value) else null;
     const fields = (try readBody(Deletion, request, allocator, &arena)) orelse return;

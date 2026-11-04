@@ -23,12 +23,12 @@ pub const path = "/api/v1/session";
 pub const csrf_header = "x-haxy-csrf";
 
 /// the HttpOnly cookie holding the random nonce a browser's CSRF token is
-/// bound to. it is rotated on login and logout.
+/// bound to. it is rotated whenever a session starts, changes or ends (see
+/// CsrfNonce).
 pub const csrf_cookie = "haxy_csrf";
 // strict, so no cross-site request carries it; the same lifetime as the
 // session cookie so a remembered session keeps a working token.
 const csrf_cookie_fmt = csrf_cookie ++ "={s}; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000";
-const session_cookie_clear = web.cookie_name ++ "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
 
 const nonce_size = 16;
 pub const nonce_hex_len = nonce_size * 2;
@@ -85,10 +85,66 @@ fn newNonce(io: std.Io) [nonce_hex_len]u8 {
     return std.fmt.bytesToHex(bytes, .lower);
 }
 
+/// a browser's CSRF nonce together with the Set-Cookie header that stores it.
+/// every response that starts, replaces or ends a session — the API's login,
+/// logout, registration and account deletion, and the HTML forms' login,
+/// logout, sign-up, account deletion and the `try` demo's auto-login — sets a
+/// rotated one, so a token issued under the previous session stops passing
+/// checkWrite and a stale tab can't write as whoever is signed in now.
+pub const CsrfNonce = struct {
+    value: [nonce_hex_len]u8,
+    set_cookie: [set_cookie_len]u8,
+
+    // the format names the nonce once, as "{s}"
+    const set_cookie_len = csrf_cookie_fmt.len - "{s}".len + nonce_hex_len;
+
+    /// a fresh random nonce, replacing whatever the browser held
+    pub fn rotate(io: std.Io) CsrfNonce {
+        return of(newNonce(io));
+    }
+
+    fn of(value: [nonce_hex_len]u8) CsrfNonce {
+        var nonce: CsrfNonce = .{ .value = value, .set_cookie = undefined };
+        _ = std.fmt.bufPrint(&nonce.set_cookie, csrf_cookie_fmt, .{&value}) catch unreachable;
+        return nonce;
+    }
+
+    /// the token a write must carry while the browser holds this nonce
+    pub fn token(self: *const CsrfNonce) [token_hex_len]u8 {
+        return csrfToken(&self.value);
+    }
+
+    /// the Set-Cookie header value that stores this nonce
+    pub fn setCookie(self: *const CsrfNonce) []const u8 {
+        return &self.set_cookie;
+    }
+};
+
+/// the optional request header a write may name the user it is for in: the
+/// viewer the page or form was loaded for. the session cookie is shared by
+/// every tab, so another tab may have signed in as someone else since; the
+/// CSRF token is bound to the browser, not the session, so it alone can't
+/// tell (rotation on every session change makes the old token fail, but the
+/// client's retry fetches a fresh one). naming the intended user makes such a
+/// write fail instead of landing on the wrong account. Haxy Hub sends it on
+/// every write made while someone is signed in; other clients needn't.
+pub const viewer_header = "x-haxy-viewer";
+
+/// whether a write naming `expected` (the viewer_header, null when absent)
+/// may act for the session's viewer `actual` (null when nobody is signed
+/// in): refused only when it names someone who isn't signed in now
+pub fn checkViewer(expected: ?[]const u8, actual: ?[]const u8) ?api.Error {
+    const name = expected orelse return null;
+    const current = actual orelse return .{ .code = .unauthenticated, .message = "You're signed out now, so this change wasn't made. Log in to continue." };
+    if (std.mem.eql(u8, name, current)) return null;
+    return .{ .code = .conflict, .message = "You're signed in as a different user now, so this change wasn't made. Reload to continue." };
+}
+
 /// the shared middleware: every /api/ request other than GET and HEAD must
-/// pass checkWrite before it is routed, so later write routes are covered
-/// without opting in. returns false once the refusal has been sent.
-pub fn guardWrite(request: *std.http.Server.Request, allocator: std.mem.Allocator) !bool {
+/// pass checkWrite, then checkViewer, before it is routed, so later write
+/// routes are covered without opting in. returns false once the refusal has
+/// been sent.
+pub fn guardWrite(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allocator, host: web.Host) !bool {
     const method = request.head.method;
     if (method == .GET or method == .HEAD) return true;
     const check = checkWrite(.{
@@ -98,12 +154,33 @@ pub fn guardWrite(request: *std.http.Server.Request, allocator: std.mem.Allocato
         .nonce = web.getCookieValue(request, csrf_cookie),
     });
     const message = switch (check) {
-        .allowed => return true,
+        .allowed => return guardViewer(io, request, allocator, host),
         .foreign_origin => "Haxy only accepts changes sent from its own site.",
         .missing_token, .bad_token => "This request has no valid CSRF token. Reload the page and try again.",
     };
     // the body goes unread, so the connection closes
     try api.respondError(request, allocator, .{ .code = .csrf, .message = message }, .{ .keep_alive = false });
+    return false;
+}
+
+// refuses a write naming, in the viewer_header, someone other than the
+// session's viewer. the session is only read when the header is present.
+fn guardViewer(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allocator, host: web.Host) !bool {
+    const expected = findHeader(request, viewer_header) orelse return true;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const actual: ?[]const u8 = switch (host) {
+        // local mode has no accounts, so nobody is ever signed in
+        .local => null,
+        .server => |server| blk: {
+            const user_id = web.requestUserId(request, server.session_store) orelse break :blk null;
+            const user = (try readActiveUser(io, allocator, &arena, server.admin_repo_path, user_id)) orelse break :blk null;
+            break :blk user.event.name;
+        },
+    };
+    const err = checkViewer(expected, actual) orelse return true;
+    // the body goes unread, so the connection closes
+    try api.respondError(request, allocator, err, .{ .keep_alive = false });
     return false;
 }
 
@@ -213,14 +290,10 @@ fn respondCurrent(io: std.Io, request: *std.http.Server.Request, allocator: std.
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    // a browser keeps its nonce until login or logout rotates it
+    // a browser keeps its nonce until a session change rotates it
     const existing = web.getCookieValue(request, csrf_cookie);
-    var fresh: [nonce_hex_len]u8 = undefined;
-    const nonce: []const u8 = if (existing != null and isNonce(existing.?)) existing.? else blk: {
-        fresh = newNonce(io);
-        break :blk &fresh;
-    };
-    const set_nonce = nonce.ptr == &fresh;
+    const issued: ?CsrfNonce = if (existing != null and isNonce(existing.?)) null else CsrfNonce.rotate(io);
+    const nonce: []const u8 = if (issued) |*value| &value.value else existing.?;
 
     const viewer: ?Viewer = switch (host) {
         .local => null,
@@ -234,8 +307,7 @@ fn respondCurrent(io: std.Io, request: *std.http.Server.Request, allocator: std.
     };
 
     const token = csrfToken(nonce);
-    var cookie_buf: [128]u8 = undefined;
-    const cookie = if (set_nonce) try std.fmt.bufPrint(&cookie_buf, csrf_cookie_fmt, .{nonce}) else null;
+    const cookie: ?[]const u8 = if (issued) |*value| value.setCookie() else null;
     try respondSession(request, &arena, .{ .viewer = viewer, .csrf_token = &token }, &.{cookie}, .ok);
 }
 
@@ -295,13 +367,11 @@ pub fn respondLoggedIn(
     // a login replaces any session this browser already had
     if (previous_token) |token| session_store.remove(token);
     const session_token = try session_store.create(&user_id);
-    const nonce = newNonce(io);
-    const token = csrfToken(&nonce);
+    const nonce = CsrfNonce.rotate(io);
+    const token = nonce.token();
     var session_cookie_buf: [256]u8 = undefined;
     const session_cookie = try std.fmt.bufPrint(&session_cookie_buf, web.session_cookie_fmt, .{session_token});
-    var nonce_cookie_buf: [128]u8 = undefined;
-    const nonce_cookie = try std.fmt.bufPrint(&nonce_cookie_buf, csrf_cookie_fmt, .{nonce});
-    try respondSession(request, arena, .{ .viewer = .{ .name = name }, .csrf_token = &token }, &.{ session_cookie, nonce_cookie }, status);
+    try respondSession(request, arena, .{ .viewer = .{ .name = name }, .csrf_token = &token }, &.{ session_cookie, nonce.setCookie() }, status);
 }
 
 fn logout(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allocator, session_store: web.SessionStore) !void {
@@ -322,11 +392,9 @@ pub fn respondLoggedOut(
     session_token: ?[]const u8,
 ) !void {
     if (session_token) |value| session_store.remove(value);
-    const nonce = newNonce(io);
-    const token = csrfToken(&nonce);
-    var nonce_cookie_buf: [128]u8 = undefined;
-    const nonce_cookie = try std.fmt.bufPrint(&nonce_cookie_buf, csrf_cookie_fmt, .{nonce});
-    try respondSession(request, arena, .{ .viewer = null, .csrf_token = &token }, &.{ session_cookie_clear, nonce_cookie }, .ok);
+    const nonce = CsrfNonce.rotate(io);
+    const token = nonce.token();
+    try respondSession(request, arena, .{ .viewer = null, .csrf_token = &token }, &.{ web.session_cookie_clear, nonce.setCookie() }, .ok);
 }
 
 fn readActiveUser(io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, admin_repo_path: []const u8, user_id: [evt.event_id_size]u8) !?evt.User.Record {

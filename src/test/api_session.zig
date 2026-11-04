@@ -101,6 +101,44 @@ test "a write with no Host header is rejected when it names an Origin" {
     try std.testing.expectEqual(session.WriteCheck.foreign_origin, session.checkWrite(.{ .origin = "http://127.0.0.1:5173", .host = null, .token = &token, .nonce = nonce_a }));
 }
 
+test "a rotated nonce refuses every token issued before it" {
+    const io = std.testing.io;
+    const before = session.csrfToken(nonce_a);
+    const rotated = session.CsrfNonce.rotate(io);
+    // the token issued under the previous session no longer passes
+    try std.testing.expectEqual(session.WriteCheck.bad_token, session.checkWrite(.{ .origin = null, .host = "haxy.test", .token = &before, .nonce = &rotated.value }));
+    // the one issued with the new nonce does
+    const after = rotated.token();
+    try std.testing.expectEqual(session.WriteCheck.allowed, session.checkWrite(.{ .origin = null, .host = "haxy.test", .token = &after, .nonce = &rotated.value }));
+    // each rotation is fresh
+    const again = session.CsrfNonce.rotate(io);
+    try std.testing.expect(!std.mem.eql(u8, &rotated.value, &again.value));
+}
+
+test "a rotated nonce replaces the browser's cookie, HttpOnly and same-site only" {
+    const rotated = session.CsrfNonce.rotate(std.testing.io);
+    var expected_buf: [256]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf, "haxy_csrf={s}; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000", .{rotated.value});
+    try std.testing.expectEqualStrings(expected, rotated.setCookie());
+}
+
+test "a write naming a viewer is refused for anyone else, and one naming nobody proceeds" {
+    // optional: a non-browser client needn't name the viewer
+    try std.testing.expectEqual(null, session.checkViewer(null, "alice"));
+    try std.testing.expectEqual(null, session.checkViewer(null, null));
+    try std.testing.expectEqual(null, session.checkViewer("alice", "alice"));
+    // another viewer signed in since the form loaded (e.g. in another tab)
+    const switched = session.checkViewer("alice", "bobby").?;
+    try std.testing.expectEqual(api.ErrorCode.conflict, switched.code);
+    try std.testing.expectEqual(0, switched.field_errors.len);
+    // names compare exactly
+    try std.testing.expectEqual(api.ErrorCode.conflict, session.checkViewer("Alice", "alice").?.code);
+    // nobody is signed in now (logged out elsewhere, or the account was deleted)
+    const signed_out = session.checkViewer("alice", null).?;
+    try std.testing.expectEqual(api.ErrorCode.unauthenticated, signed_out.code);
+    try std.testing.expectEqual(0, signed_out.field_errors.len);
+}
+
 fn expectLoginInvalid(content_type: ?[]const u8, body: []const u8, expected_fields: []const api.FieldError) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

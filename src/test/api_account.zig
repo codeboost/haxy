@@ -152,16 +152,6 @@ test "each account deletion failure is reported beside its field" {
     try std.testing.expectEqualStrings("password", wrong_password.field_errors[0].field);
 }
 
-test "an account change naming a viewer is refused for anyone else, and one naming nobody proceeds" {
-    // optional: a non-browser client needn't name the viewer
-    try std.testing.expectEqual(null, account.checkViewer(null, "alice"));
-    // another viewer signed in since the form loaded (e.g. in another tab)
-    const switched = account.checkViewer("alice", "bobby").?;
-    try std.testing.expectEqual(api.ErrorCode.conflict, switched.code);
-    try std.testing.expectEqual(0, switched.field_errors.len);
-    try std.testing.expectEqual(null, account.checkViewer("alice", "alice"));
-}
-
 test "a password change leaves an email changed meanwhile alone" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;

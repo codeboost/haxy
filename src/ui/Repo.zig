@@ -58,9 +58,6 @@ pub fn init(
     session: *ui.Session,
     route: ui.RoutablePage,
 ) !Self {
-    const DB = evt.AdminDB;
-    const hash_kind = evt.admin_repo_opts.hash;
-
     // every repo route stores its identity as "owner:name" (or elides it in local mode)
     const name_str = route.repoIdentity() orelse return error.UnexpectedRoute;
     const repo_identity = ui.RoutablePage.RepoIdentity.parse(name_str) orelse return error.NotFound;
@@ -225,66 +222,20 @@ pub fn init(
         else => "",
     };
 
-    // where the on-disk repo lives (null keeps the views' empty fallback), plus
-    // the repo and owner-name metadata the header shows. local mode already
-    // knows all three; the server paths resolve them from the admin db.
-    var source: ?ui.RepoSource = null;
-    var repo_id_maybe: ?[evt.event_id_size]u8 = null;
-    // local mode has no owner
-    var owner_id: [evt.event_id_size]u8 = @splat(0);
-    var repo: evt.Repo.Record = undefined;
-    // local mode owns its repo
-    var role: evt.Repo.Role = .owner;
-    var owner_name: []const u8 = undefined;
-    if (session.local) |local| {
-        source = local;
-        // local routes elide the identity, so the display name comes from the
-        // repo's directory rather than the route.
-        repo = .{
-            .event = .{
-                .user_id = @splat('0'),
-                .name = try arena.allocator().dupe(u8, std.Io.Dir.path.basename(local.path)),
-                .description = "",
-                // local mode shows every tab
-                .discuss_role = .read,
-                .issue_role = .read,
-                .patch_role = .read,
-            },
-        };
-        owner_name = "";
-    } else {
-        const haxy_moment = session.haxy_moment orelse return error.NoMoment;
-        const io = session.io orelse return error.NoMoment;
-        const users_dir = session.users_dir orelse return error.NoMoment;
-        const found = (try evt.readRepoByOwnerAndName(io, arena.child_allocator, arena, haxy_moment, users_dir, repo_identity.owner, repo_identity.name, session.userId())) orelse return error.NotFound;
-        // a repo the session can't read doesn't exist to it
-        role = found.role orelse return error.NotFound;
-        repo = found.repo;
-        repo_id_maybe = found.event_id;
+    const resolved = (try resolve(arena, session, repo_identity)) orelse return error.NotFound;
+    // where the on-disk repo lives (null keeps the views' empty fallback)
+    const source: ?ui.RepoSource = resolved.source;
+    const repo_id_maybe = resolved.repo_id;
+    const owner_id = resolved.owner_id;
+    const repo = resolved.repo;
+    const owner_name = resolved.owner_name;
 
-        // resolve the creating user so the header can show their name to the left
-        // of the repo title.
-        owner_id = try evt.parseEventId(&repo.event.user_id);
-        const owner = (try evt.User.readById(DB, hash_kind, haxy_moment, arena, &owner_id)) orelse return error.NotFound;
-        owner_name = owner.event.name;
-
-        // the repo's working copy lives in its owner's dir.
-        source = .{
-            .path = try evt.repoPath(arena.allocator(), users_dir, &owner_id, &found.event_id),
-            .repo_kind = .xit,
-        };
-    }
-
-    const handle = ui.RepoHandle{
-        .location = .{ .repo = try arena.allocator().dupe(u8, repo_identity.identity) },
-        .viewer = try ui.Viewer.init(session, arena, role),
-        .read_access = repo.event.read_access,
-    };
+    const handle = try resolved.handle(arena, session);
 
     // open the repo once for every tab. files and changes share a ref or revision.
     // no filesystem (wasm), nowhere to look, or a failed open: empty tabs.
     // the events tab needs write access, like undo
-    if (route == .repo_events and !handle.canWrite()) return error.NotFound;
+    if (route == .repo_events and !hasSection(.events, repo.event, handle, session.data.host_kind, .xit)) return error.NotFound;
     // a tab that is off doesn't exist
     const route_thread_kind: ?evt.EventKind = switch (route) {
         .repo_discussions => .discuss,
@@ -315,7 +266,7 @@ pub fn init(
                                 try evt.consume(.local, .repo, repo_kind, opened.self_repo_opts, io, gpa, opened, evt.events_ref, &.{});
                                 try pch.refreshBranches(.local, repo_kind, opened.self_repo_opts, io, gpa, opened, null);
                             }
-                            if (session.data.host_kind == .server and handle.canUndo()) {
+                            if (hasSection(.settings, repo.event, handle, session.data.host_kind, repo_kind)) {
                                 // a server page always resolved its repo id
                                 const repo_id = repo_id_maybe orelse unreachable;
                                 const identity = try arena.allocator().dupe(u8, repo_identity.identity);
@@ -348,7 +299,8 @@ pub fn init(
                                 };
                             }
                             // tabs switch in-page, so every tab's data is read here
-                            if (repo_kind == .xit and session.data.host_kind == .server and handle.canWrite()) {
+                            // comptime-known first, so a git repo never compiles the undo reader
+                            if (repo_kind == .xit and hasSection(.undo, repo.event, handle, session.data.host_kind, repo_kind)) {
                                 undo_data = Undo.init(opened.self_repo_opts, arena, opened, session.haxy_moment, repo_identity.identity, undo_index, handle) catch |err| switch (err) {
                                     // a transaction the page can't show
                                     error.OutOfMemory, error.NotFound => return err,
@@ -433,6 +385,107 @@ pub fn init(
         // after the shown thread's notif is marked read
         .user_notifications = try ui.UserNotifications.init(arena, session, route.userTab()),
         .quit = Quit.init(),
+    };
+}
+
+/// the sections (tabs) of a repo page, in tab order
+pub const Section = enum { files, commits, refs, discussions, issues, patches, events, undo, settings };
+
+/// whether a repo page shows `section` to the viewer `handle` holds
+pub fn hasSection(section: Section, repo: evt.Repo, handle: ui.RepoHandle, host_kind: evt.HostKind, repo_kind: rp.RepoKind) bool {
+    return switch (section) {
+        .files, .commits, .refs => true,
+        // a thread tab that is off doesn't exist
+        .discussions => repo.threadRole(.discuss) != null,
+        .issues => repo.threadRole(.issue) != null,
+        .patches => repo.threadRole(.patch) != null,
+        // the events tab needs write access, like undo
+        .events => handle.canWrite(),
+        // only xit repos have undo history; local mode leaves undo to xit itself
+        .undo => repo_kind == .xit and host_kind == .server and handle.canWrite(),
+        // only the owner sees the settings, which show the repo's hash kind
+        .settings => host_kind == .server and handle.canUndo(),
+    };
+}
+
+// a repo a session may read, with where it lives and who owns it
+pub const Resolved = struct {
+    // where the on-disk repo lives. null where there is no filesystem (wasm).
+    source: ?ui.RepoSource,
+    repo: evt.Repo.Record,
+    // null in local mode
+    repo_id: ?[evt.event_id_size]u8,
+    // zeroed in local mode, which has no owner
+    owner_id: [evt.event_id_size]u8,
+    // "" in local mode
+    owner_name: []const u8,
+    // the session's role in the repo. local mode owns its repo.
+    role: evt.Repo.Role,
+    // as the routes write it: "owner:name", or "" in local mode
+    identity: []const u8,
+
+    pub fn handle(self: Resolved, arena: *std.heap.ArenaAllocator, session: *ui.Session) !ui.RepoHandle {
+        return .{
+            .location = .{ .repo = try arena.allocator().dupe(u8, self.identity) },
+            .viewer = try ui.Viewer.init(session, arena, self.role),
+            .read_access = self.repo.event.read_access,
+        };
+    }
+};
+
+// the repo `repo_identity` names, or null when there is none the session may
+// read: a repo the session can't read doesn't exist to it. local mode already
+// knows its repo; the server resolves the repo and its owner from the admin
+// db.
+pub fn resolve(arena: *std.heap.ArenaAllocator, session: *ui.Session, repo_identity: ui.RoutablePage.RepoIdentity) !?Resolved {
+    if (session.local) |local| {
+        // local routes elide the identity, so the display name comes from the
+        // repo's directory rather than the route.
+        return .{
+            .source = local,
+            .repo = .{
+                .event = .{
+                    .user_id = @splat('0'),
+                    .name = try arena.allocator().dupe(u8, std.Io.Dir.path.basename(local.path)),
+                    .description = "",
+                    // local mode shows every tab
+                    .discuss_role = .read,
+                    .issue_role = .read,
+                    .patch_role = .read,
+                },
+            },
+            .repo_id = null,
+            .owner_id = @splat(0),
+            .owner_name = "",
+            .role = .owner,
+            .identity = "",
+        };
+    }
+    const DB = evt.AdminDB;
+    const hash_kind = evt.admin_repo_opts.hash;
+    const haxy_moment = session.haxy_moment orelse return error.NoMoment;
+    const io = session.io orelse return error.NoMoment;
+    const users_dir = session.users_dir orelse return error.NoMoment;
+    const found = (try evt.readRepoByOwnerAndName(io, arena.child_allocator, arena, haxy_moment, users_dir, repo_identity.owner, repo_identity.name, session.userId())) orelse return null;
+    const role = found.role orelse return null;
+
+    // resolve the creating user so the header can show their name to the left
+    // of the repo title.
+    const owner_id = try evt.parseEventId(&found.repo.event.user_id);
+    const owner = (try evt.User.readById(DB, hash_kind, haxy_moment, arena, &owner_id)) orelse return null;
+
+    return .{
+        // the repo's working copy lives in its owner's dir.
+        .source = .{
+            .path = try evt.repoPath(arena.allocator(), users_dir, &owner_id, &found.event_id),
+            .repo_kind = .xit,
+        },
+        .repo = found.repo,
+        .repo_id = found.event_id,
+        .owner_id = owner_id,
+        .owner_name = owner.event.name,
+        .role = role,
+        .identity = try arena.allocator().dupe(u8, repo_identity.identity),
     };
 }
 
@@ -556,27 +609,27 @@ pub const View = struct {
             }
 
             // discussions and their comment permalinks.
-            if (data.repo.event.discuss_role != null) {
+            if (hasSection(.discussions, data.repo.event, data.handle, session.data.host_kind, .xit)) {
                 var discussions_view = try Discussions.View.init(allocator, &data.discussions, session);
                 errdefer discussions_view.deinit(allocator);
                 try stack.children.put(allocator, discussions_view.getFocus().id, .{ .repo_discussions = discussions_view });
             }
 
             // issues — the repo's issue tracker and comment permalinks.
-            if (data.repo.event.issue_role != null) {
+            if (hasSection(.issues, data.repo.event, data.handle, session.data.host_kind, .xit)) {
                 var issues_view = try Issues.View.init(allocator, &data.issues, session);
                 errdefer issues_view.deinit(allocator);
                 try stack.children.put(allocator, issues_view.getFocus().id, .{ .repo_issues = issues_view });
             }
 
             // patches and their comment permalinks.
-            if (data.repo.event.patch_role != null) {
+            if (hasSection(.patches, data.repo.event, data.handle, session.data.host_kind, .xit)) {
                 var patches_view = try Patches.View.init(allocator, &data.patches, session);
                 errdefer patches_view.deinit(allocator);
                 try stack.children.put(allocator, patches_view.getFocus().id, .{ .repo_patches = patches_view });
             }
 
-            if (data.handle.canWrite()) {
+            if (hasSection(.events, data.repo.event, data.handle, session.data.host_kind, .xit)) {
                 var events_view = try Events.View.init(allocator, &data.events, session);
                 errdefer events_view.deinit(allocator);
                 try stack.children.put(allocator, events_view.getFocus().id, .{ .repo_events = events_view });

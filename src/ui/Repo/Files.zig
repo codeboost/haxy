@@ -31,7 +31,7 @@ const max_markdown_lines = 2000;
 const max_preloaded_bytes = 2 * 1024 * 1024;
 
 // how many rows a listing holds, for a directory and for search results alike.
-const max_list_entries = 1000;
+pub const max_list_entries = 1000;
 
 // one entry in the directory currently being viewed.
 pub const Entry = struct {
@@ -217,25 +217,24 @@ pub fn init(
     // here (into the page arena) so the detail pane can show them without
     // another lookup.
     try entries.ensureTotalCapacity(aa, @min(tree_dir.entries.count(), max_list_entries));
-    for ([_]bool{ true, false }) |want_dir| {
-        for (tree_dir.entries.keys(), tree_dir.entries.values()) |name, tree_entry| {
-            if (tree_entry.isTree() != want_dir) continue;
-            if (want_dir) {
-                if (entries.items.len >= max_list_entries) {
-                    capped = true;
-                    continue;
-                }
-                try entries.append(aa, .{ .name = try aa.dupe(u8, name), .is_dir = true });
-            } else {
-                // the rows the route and the default selection need are exempt
-                // from the cap, so a url naming a file always gets its row.
-                const exempt = isReadme(name) or (if (selected_file) |sf| std.mem.eql(u8, sf, name) else false);
-                if (entries.items.len >= max_list_entries and !exempt) {
-                    capped = true;
-                    continue;
-                }
-                try entries.append(aa, try fileEntry(repo_kind, repo_opts, state, io, gpa, aa, dir, name, &tree_entry.oid, tree_entry.mode, selected_file, line, &preloaded_bytes));
+    for (try listOrder(aa, tree_dir.entries.values())) |index| {
+        const name = tree_dir.entries.keys()[index];
+        const tree_entry = tree_dir.entries.values()[index];
+        if (tree_entry.isTree()) {
+            if (entries.items.len >= max_list_entries) {
+                capped = true;
+                continue;
             }
+            try entries.append(aa, .{ .name = try aa.dupe(u8, name), .is_dir = true });
+        } else {
+            // the rows the route and the default selection need are exempt
+            // from the cap, so a url naming a file always gets its row.
+            const exempt = isReadme(name) or (if (selected_file) |sf| std.mem.eql(u8, sf, name) else false);
+            if (entries.items.len >= max_list_entries and !exempt) {
+                capped = true;
+                continue;
+            }
+            try entries.append(aa, try fileEntry(repo_kind, repo_opts, state, io, gpa, aa, dir, name, &tree_entry.oid, tree_entry.mode, selected_file, line, &preloaded_bytes));
         }
     }
 
@@ -288,18 +287,39 @@ fn fileEntry(
     return entry;
 }
 
-const FileContent = struct {
+/// a window of a file's content, as the files view shows it
+pub const FileContent = struct {
     lines: []const []const u8,
     is_binary: bool = false,
+    // the file has no bytes at all
+    is_empty: bool = false,
     has_more: bool = false,
+    // the file's whole line count; 0 for a binary file
+    total_lines: usize = 0,
 };
+
+/// the order a directory listing shows `entries` (a tree's entries, in its
+/// name order) in: directories first, then files, each keeping that order.
+/// returns indices into `entries`.
+pub fn listOrder(aa: std.mem.Allocator, entries: anytype) ![]const usize {
+    var order = try aa.alloc(usize, entries.len);
+    var next: usize = 0;
+    for ([_]bool{ true, false }) |want_dir| {
+        for (entries, 0..) |entry, index| {
+            if (entry.isTree() != want_dir) continue;
+            order[next] = index;
+            next += 1;
+        }
+    }
+    return order;
+}
 
 // read the window of a committed file's contents from `start`, capped by
 // file_page and max_window_cells, into `arena`-owned lines, flagging whether
 // more follow. xit's line iterator flags binary files (its source becomes
 // `.binary`), in which case we report no lines and let the view show a
 // placeholder.
-fn readFileContent(
+pub fn readFileContent(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     state: rp.Repo(repo_kind, repo_opts).State(.read_only),
@@ -314,6 +334,7 @@ fn readFileContent(
     var line_iter = try df.LineIterator(repo_kind, repo_opts).initFromOid(state, io, gpa, path, oid, mode);
     defer line_iter.deinit();
     if (line_iter.source == .binary) return .{ .lines = &.{}, .is_binary = true };
+    const is_empty = line_iter.size == 0;
 
     // init reads through the file to validate it (and buffer it in memory), so
     // the line count is known and a window can be sliced out of the buffer.
@@ -333,7 +354,9 @@ fn readFileContent(
     }
     return .{
         .lines = try lines.toOwnedSlice(arena),
+        .is_empty = is_empty,
         .has_more = i < total,
+        .total_lines = total,
     };
 }
 
@@ -735,7 +758,7 @@ pub const View = struct {
                     try self.addContentBox(allocator, inner, &.{.{ .text = "(press enter to load this file)" }}, link);
                 } else if (entry.is_binary) {
                     try self.addContentBox(allocator, inner, &.{.{ .text = "(binary file)" }}, "");
-                } else if (isMarkdown(entry.name) and entry.window_start == 0 and !entry.has_more and entry.lines.len <= max_markdown_lines) {
+                } else if (showsMarkdown(entry.name, entry.window_start, entry.lines.len, entry.has_more)) {
                     const page_arena = self.session.page_arena;
                     const doc = try md.parse(page_arena.allocator(), entry.lines);
                     var view = try Markdown.View.init(allocator, self.session, doc, self.data, path);
@@ -1056,7 +1079,16 @@ fn isMarkdown(name: []const u8) bool {
     return std.ascii.eqlIgnoreCase(extension, ".md") or std.ascii.eqlIgnoreCase(extension, ".markdown");
 }
 
-fn isReadme(name: []const u8) bool {
+/// whether a window of the file `name` shows as rendered markdown rather than
+/// numbered source: a markdown file that one first window holds whole, and
+/// isn't too long to render.
+pub fn showsMarkdown(name: []const u8, window_start: usize, line_count: usize, has_more: bool) bool {
+    return isMarkdown(name) and window_start == 0 and !has_more and line_count <= max_markdown_lines;
+}
+
+/// whether a directory's file `name` is its README, which the files view
+/// shows when the directory opens
+pub fn isReadme(name: []const u8) bool {
     return std.ascii.eqlIgnoreCase(name, "README") or std.ascii.eqlIgnoreCase(name, "README.md");
 }
 

@@ -1087,3 +1087,67 @@ fn readIssue(
     const issue_map = try DB.HashMap(.read_only).init(issue_cursor);
     return try evt.read(evt.Issue.Record, DB, hash_kind, arena, issue_map);
 }
+
+// whether a repo directory exists at `path`
+fn dirExists(io: std.Io, path: []const u8) !bool {
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => |e| return e,
+    };
+    dir.close(io);
+    return true;
+}
+
+test "two creations of one repo name never both register: the later loses, and its directory is removed" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const temp_path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(temp_path);
+    const users_dir = try std.Io.Dir.path.join(allocator, &.{ temp_path, "users" });
+    defer allocator.free(users_dir);
+
+    var prng = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const owner_id = evt.EventWithId.randomId(prng.random());
+    {
+        const path = try evt.userRepoPath(allocator, users_dir, &owner_id);
+        defer allocator.free(path);
+        var user_repo = try evt.initUserRepo(io, allocator, path);
+        defer user_repo.deinit(io, allocator);
+    }
+    // the owner already has a repo, so the user repo has a moment to check against
+    _ = try evt.createRepo(io, allocator, users_dir, &owner_id, author, "other", "", .private, .sha1, null);
+
+    // creation A opens the owner's user repo and finds the name free, then
+    // makes its directory (a copy may take a while)...
+    var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &owner_id)) orelse return error.TestUnexpectedResult;
+    defer user_repo.deinit(io, allocator);
+    const late_id = evt.EventWithId.randomId(prng.random());
+    const late_path = try evt.repoPath(allocator, users_dir, &owner_id, &late_id);
+    defer allocator.free(late_path);
+    {
+        var repo = try rp.Repo(.xit, .{ .hash = .sha256 }).init(io, allocator, .{ .path = late_path, .bare = true });
+        defer repo.deinit(io, allocator);
+    }
+
+    // ...while creation B of the same name runs from start to end
+    const early = try evt.createRepo(io, allocator, users_dir, &owner_id, author, "tools", "first", .public, .sha1, null);
+
+    // A's registration finds the name taken and removes A's directory
+    try std.testing.expectError(error.NameTaken, evt.registerNewRepo(io, allocator, users_dir, &user_repo, &owner_id, author, &late_id, "tools", "second", .private));
+    try std.testing.expect(!try dirExists(io, late_path));
+
+    // B's repo is the one registered under the name, and its directory remains
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var fresh = (try evt.openUserRepo(io, allocator, users_dir, &owner_id)) orelse return error.TestUnexpectedResult;
+    defer fresh.deinit(io, allocator);
+    const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, (try evt.userMoment(&fresh)).?, &arena, "tools")).?;
+    try std.testing.expectEqualSlices(u8, &early.repo_id, &found.event_id);
+    try std.testing.expectEqualStrings("first", found.repo.event.description);
+    const early_path = try evt.repoPath(allocator, users_dir, &owner_id, &early.repo_id);
+    defer allocator.free(early_path);
+    try std.testing.expect(try dirExists(io, early_path));
+}

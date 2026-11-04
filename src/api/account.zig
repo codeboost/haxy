@@ -343,7 +343,7 @@ fn getAccount(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.
 
 // reads a JSON request body of T's fields, or answers the refusal and
 // returns null. headers are invalid after this.
-fn readBody(comptime T: type, request: *std.http.Server.Request, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator) !?T {
+pub fn readBody(comptime T: type, request: *std.http.Server.Request, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator) !?T {
     // copied before the body read, which invalidates the request's headers
     const content_type = if (request.head.content_type) |value| try arena.allocator().dupe(u8, value) else null;
     var buffer: [256]u8 = undefined;

@@ -684,6 +684,29 @@ pub fn consume(
     ref: rf.Ref,
     events: []const EventWithId,
 ) !void {
+    return consumeGuarded(host, role, repo_kind, repo_opts, io, allocator, repo, ref, events, null);
+}
+
+// `consume`, for a xit repo, with `guard.check(haxy_moment)` run first inside
+// its transaction, against the state it builds on (null before the repo's
+// first event). an error from the check abandons the transaction, so a
+// precondition read there can't go stale before the events land.
+pub fn consumeGuarded(
+    host: Host,
+    comptime role: RepoRole,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    ref: rf.Ref,
+    events: []const EventWithId,
+    guard: anytype,
+) !void {
+    const guarded = @TypeOf(guard) != @TypeOf(null);
+    comptime if (guarded and repo_kind != .xit) @compileError("only a xit repo's consume runs in one transaction");
+    // a struct can't hold null's comptime-only type
+    const Guard = if (guarded) @TypeOf(guard) else void;
     for (events) |event| {
         if (!role.allows(std.meta.activeTag(event.event))) return error.EventKindNotAllowed;
     }
@@ -746,10 +769,18 @@ pub fn consume(
                 patch_ids: []const [event_id_size]u8,
                 first_parent_oids: ?[1][hash.hexLen(repo_opts.hash)]u8,
                 moment_index: *?u64,
+                guard: Guard,
 
                 pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
                     var moment = try DB.HashMap(.read_write).init(cursor.*);
                     const state = State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    if (guarded) {
+                        const haxy_moment = currentMomentFromRepoMoment(repo_opts.hash, moment.readOnly()) catch |err| switch (err) {
+                            error.NotFound => null,
+                            else => |e| return e,
+                        };
+                        try ctx.guard.check(haxy_moment);
+                    }
 
                     try commitEvents(.xit, repo_opts, state, ctx.io, ctx.allocator, ctx.ref, ctx.events, ctx.first_parent_oids);
                     ctx.moment_index.* = try consumeInTransaction(role, .xit, repo_opts, state, &moment, ctx.io, ctx.allocator, ctx.ref);
@@ -772,6 +803,7 @@ pub fn consume(
                 .patch_ids = patch_ids.items,
                 .first_parent_oids = first_parent_oids,
                 .moment_index = &moment_index,
+                .guard = if (guarded) guard else {},
             }) catch |err| switch (err) {
                 error.CancelTransaction => return,
                 else => |e| return e,
@@ -2247,8 +2279,45 @@ pub fn createRepo(
         }
     }
 
-    try writeRepoEvent(io, allocator, users_dir, &user_repo, owner_id, owner, &id_bytes, name, description, read_access);
+    try registerNewRepo(io, allocator, users_dir, &user_repo, owner_id, owner, &id_bytes, name, description, read_access);
     return .{ .owner_id = owner_id.*, .repo_id = id_bytes };
+}
+
+// register the repo whose directory was just made under `repo_id` in its
+// owner's user repo, unless the owner took `name` meanwhile: the name is
+// checked again in the transaction that registers it, so two creations of
+// one name (a retry while a slow copy runs, two clients) never both land.
+// the loser's directory is removed, and it fails with NameTaken.
+pub fn registerNewRepo(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    user_repo: *rp.Repo(.xit, user_repo_opts),
+    owner_id: *const [event_id_size]u8,
+    owner: CommitAuthor,
+    repo_id: *const [event_id_size]u8,
+    name: []const u8,
+    description: []const u8,
+    read_access: Repo.Access,
+) !void {
+    const NameFree = struct {
+        allocator: std.mem.Allocator,
+        name: []const u8,
+
+        pub fn check(self: @This(), moment: ?UserDB.HashMap(.read_only)) !void {
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            if (try Repo.readByName(UserDB, user_repo_opts.hash, moment orelse return, &arena, self.name) != null) return error.NameTaken;
+        }
+    };
+    writeRepoEventGuarded(io, allocator, users_dir, user_repo, owner_id, owner, repo_id, name, description, read_access, NameFree{ .allocator = allocator, .name = name }) catch |err| {
+        if (err == error.NameTaken) {
+            const path = try repoPath(allocator, users_dir, owner_id, repo_id);
+            defer allocator.free(path);
+            try std.Io.Dir.cwd().deleteTree(io, path);
+        }
+        return err;
+    };
 }
 
 // change the name, description, read access, and tab roles of the repo
@@ -2608,8 +2677,25 @@ fn writeRepoEvent(
     description: []const u8,
     read_access: Repo.Access,
 ) !void {
+    return writeRepoEventGuarded(io, allocator, users_dir, user_repo, owner_id, owner, id_bytes, name, description, read_access, null);
+}
+
+// writeRepoEvent, with `guard` checked in its transaction (see consumeGuarded)
+fn writeRepoEventGuarded(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    user_repo: *rp.Repo(.xit, user_repo_opts),
+    owner_id: *const [event_id_size]u8,
+    owner: CommitAuthor,
+    id_bytes: *const [event_id_size]u8,
+    name: []const u8,
+    description: []const u8,
+    read_access: Repo.Access,
+    guard: anytype,
+) !void {
     const timestamp: u64 = @intCast(std.Io.Timestamp.now(io, .real).toSeconds());
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, user_repo, events_ref, &[_]EventWithId{.{
+    try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, user_repo, events_ref, &[_]EventWithId{.{
         .id = std.fmt.bytesToHex(id_bytes.*, .lower),
         .timestamp = timestamp,
         .author = owner,
@@ -2619,7 +2705,7 @@ fn writeRepoEvent(
             .description = description,
             .read_access = read_access,
         } },
-    }});
+    }}, guard);
     bumpRepoActivity(io, allocator, users_dir, owner_id, id_bytes, timestamp) catch |err| {
         std.log.warn("failed to record repo activity: {s}", .{@errorName(err)});
     };

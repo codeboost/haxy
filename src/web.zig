@@ -6,6 +6,7 @@ const hash = xit.hash;
 const evt = @import("./event.zig");
 const api = @import("./api.zig");
 const api_discovery = @import("./api/discovery.zig");
+const api_repo = @import("./api/repo.zig");
 const api_session = @import("./api/session.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
@@ -208,6 +209,13 @@ fn routeApiRequest(
             .local => null,
         };
         return api_discovery.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
+    if (api_repo.route(path)) |route| {
+        const repo_host: api_repo.Host = switch (host) {
+            .server => |server| .{ .server = .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .web_url = server.web_url, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix } },
+            .local => |source| .{ .local = source },
+        };
+        return api_repo.handle(io, request, allocator, repo_host, apiViewerId(request, host), route, query);
     }
     if (!std.mem.eql(u8, path, "/api/v1/status"))
         return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{});

@@ -13,6 +13,10 @@ pub const ErrorCode = enum {
     validation,
     unauthenticated,
     forbidden,
+    // a write failed the same-origin or CSRF token check. distinct from
+    // forbidden so clients can refresh their token rather than report a
+    // permission problem.
+    csrf,
     // also used for resources the viewer may not know exist
     not_found,
     conflict,
@@ -24,7 +28,7 @@ pub const ErrorCode = enum {
         return switch (self) {
             .validation => .bad_request,
             .unauthenticated => .unauthorized,
-            .forbidden => .forbidden,
+            .forbidden, .csrf => .forbidden,
             .not_found => .not_found,
             .conflict => .conflict,
             .unsupported => .method_not_allowed,

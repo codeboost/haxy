@@ -32,6 +32,7 @@ test "each error code has a conventional HTTP status" {
         .{ .validation, .bad_request },
         .{ .unauthenticated, .unauthorized },
         .{ .forbidden, .forbidden },
+        .{ .csrf, .forbidden },
         .{ .not_found, .not_found },
         .{ .conflict, .conflict },
         .{ .unsupported, .method_not_allowed },

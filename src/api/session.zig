@@ -123,7 +123,7 @@ pub fn guardWrite(request: *std.http.Server.Request, allocator: std.mem.Allocato
         .missing_token, .bad_token => "This request has no valid CSRF token. Reload the page and try again.",
     };
     // the body goes unread, so the connection closes
-    try api.respondError(request, allocator, .{ .code = .forbidden, .message = message }, .{ .keep_alive = false });
+    try api.respondError(request, allocator, .{ .code = .csrf, .message = message }, .{ .keep_alive = false });
     return false;
 }
 

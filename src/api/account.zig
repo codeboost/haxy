@@ -113,18 +113,19 @@ pub fn parseBody(comptime T: type, arena: std.mem.Allocator, content_type: ?[]co
 
 // --- the viewer a change is for ---------------------------------------------
 
-/// the request header a change to an existing account names that account's
-/// user in. the session cookie is shared by every tab, so another tab may
-/// have logged in as someone else since a form was loaded; the CSRF token is
-/// bound to the browser, not the session, so it can't tell. naming the
-/// intended user makes such a change fail instead of landing on the wrong
-/// account.
+/// the optional request header a change to an existing account may name
+/// that account's user in. the session cookie is shared by every tab, so
+/// another tab may have logged in as someone else since a form was loaded;
+/// the CSRF token is bound to the browser, not the session, so it can't tell.
+/// naming the intended user makes such a change fail instead of landing on
+/// the wrong account. Haxy Hub always sends it; other clients needn't.
 pub const viewer_header = "x-haxy-viewer";
 
-/// whether a change naming `expected` (the viewer_header) may act on the
-/// session's viewer `actual`: refused when it names nobody or someone else
+/// whether a change naming `expected` (the viewer_header, null when absent)
+/// may act on the session's viewer `actual`: refused only when it names
+/// someone else
 pub fn checkViewer(expected: ?[]const u8, actual: []const u8) ?api.Error {
-    const name = expected orelse return .{ .code = .validation, .message = "Name the account this change is for in the " ++ viewer_header ++ " header." };
+    const name = expected orelse return null;
     if (std.mem.eql(u8, name, actual)) return null;
     return .{ .code = .conflict, .message = "You're signed in as a different user now, so this change wasn't made. Reload to continue." };
 }

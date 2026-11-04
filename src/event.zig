@@ -2458,24 +2458,26 @@ pub fn createUser(
 }
 
 // change a user's email, and their password when the password fields are
-// filled in
+// filled in. a null email keeps the stored one, read here at write time, so
+// a password change never reverts an email changed meanwhile.
 pub fn updateUser(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     admin_repo: *rp.Repo(.xit, admin_repo_opts),
     user_id: *const [event_id_size]u8,
-    email: []const u8,
+    email_maybe: ?[]const u8,
     current_password: []const u8,
     new_password: []const u8,
     new_password_again: []const u8,
 ) !void {
-    if (email.len == 0) return error.EmailEmpty;
+    if (email_maybe) |email| if (email.len == 0) return error.EmailEmpty;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const moment = try currentMoment(admin_repo_opts, admin_repo);
     const user = (try User.readById(AdminDB, admin_repo_opts.hash, moment, &arena, user_id)) orelse return error.NotFound;
     if (user.removed) return error.NotFound;
+    const email = email_maybe orelse user.event.email;
     if (!std.mem.eql(u8, email, user.event.email) and try User.readByEmail(AdminDB, admin_repo_opts.hash, moment, &arena, email) != null) return error.EmailTaken;
 
     var event = user.event;
@@ -2525,10 +2527,8 @@ pub fn addUserKey(
     // the keys are stored one per line
     if (std.mem.indexOfScalar(u8, key, '\n') != null) return error.InvalidKey;
     const fingerprint = User.fingerprintOfKey(key) orelse return error.InvalidKey;
-    // the key types the ssh server verifies
     const key_type = std.mem.sliceTo(key, ' ');
-    const supported = [_][]const u8{ "ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384" };
-    for (supported) |name| {
+    for (User.supported_key_types) |name| {
         if (std.mem.eql(u8, key_type, name)) break;
     } else return error.UnsupportedKey;
     try writeUserKeys(io, allocator, users_dir, admin_repo, user_id, &fingerprint, key);

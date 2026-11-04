@@ -25,38 +25,55 @@ pub fn init(
     haxy_moment: evt.AdminDB.HashMap(.read_only),
     route: ui.RoutablePage.HomeUsersRoute,
 ) !Self {
+    const search: ?[]const u8 = if (route.search.len == 0) null else std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, route.search.slice()));
+    const found = try window(arena, haxy_moment, search orelse "", route.start, page_size);
+    return .{
+        .users = found.users,
+        .start = route.start,
+        .next_start = found.next_start,
+        .search = search,
+    };
+}
+
+pub const Window = struct {
+    users: []const evt.User.Public,
+    // the `start` of the following window, or null when this is the last
+    next_start: ?usize,
+};
+
+// up to `limit` active users whose names start with `prefix`, by name, from
+// the `start`th match. the JSON API reads the same windows.
+pub fn window(
+    arena: *std.heap.ArenaAllocator,
+    haxy_moment: evt.AdminDB.HashMap(.read_only),
+    prefix: []const u8,
+    start: usize,
+    limit: usize,
+) !Window {
     const DB = evt.AdminDB;
     const hash_kind = evt.admin_repo_opts.hash;
     const aa = arena.allocator();
 
-    var result: Self = .{
-        .users = &.{},
-        .start = route.start,
-        .next_start = null,
-        .search = if (route.search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, route.search.slice())),
-    };
-    const prefix = result.search orelse "";
-
     // the active users sorted by name; absent until the first user exists
-    const index_cursor = try haxy_moment.getCursor(hash.hashInt(hash_kind, evt.User.name_index_key)) orelse return result;
+    const index_cursor = try haxy_moment.getCursor(hash.hashInt(hash_kind, evt.User.name_index_key)) orelse return .{ .users = &.{}, .next_start = null };
     const index = try DB.SortedMap(.read_only).init(index_cursor);
 
     // the names with the prefix are contiguous from its rank, so the window
     // is one seek then a walk that stops at the first name without it
     var users: std.ArrayList(evt.User.Public) = .empty;
-    var iter = try index.iteratorFromIndex(try index.rank(prefix) +| route.start);
+    var next_start: ?usize = null;
+    var iter = try index.iteratorFromIndex(try index.rank(prefix) +| start);
     while (try iter.next()) |cursor| {
         const pair = try cursor.readKeyValuePair();
         const name = try pair.key_cursor.readBytesAlloc(aa, null);
         if (!std.mem.startsWith(u8, name, prefix)) break;
-        if (users.items.len == page_size) {
-            result.next_start = route.start + page_size;
+        if (users.items.len == limit) {
+            next_start = start +| limit;
             break;
         }
         try users.append(aa, .{ .name = name });
     }
-    result.users = users.items;
-    return result;
+    return .{ .users = users.items, .next_start = next_start };
 }
 
 // a first window without users, which shows the empty message

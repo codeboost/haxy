@@ -14,9 +14,9 @@ test "error envelope carries a stable code and a user-facing message" {
     , api.writeError, .{api.Error{ .code = .not_found, .message = "No API route matches \"/api/v1/nope\"." }});
 }
 
-test "validation errors list each field beside its own message, in order" {
+test "validation errors map each field to its own message" {
     try expectJson(
-        \\{"error":{"code":"validation","message":"Check the highlighted fields.","field_errors":[{"field":"name","message":"Name is required."},{"field":"email","message":"Email is invalid."}]}}
+        \\{"error":{"code":"validation","message":"Check the highlighted fields.","field_errors":{"name":"Name is required.","email":"Email is invalid."}}}
     , api.writeError, .{api.Error{
         .code = .validation,
         .message = "Check the highlighted fields.",

@@ -33,6 +33,9 @@ pub const ErrorCode = enum {
     }
 };
 
+/// one rejected request field. errors are sent as a JSON object mapping each
+/// field's name (as the client sent it) to its message, so a field appears
+/// at most once.
 pub const FieldError = struct {
     // the request field's name, as the client sent it
     field: []const u8,
@@ -59,7 +62,12 @@ pub fn writeError(writer: *std.Io.Writer, err: Error) std.Io.Writer.Error!void {
     try json.write(err.message);
     if (err.field_errors.len > 0) {
         try json.objectField("field_errors");
-        try json.write(err.field_errors);
+        try json.beginObject();
+        for (err.field_errors) |field_error| {
+            try json.objectField(field_error.field);
+            try json.write(field_error.message);
+        }
+        try json.endObject();
     }
     try json.endObject();
     try json.endObject();

@@ -4,6 +4,7 @@ const rp = xit.repo;
 const obj = xit.object;
 const hash = xit.hash;
 const evt = @import("./event.zig");
+const api = @import("./api.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
 const ui = @import("./ui.zig");
@@ -132,7 +133,9 @@ pub fn handleConnection(
         };
 
         switch (host) {
-            .server => |server| if (serve_http.isGitRequest(&request.head)) {
+            // the API namespace is reserved even for paths that end like
+            // git's smart http, so every /api/ response is JSON
+            .server => |server| if (!isApiTarget(request.head.target) and serve_http.isGitRequest(&request.head)) {
                 try server.serve_git(io, allocator, server.users_dir, server.admin_repo_path, &http_server, &request, err);
                 // git's responses end with "Connection: close"
                 break;
@@ -153,6 +156,34 @@ pub fn handleConnection(
     }
 }
 
+fn isApiPath(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/api") or std.mem.startsWith(u8, path, "/api/");
+}
+
+fn isApiTarget(target: []const u8) bool {
+    const uri = std.Uri.parseAfterScheme("", target) catch return false;
+    return isApiPath(uri.path.percent_encoded);
+}
+
+// the JSON API under /api/. see api.zig for the shared response shapes.
+fn handleApiRequest(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    host: Host,
+    path: []const u8,
+) !void {
+    if (!std.mem.eql(u8, path, "/api/v1/status"))
+        return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{});
+    const method = request.head.method;
+    if (method != .GET and method != .HEAD)
+        return api.respondError(request, allocator, .{ .code = .unsupported, .message = "This route only supports GET and HEAD." }, .{ .allow = "GET, HEAD" });
+
+    var body: std.Io.Writer.Allocating = .init(allocator);
+    defer body.deinit();
+    try api.writeStatus(&body.writer, host);
+    return api.respondJson(request, body.written(), .{});
+}
+
 fn handleRequest(
     io: std.Io,
     request: *std.http.Server.Request,
@@ -165,6 +196,10 @@ fn handleRequest(
     defer if (owned_target) |target| allocator.free(target);
     const uri = try std.Uri.parseAfterScheme("", owned_target orelse request.head.target);
     const path = uri.path.percent_encoded;
+
+    // Reserve the API namespace before matching page/form routes.
+    if (isApiPath(path))
+        return handleApiRequest(request, allocator, host, path);
 
     // POST routes can be scoped by any page, so they can redirect using
     // the base of the URL. this allows logging in to keep you on the page

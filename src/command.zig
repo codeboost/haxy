@@ -69,6 +69,9 @@ pub fn printHelp(cmd_kind_maybe: ?CommandKind, writer: *std.Io.Writer) !void {
         }
     } else {
         try writer.print("help: haxy <command> [<args>]\n\n", .{});
+        try writer.print("with no command, haxy opens the git or xit repo in the current directory (local mode).\n", .{});
+        try writer.print("  --web-listen 127.0.0.1:8080 binds exactly that address for its web UI\n", .{});
+        try writer.print("  --no-tui serves only the web UI, without the terminal UI, until stopped\n\n", .{});
         inline for (@typeInfo(CommandKind).@"enum".field_values) |value| {
             const help = commandHelp(@fromBackingInt(@intCast(value)));
             // name and description
@@ -261,7 +264,7 @@ pub const CommandDispatch = union(enum) {
         },
     },
     help: ?CommandKind,
-    local,
+    local: srv.LocalOptions,
     cli: Command,
 
     pub fn init(cmd_args: *CommandArgs) !CommandDispatch {
@@ -300,7 +303,10 @@ pub const CommandDispatch = union(enum) {
         } else if (show_help) {
             return .{ .help = null };
         } else {
-            return .local;
+            var options: srv.LocalOptions = .{};
+            if (cmd_args.get("--web-listen")) |value_maybe| options.web_listen = value_maybe orelse return error.WebListenNeedsValue;
+            if (cmd_args.contains("--no-tui")) options.tui = false;
+            return .{ .local = options };
         }
     }
 };

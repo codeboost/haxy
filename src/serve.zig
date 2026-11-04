@@ -22,6 +22,14 @@ pub const Options = struct {
     fallback_on_address_in_use: bool = false,
 };
 
+pub const LocalOptions = struct {
+    // an exact address for the web UI. by default the server's default
+    // address is tried, falling back to any free port when it is taken.
+    web_listen: ?[]const u8 = null,
+    // false serves only the web UI, until the process is stopped
+    tui: bool = true,
+};
+
 pub const DeleteUserOptions = struct {
     name: []const u8,
     data_dir: []const u8 = ".",
@@ -213,18 +221,20 @@ pub fn run(
 // serve just the web UI for a single local repo, running `runnable` (the
 // local TUI) in the foreground while the listener runs in the background.
 // when the default port is taken, a random ephemeral port is used instead;
-// the web UI's url is passed to `runnable.run`.
+// the web UI's url is passed to `runnable.run`. a void `runnable` serves
+// until the process is stopped.
 pub fn runLocal(
     io: std.Io,
     allocator: std.mem.Allocator,
     local: ui.RepoSource,
+    options: LocalOptions,
     err: *std.Io.Writer,
     runnable: anytype,
 ) !void {
-    // always fall back, so another instance viewing a second repo just binds
-    // its own port
-    const web_listen_address = try parseListenAddress((Options{}).web_listen);
-    var web_server = try listen(io, web_listen_address, .fallback);
+    // by default always fall back, so another instance viewing a second repo
+    // just binds its own port. an explicit address must be the one bound.
+    const web_listen_address = try parseListenAddress(options.web_listen orelse (Options{}).web_listen);
+    var web_server = try listen(io, web_listen_address, if (options.web_listen == null) .fallback else .exact);
     defer web_server.deinit(io);
 
     var tasks: std.Io.Group = .init;
@@ -232,9 +242,15 @@ pub fn runLocal(
 
     runWebListener(io, allocator, &web_server, &tasks, .{ .local = local }, err);
 
-    const web_url = try allocator.print("http://localhost:{d}", .{web_server.socket.address.getPort()});
+    const web_url = try localWebUrl(allocator, options.web_listen, web_server.socket.address.getPort());
     defer allocator.free(web_url);
-    try runnable.run(web_url);
+    if (@TypeOf(runnable) != void) {
+        try runnable.run(web_url);
+    } else {
+        try err.print("serving web UI on http://{s}:{d}/\n", .{ web_listen_address.host, web_server.socket.address.getPort() });
+        try err.flush();
+        try tasks.await(io);
+    }
 }
 
 fn runWebListener(
@@ -290,6 +306,15 @@ fn listen(io: std.Io, listen_address: ListenAddress, policy: PortPolicy) !std.Io
             else => |e| return e,
         },
     };
+}
+
+// the browsable url of a local web listener. an explicit `--web-listen`
+// interface is where the listener actually is, so links must point there;
+// the default address and wildcard binds are reachable via localhost.
+pub fn localWebUrl(allocator: std.mem.Allocator, web_listen: ?[]const u8, port: u16) ![]const u8 {
+    const host = if (web_listen) |value| (try parseListenAddress(value)).host else "localhost";
+    const is_wildcard = std.mem.eql(u8, host, "0.0.0.0") or std.mem.eql(u8, host, "::") or std.mem.eql(u8, host, "[::]");
+    return allocator.print("http://{s}:{d}", .{ if (is_wildcard) "localhost" else host, port });
 }
 
 fn parseListenAddress(value: []const u8) !ListenAddress {

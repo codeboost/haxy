@@ -90,7 +90,7 @@ pub fn run(
             },
         },
         .help => |cmd_kind_maybe| try cmd.printHelp(cmd_kind_maybe, run_opts.out),
-        .local => {
+        .local => |local_options| {
             // session-lifetime allocations (the repo path, session state)
             var session_arena = std.heap.ArenaAllocator.init(allocator);
             defer session_arena.deinit();
@@ -126,6 +126,8 @@ pub fn run(
                 };
             };
 
+            if (!local_options.tui) return srv.runLocal(io, allocator, local, local_options, run_opts.err, {});
+
             var session = ui.Session{
                 .arena = &session_arena,
                 .page_arena = &session_arena,
@@ -153,7 +155,7 @@ pub fn run(
                 }
             };
 
-            try srv.runLocal(io, allocator, local, run_opts.err, Runnable{ .io = io, .allocator = allocator, .session = &session });
+            try srv.runLocal(io, allocator, local, local_options, run_opts.err, Runnable{ .io = io, .allocator = allocator, .session = &session });
         },
         .cli => |cli_cmd| switch (cli_cmd) {
             .serve => |options| try srv.run(repo_kind, any_repo_opts, io, allocator, cwd_path, options, run_opts.err, {}),

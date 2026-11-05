@@ -14,6 +14,60 @@ const Focus = xitui.focus.Focus;
 
 const wasm = builtin.target.cpu.arch == .wasm32;
 
+// what the new-repo form asks for. the TUI, the web form and the JSON API
+// all create repos from these.
+pub const Fields = struct {
+    name: []const u8,
+    description: []const u8,
+    hash: hash.HashKind = .sha1,
+    access: evt.Repo.Access = .private,
+    // the `owner:name` of the repo to copy, "" for none
+    copy: []const u8 = "",
+};
+
+// the form's choices, by the names its radios and requests use
+pub const access_names = enumNames(evt.Repo.Access);
+pub const hash_names = enumNames(hash.HashKind);
+
+// the form's initial choices
+const defaults: Fields = .{ .name = "", .description = "" };
+
+fn enumNames(comptime T: type) []const []const u8 {
+    const fields = std.meta.fieldNames(T);
+    comptime var names: [fields.len][]const u8 = undefined;
+    inline for (fields, 0..) |field, index| names[index] = field;
+    const final = names;
+    return &final;
+}
+
+pub fn parseAccess(value: []const u8) ?evt.Repo.Access {
+    return std.meta.stringToEnum(evt.Repo.Access, value);
+}
+
+pub fn parseHash(value: []const u8) ?hash.HashKind {
+    return std.meta.stringToEnum(hash.HashKind, value);
+}
+
+// create the repo `fields` describe for the active user `user_id`: empty
+// with their hash format, or a copy of a repo the user can read (which keeps
+// its source's). returns why the shared rules refused it, or null once it
+// exists. `admin_moment` resolves the copy source.
+pub fn create(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    admin_moment: evt.AdminDB.HashMap(.read_only),
+    user_id: [evt.event_id_size]u8,
+    user: evt.User.Record,
+    fields: Fields,
+) !?ui.Session.FormFeedback.RepoFailure {
+    const copy_from: ?evt.CopySource = if (fields.copy.len == 0) null else .{ .admin_moment = admin_moment, .path = fields.copy };
+    _ = evt.createRepo(io, allocator, users_dir, &user_id, .{ .name = user.event.name, .email = user.event.email }, fields.name, fields.description, fields.access, fields.hash, copy_from) catch |err| {
+        return ui.Session.FormFeedback.RepoFailure.fromError(err) orelse err;
+    };
+    return null;
+}
+
 // the new-repo form every page's new repo tab shows. the repo is created for
 // the logged-in user.
 pub const View = struct {
@@ -46,13 +100,13 @@ pub const View = struct {
         }
 
         {
-            var access_radio = try ui.widget.Radio.init(allocator, session, "access", &.{ "private", "public" }, if (saved_fields) |saved| @tagName(saved.access) else "private", null);
+            var access_radio = try ui.widget.Radio.init(allocator, session, "access", access_names, @tagName(if (saved_fields) |saved| saved.access else defaults.access), null);
             errdefer access_radio.deinit(allocator);
             try box.children.put(allocator, access_radio.getFocus().id, .{ .widget = .{ .radio = access_radio }, .rect = null, .min_size = .{ .width = null, .height = 3 } });
         }
 
         {
-            var hash_radio = try ui.widget.Radio.init(allocator, session, "hash", &.{ "sha1", "sha256" }, if (saved_fields) |saved| @tagName(saved.hash) else "sha1", null);
+            var hash_radio = try ui.widget.Radio.init(allocator, session, "hash", hash_names, @tagName(if (saved_fields) |saved| saved.hash else defaults.hash), null);
             errdefer hash_radio.deinit(allocator);
             try box.children.put(allocator, hash_radio.getFocus().id, .{ .widget = .{ .radio = hash_radio }, .rect = null, .min_size = .{ .width = null, .height = 3 } });
         }
@@ -152,21 +206,23 @@ pub const View = struct {
         defer allocator.free(description);
         const copy = try copy_input.text(allocator);
         defer allocator.free(copy);
-        const hash_kind = std.meta.stringToEnum(hash.HashKind, (try formRadio(self.formBox(), "hash")).selected()) orelse unreachable;
-        const access = std.meta.stringToEnum(evt.Repo.Access, (try formRadio(self.formBox(), "access")).selected()) orelse unreachable;
-
-        _ = evt.createRepo(io, allocator, users_dir, &user_id, .{ .name = user.event.name, .email = user.event.email }, name, description, access, hash_kind, if (copy.len == 0) null else .{ .admin_moment = moment, .path = copy }) catch |err| {
-            const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
-            const aa = self.session.arena.allocator();
-            self.session.data.form_feedback = .{ .repo = .{ .failure = failure, .fields = .{
-                .name = try aa.dupe(u8, name),
-                .description = try aa.dupe(u8, description),
-                .hash = hash_kind,
-                .access = access,
-                .copy = try aa.dupe(u8, copy),
-            } } };
-            return;
+        const fields: Fields = .{
+            .name = name,
+            .description = description,
+            .hash = parseHash((try formRadio(self.formBox(), "hash")).selected()) orelse unreachable,
+            .access = parseAccess((try formRadio(self.formBox(), "access")).selected()) orelse unreachable,
+            .copy = copy,
         };
+
+        if (try create(io, allocator, users_dir, moment, user_id, user, fields)) |failure| {
+            const aa = self.session.arena.allocator();
+            var saved = fields;
+            saved.name = try aa.dupe(u8, name);
+            saved.description = try aa.dupe(u8, description);
+            saved.copy = try aa.dupe(u8, copy);
+            self.session.data.form_feedback = .{ .repo = .{ .failure = failure, .fields = saved } };
+            return;
+        }
 
         // wipe the form so a return visit starts fresh
         name_input.clear(allocator);

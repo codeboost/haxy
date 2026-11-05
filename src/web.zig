@@ -9,6 +9,7 @@ const api_account = @import("./api/account.zig");
 const api_discovery = @import("./api/discovery.zig");
 const api_issues = @import("./api/issues.zig");
 const api_repo = @import("./api/repo.zig");
+const api_repo_create = @import("./api/repo_create.zig");
 const api_session = @import("./api/session.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
@@ -214,6 +215,13 @@ fn routeApiRequest(
             .local => null,
         };
         return api_account.handle(io, request, allocator, server, route);
+    }
+    if (api_repo_create.route(path)) {
+        const server: ?api_repo_create.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .session_store = server.session_store },
+            .local => null,
+        };
+        return api_repo_create.handle(io, request, allocator, server);
     }
     if (api_discovery.route(path)) |route| {
         const server: ?api_discovery.Server = switch (host) {
@@ -840,19 +848,16 @@ fn handleRepoNew(
     const copy = (try parseFormField(allocator, body, "copy")) orelse try allocator.dupe(u8, "");
     defer allocator.free(copy);
     const bad_request: std.http.Server.Request.RespondOptions = .{ .status = .bad_request, .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }} };
-    const hash_kind = std.meta.stringToEnum(hash.HashKind, hash_value) orelse return request.respond("invalid hash", bad_request);
-    const access = std.meta.stringToEnum(evt.Repo.Access, access_value) orelse return request.respond("invalid access", bad_request);
-
-    _ = evt.createRepo(io, allocator, users_dir, &user_id, .{ .name = user.event.name, .email = user.event.email }, name, description, access, hash_kind, if (copy.len == 0) null else .{ .admin_moment = moment, .path = copy }) catch |err| {
-        const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
-        return respondFormFailure(request, allocator, session_store, form_location, .{ .repo = .{ .failure = failure, .fields = .{
-            .name = name,
-            .description = description,
-            .hash = hash_kind,
-            .access = access,
-            .copy = copy,
-        } } });
+    const fields: ui.NewRepo.Fields = .{
+        .name = name,
+        .description = description,
+        .hash = ui.NewRepo.parseHash(hash_value) orelse return request.respond("invalid hash", bad_request),
+        .access = ui.NewRepo.parseAccess(access_value) orelse return request.respond("invalid access", bad_request),
+        .copy = copy,
     };
+
+    if (try ui.NewRepo.create(io, allocator, users_dir, moment, user_id, user, fields)) |failure|
+        return respondFormFailure(request, allocator, session_store, form_location, .{ .repo = .{ .failure = failure, .fields = fields } });
 
     const location = try allocator.print("/{s}:{s}", .{ user.event.name, name });
     defer allocator.free(location);

@@ -2535,13 +2535,7 @@ pub const Session = struct {
         },
         repo: struct {
             failure: RepoFailure,
-            fields: struct {
-                name: []const u8,
-                description: []const u8,
-                hash: hash.HashKind,
-                access: evt.Repo.Access,
-                copy: []const u8,
-            },
+            fields: NewRepo.Fields,
         },
         repo_settings: struct {
             failure: RepoFailure,

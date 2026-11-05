@@ -82,8 +82,12 @@ test "label and assignee links replace the search's own filter of that kind and 
     try std.testing.expectEqualStrings("label:bug crash assignee:alice", labels[0].search);
     try std.testing.expectEqualStrings("label:ui crash assignee:alice", labels[1].search);
 
-    // an assignee no account holds is shown, and filtered, by email alone
-    const assignees = try api_thread.assigneeLinks(aa, &.{ .{ .email = "alice@example.test", .name = "alice" }, .{ .email = "x@example.test" } }, "");
+    // an assignee no account holds is shown, and filtered, by email alone;
+    // each names its assignment, which unassigns them
+    const thread_id: [evt.event_id_size]u8 = @splat(3);
+    const assignees = try api_thread.assigneeLinks(aa, &thread_id, &.{ .{ .email = "alice@example.test", .name = "alice" }, .{ .email = "x@example.test" } }, "");
+    try std.testing.expectEqualStrings(&std.fmt.bytesToHex(evt.Assignment.idOf(&thread_id, "alice@example.test"), .lower), &assignees[0].id);
+    try std.testing.expectEqualStrings(&std.fmt.bytesToHex(evt.Assignment.idOf(&thread_id, "x@example.test"), .lower), &assignees[1].id);
     try std.testing.expectEqualStrings("alice", assignees[0].name.?);
     try std.testing.expectEqual(null, assignees[0].email);
     try std.testing.expectEqualStrings("assignee:alice", assignees[0].search);
@@ -129,11 +133,12 @@ test "what a viewer may do with a kind's threads follows the TUI's rules, with a
     try expectJson("{\"create\":{\"available\":false,\"reason\":{\"code\":\"unauthenticated\",\"message\":\"Log in to open an issue.\"}}}", api_thread.listActions(.issue, .{ .may_write = false, .signed_in = false }));
     try expectJson("{\"create\":{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Your role in this repository doesn't allow opening issues.\"}}}", api_thread.listActions(.issue, .{ .may_write = false, .signed_in = true }));
 
-    // changing one takes its author or a writer
-    try expectJson("{\"edit\":{\"available\":true},\"set_status\":{\"available\":true},\"remove\":{\"available\":true}}", api_thread.threadActions(.issue, .{ .may_write = true, .signed_in = true }));
+    // changing one, or who is assigned to it, takes its author or a writer
+    try expectJson("{\"edit\":{\"available\":true},\"set_status\":{\"available\":true},\"remove\":{\"available\":true},\"assign\":{\"available\":true}}", api_thread.threadActions(.issue, .{ .may_write = true, .signed_in = true }));
     const refused = api_thread.threadActions(.issue, .{ .may_write = false, .signed_in = true });
     try expectJson("{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Only the issue's author and the repository's writers can change it.\"}}", refused.edit);
     try expectJson("{\"available\":false,\"reason\":{\"code\":\"unauthenticated\",\"message\":\"Log in to change this issue.\"}}", api_thread.threadActions(.issue, .{ .may_write = false, .signed_in = false }).remove);
+    try expectJson("{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Only the issue's author and the repository's writers can assign people to it.\"}}", refused.assign);
 }
 
 test "a write names a thread's fields; an id or revision it sends must be one haxy could have given out" {

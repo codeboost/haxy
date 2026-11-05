@@ -1,7 +1,6 @@
 const std = @import("std");
 const evt = @import("../event.zig");
 const xit = @import("xit");
-const rp = xit.repo;
 const hash = xit.hash;
 
 thread_id: [evt.event_id_size * 2]u8,
@@ -43,7 +42,8 @@ pub fn idOf(thread_id: *const [evt.event_id_size]u8, email: []const u8) [evt.eve
     return digest[0..evt.event_id_size].*;
 }
 
-fn emailValid(email: []const u8) bool {
+// whether an assignment may hold `email`: up to `email_max_len` bytes, no whitespace
+pub fn emailValid(email: []const u8) bool {
     if (email.len == 0 or email.len > email_max_len) return false;
     for (email) |ch| {
         if (std.ascii.isWhitespace(ch)) return false;
@@ -134,43 +134,6 @@ pub fn indexIssue(
     const issues = try DB.SortedSet(.read_write).init(try by_assignee.putCursor(email_key));
     _ = try issues.remove(order_key);
     if (0 == try issues.count()) _ = try by_assignee.remove(email_key);
-}
-
-// assign `email` to a thread and return the event id. `repo` must be writable.
-pub fn create(
-    host: evt.Host,
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    thread_kind: evt.EventKind,
-    thread_id: *const [evt.event_id_size * 2]u8,
-    email: []const u8,
-    author: evt.CommitAuthor,
-) ![evt.event_id_size * 2]u8 {
-    if (!emailValid(email)) return error.InvalidFields;
-
-    const thread_id_bytes = evt.parseEventId(thread_id) catch return error.NotFound;
-    if (!try evt.threadHolds(repo_kind, repo_opts, io, allocator, repo, thread_kind, &thread_id_bytes, null)) return error.NotFound;
-
-    const id_bytes = idOf(&thread_id_bytes, email);
-    {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        defer arena.deinit();
-        if (try evt.readFromRepo(Self, repo_kind, repo_opts, io, allocator, &arena, repo, &id_bytes)) |existing| {
-            if (!existing.removed) return error.AlreadyAssigned;
-        }
-    }
-
-    const event_id = std.fmt.bytesToHex(id_bytes, .lower);
-    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{.{
-        .id = event_id,
-        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        .author = author,
-        .event = .{ .assign = .{ .thread_id = thread_id.*, .email = email } },
-    }});
-    return event_id;
 }
 
 // read an assignment by event id, or null if the id isn't a known assignment

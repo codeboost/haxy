@@ -92,8 +92,8 @@ pub fn handle(
     return api.respondJson(request, body.written(), .{});
 }
 
-const issues_off: api.Error = .{ .code = .not_found, .message = "This repository doesn't use issues." };
-const no_such_issue: api.Error = .{ .code = .not_found, .message = "There is no issue with this id." };
+pub const issues_off: api.Error = .{ .code = .not_found, .message = "This repository doesn't use issues." };
+pub const no_such_issue: api.Error = .{ .code = .not_found, .message = "There is no issue with this id." };
 const stale_cursor: api.Error = .{
     .code = .validation,
     .message = "Check the paging parameters.",
@@ -292,7 +292,7 @@ pub const StatusRequest = struct {
 
 const unauthenticated: api.Error = .{ .code = .unauthenticated, .message = "Log in to make changes to issues." };
 const role_forbidden: api.Error = .{ .code = .forbidden, .message = "Your role in this repository doesn't allow writing issues." };
-const change_forbidden: api.Error = .{ .code = .forbidden, .message = "Only the issue's author and the repository's writers can change it." };
+pub const change_forbidden: api.Error = .{ .code = .forbidden, .message = "Only the issue's author and the repository's writers can change it." };
 const stale_revision: api.Error = .{
     .code = .conflict,
     .message = "This issue changed since you loaded it.",
@@ -411,11 +411,11 @@ fn threadFields(aa: std.mem.Allocator, fields: anytype) !thread_write.Fields {
     return .{ .title = fields.title, .labels = fields.labels, .description = try thread_write.plainNewlines(aa, fields.description) };
 }
 
-const Authorized = union(enum) { actor: ui.Actor, refused: api.Error };
+pub const Authorized = union(enum) { actor: ui.Actor, refused: api.Error };
 
 // who the write acts as, checked against the admin db as it is now: a role
 // revoked since the viewer's page loaded refuses the write
-fn authorize(
+pub fn authorize(
     io: std.Io,
     allocator: std.mem.Allocator,
     arena: *std.heap.ArenaAllocator,
@@ -439,7 +439,7 @@ fn authorize(
 }
 
 // the issue `id` names as its own route answers it, or null when there is none
-fn readDetail(arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8) !?[]const u8 {
+pub fn readDetail(arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8) !?[]const u8 {
     const aa = arena.allocator();
     var body: std.Io.Writer.Allocating = .init(aa);
     const hex = try aa.dupe(u8, &std.fmt.bytesToHex(id.*, .lower));
@@ -461,7 +461,7 @@ fn readDetail(arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.O
     return body.written();
 }
 
-fn respondDetail(request: *std.http.Server.Request, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8, status: std.http.Status) !void {
+pub fn respondDetail(request: *std.http.Server.Request, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8, status: std.http.Status) !void {
     // the write landed; only a removal racing it leaves nothing to show
     const detail = (try readDetail(arena, io, opened, id)) orelse return api.respondError(request, allocator, no_such_issue, .{});
     return api.respondJson(request, detail, .{ .status = status });

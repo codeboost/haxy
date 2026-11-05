@@ -282,3 +282,91 @@ test "two concurrent edits of a git repository's issue from the same revision: o
     const issue = (try evt.readRecordSubset(evt.Issue, evt.Issue.Record, evt.EventDB(opts.hash), opts.hash, try evt.currentMomentFromDb(opts.hash, event_db.db), &arena, &id)).?;
     try std.testing.expectEqualStrings(if (first_landed) "First" else "Second", issue.event.title);
 }
+
+// the emails assigned to the thread `id` names, oldest first
+fn assignees(arena: *std.heap.ArenaAllocator, repo: *rp.Repo(.xit, .{}), id: *const [evt.event_id_size]u8) ![]const []const u8 {
+    const opts: rp.RepoOpts(.xit) = .{};
+    return evt.Assignment.load(opts.hash, arena, try evt.currentMoment(opts, repo), id);
+}
+
+test "assigning by email, and unassigning, follow the TUI's rules: once each, by the thread's author or a writer" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var repo = try rp.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const id: [evt.event_id_size]u8 = @splat(15);
+    try thread_write.create(.local, io, allocator, source, .issue, &id, .{ .title = "Assign me", .labels = "", .description = "" }, writer.author);
+
+    // with no accounts to look names up in, only an email assigns
+    const assigned = try thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "  ada@example.test ");
+    try std.testing.expectEqualSlices(u8, &evt.Assignment.idOf(&id, "ada@example.test"), &assigned.assigned);
+    try std.testing.expectEqual(.not_an_email, (try thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "ada")).refused);
+    try std.testing.expectEqual(.already_assigned, (try thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "ada@example.test")).refused);
+    _ = try thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "bo@example.test");
+    try std.testing.expectEqual(2, (try assignees(&arena, &repo, &id)).len);
+
+    // a reader who didn't open the thread may do neither
+    try std.testing.expectError(error.Forbidden, thread_write.assign(.local, io, allocator, source, reader, null, .issue, &id, "reed@example.test"));
+    try std.testing.expectError(error.Forbidden, thread_write.unassign(.local, io, allocator, source, reader, .issue, &id, &evt.Assignment.idOf(&id, "ada@example.test")));
+
+    // unassigning someone not assigned changes nothing, and says so
+    try thread_write.unassign(.local, io, allocator, source, writer, .issue, &id, &evt.Assignment.idOf(&id, "ada@example.test"));
+    try std.testing.expectError(error.NotAssigned, thread_write.unassign(.local, io, allocator, source, writer, .issue, &id, &evt.Assignment.idOf(&id, "ada@example.test")));
+    try std.testing.expectError(error.NotAssigned, thread_write.unassign(.local, io, allocator, source, writer, .issue, &id, &evt.Assignment.idOf(&id, "never@example.test")));
+    const left = try assignees(&arena, &repo, &id);
+    try std.testing.expectEqual(1, left.len);
+    try std.testing.expectEqualStrings("bo@example.test", left[0]);
+
+    // someone unassigned may be assigned again
+    _ = (try thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "ada@example.test")).assigned;
+
+    // a thread that isn't one, or is gone, takes no assignment
+    const missing: [evt.event_id_size]u8 = @splat(16);
+    try std.testing.expectError(error.NotFound, thread_write.assign(.local, io, allocator, source, writer, null, .issue, &missing, "ada@example.test"));
+    try std.testing.expectError(error.NotFound, thread_write.assign(.local, io, allocator, source, writer, null, .discuss, &id, "ada@example.test"));
+    try thread_write.remove(.local, io, allocator, source, writer, .issue, &id, .issue, &id);
+    try std.testing.expectError(error.NotFound, thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "cy@example.test"));
+    try std.testing.expectError(error.NotFound, thread_write.unassign(.local, io, allocator, source, writer, .issue, &id, &evt.Assignment.idOf(&id, "bo@example.test")));
+}
+
+test "in a git repository, assigning and unassigning check the events branch as it is" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    const opts: rp.RepoOpts(.git) = .{};
+    {
+        var repo = try rp.Repo(.git, opts).init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+    }
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .git };
+    const forget = struct {
+        fn run(dir_path: []const u8) !void {
+            var repo = try rp.Repo(.git, opts).open(std.testing.io, std.testing.allocator, .{ .path = dir_path });
+            defer repo.deinit(std.testing.io, std.testing.allocator);
+            try evt.LocalEventDB(opts.hash).delete(std.testing.io, repo.core.repo_dir);
+        }
+    }.run;
+
+    const id: [evt.event_id_size]u8 = @splat(17);
+    try thread_write.create(.local, io, allocator, source, .issue, &id, .{ .title = "Cloned", .labels = "", .description = "" }, writer.author);
+    _ = (try thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "ada@example.test")).assigned;
+
+    // as in a fresh clone, nothing has read the events branch into the db yet
+    try forget(path);
+    try std.testing.expectEqual(.already_assigned, (try thread_write.assign(.local, io, allocator, source, writer, null, .issue, &id, "ada@example.test")).refused);
+    try forget(path);
+    try thread_write.unassign(.local, io, allocator, source, writer, .issue, &id, &evt.Assignment.idOf(&id, "ada@example.test"));
+    try forget(path);
+    try std.testing.expectError(error.NotAssigned, thread_write.unassign(.local, io, allocator, source, writer, .issue, &id, &evt.Assignment.idOf(&id, "ada@example.test")));
+}

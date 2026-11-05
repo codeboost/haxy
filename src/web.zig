@@ -6,6 +6,7 @@ const hash = xit.hash;
 const evt = @import("./event.zig");
 const api = @import("./api.zig");
 const api_account = @import("./api/account.zig");
+const api_assignees = @import("./api/assignees.zig");
 const api_commits = @import("./api/commits.zig");
 const api_discovery = @import("./api/discovery.zig");
 const api_events = @import("./api/events.zig");
@@ -241,6 +242,7 @@ fn routeApiRequest(
         };
         return api_repo_admin.handle(io, request, allocator, server, route, query);
     }
+    if (api_assignees.route(path)) |route| return api_assignees.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route);
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_events.route(path)) |route| return api_events.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
@@ -1786,45 +1788,27 @@ fn handleAssign(
     const actor = (try authorizeWrite(io, allocator, &arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    if (!try source.canModify(io, allocator, actor, parts.thread_kind, &parts.thread_id)) return respondForbidden(request);
 
     const text = blk: {
         const body = try readFormBody(request, allocator);
         defer allocator.free(body);
         break :blk (try parseFormField(arena.allocator(), body, "assignee")) orelse "";
     };
-    const failure: ?ui.Session.FormFeedback.AssignmentFailure = blk: {
-        const lookup = switch (host) {
-            .local => try ui.assigneeEmail(null, &arena, text),
-            .server => |server| server: {
-                var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
-                defer admin_repo.deinit(io, allocator);
-                break :server try ui.assigneeEmail(try evt.currentMoment(evt.admin_repo_opts, &admin_repo), &arena, text);
-            },
-        };
-        const email = switch (lookup) {
-            .email => |email| email,
-            .failure => |value| break :blk value,
-        };
-        const thread_id_hex = std.fmt.bytesToHex(parts.thread_id, .lower);
-        switch (source.repo_kind) {
-            inline else => |repo_kind| {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                switch (any_repo) {
-                    inline else => |*repo| _ = evt.Assignment.create(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &thread_id_hex, email, actor.author) catch |err| switch (err) {
-                        error.AlreadyAssigned => break :blk .already_assigned,
-                        error.InvalidFields => break :blk .not_an_email,
-                        error.NotFound => return respondRemoveNotFound(request),
-                        else => |e| return e,
-                    },
-                }
-            },
-        }
-        break :blk null;
+    var admin_repo_maybe: ?rp.Repo(.xit, evt.admin_repo_opts) = switch (host) {
+        .local => null,
+        .server => |server| try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path }),
     };
-    if (failure) |value| return respondThreadFormFailure(request, allocator, host, base, .{ .assignment = .{ .failure = value, .text = text } });
+    defer if (admin_repo_maybe) |*admin_repo| admin_repo.deinit(io, allocator);
+    const admin_moment = if (admin_repo_maybe) |*admin_repo| try evt.currentMoment(evt.admin_repo_opts, admin_repo) else null;
+    const assigned = thread_write.assign(host.event(), io, allocator, request_repo.source, actor, admin_moment, parts.thread_kind, &parts.thread_id, text) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
+        error.NotFound => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
+    switch (assigned) {
+        .assigned => {},
+        .refused => |failure| return respondThreadFormFailure(request, allocator, host, base, .{ .assignment = .{ .failure = failure, .text = text } }),
+    }
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = base }} });
 }
 
@@ -1849,21 +1833,12 @@ fn handleUnassign(
     const actor = (try authorizeWrite(io, allocator, &arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    if (!try source.canModify(io, allocator, actor, parts.thread_kind, &parts.thread_id)) return respondForbidden(request);
 
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| evt.removeInThread(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &parts.thread_id, .assign, &evt.Assignment.idOf(&parts.thread_id, email), actor.author) catch |err| switch (err) {
-                    error.EventNotFound => return respondRemoveNotFound(request),
-                    else => |e| return e,
-                },
-            }
-        },
-    }
+    thread_write.unassign(host.event(), io, allocator, request_repo.source, actor, parts.thread_kind, &parts.thread_id, &evt.Assignment.idOf(&parts.thread_id, email)) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
+        error.NotFound, error.NotAssigned => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = thread_url }} });
 }
 

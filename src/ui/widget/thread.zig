@@ -1643,36 +1643,19 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             const source = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
             const thread_id = try evt.parseEventId(entry.id);
-            if (!try source.canModify(io, allocator, actor, kind, &thread_id)) return;
-
-            var arena = std.heap.ArenaAllocator.init(allocator);
-            defer arena.deinit();
-            const failure: ?ui.Session.FormFeedback.AssignmentFailure = blk: {
-                const moment = if (self.session.data.host_kind == .local) null else self.session.haxy_moment;
-                const email = switch (try ui.assigneeEmail(moment, &arena, text)) {
-                    .email => |email| email,
-                    .failure => |value| break :blk value,
-                };
-                const thread_id_hex = std.fmt.bytesToHex(thread_id, .lower);
-                switch (source.repo_kind) {
-                    inline else => |repo_kind| {
-                        var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                        defer any_repo.deinit(io, allocator);
-                        switch (any_repo) {
-                            inline else => |*repo| _ = evt.Assignment.create(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id_hex, email, actor.author) catch |err| switch (err) {
-                                error.AlreadyAssigned => break :blk .already_assigned,
-                                error.InvalidFields => break :blk .not_an_email,
-                                else => |e| return e,
-                            },
-                        }
-                    },
-                }
-                break :blk null;
+            const moment = if (self.session.data.host_kind == .local) null else self.session.haxy_moment;
+            const assigned: ?thread_write.Assigned = thread_write.assign(self.session.eventHost(), io, allocator, source, actor, moment, kind, &thread_id, text) catch |err| switch (err) {
+                // a stale page; the refresh below shows the thread as it is
+                error.Forbidden, error.NotFound => null,
+                else => |e| return e,
             };
-            if (failure) |value| {
-                self.session.data.form_feedback = .{ .assignment = .{ .failure = value, .text = try self.session.arena.allocator().dupe(u8, text) } };
-                return;
-            }
+            if (assigned) |value| switch (value) {
+                .assigned => {},
+                .refused => |failure| {
+                    self.session.data.form_feedback = .{ .assignment = .{ .failure = failure, .text = try self.session.arena.allocator().dupe(u8, text) } };
+                    return;
+                },
+            };
             try self.session.navigate(ui.RoutablePage.repoThreadCommentsRoute(kind, self.data.identity, entry.id, 0) orelse return error.RouteTooLong);
         }
 
@@ -1683,21 +1666,11 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             const source = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
             const thread_id = try evt.parseEventId(entry.id);
-            if (!try source.canModify(io, allocator, actor, kind, &thread_id)) return;
-
-            switch (source.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| evt.removeInThread(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, .assign, &evt.Assignment.idOf(&thread_id, email), actor.author) catch |err| switch (err) {
-                            // a stale button; the refresh below shows the row as it is
-                            error.EventNotFound => {},
-                            else => |e| return e,
-                        },
-                    }
-                },
-            }
+            thread_write.unassign(self.session.eventHost(), io, allocator, source, actor, kind, &thread_id, &evt.Assignment.idOf(&thread_id, email)) catch |err| switch (err) {
+                // a stale button; the refresh below shows the row as it is
+                error.Forbidden, error.NotFound, error.NotAssigned => {},
+                else => |e| return e,
+            };
             try self.session.navigate(ui.RoutablePage.repoThreadCommentsRoute(kind, self.data.identity, entry.id, 0) orelse return error.RouteTooLong);
         }
 

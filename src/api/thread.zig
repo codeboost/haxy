@@ -30,6 +30,10 @@ pub const Route = struct {
         thread: []const u8,
         // one thread's status, `<id>/status`, its id still encoded
         status: []const u8,
+        // one thread's comments, `<id>/comments`, its id still encoded
+        comments: []const u8,
+        // one comment in a thread, `<id>/comments/<comment id>`, both still encoded
+        comment: struct { thread: []const u8, comment: []const u8 },
     };
 };
 
@@ -58,11 +62,20 @@ pub fn route(path: []const u8, comptime segment: []const u8) ?Route {
     };
 }
 
-// what follows a kind's segment: nothing, "/labels", "/<id>" or "/<id>/status"
+// what follows a kind's segment: nothing, "/labels", "/<id>", "/<id>/status",
+// "/<id>/comments" or "/<id>/comments/<comment id>"
 fn resourceOf(tail: []const u8) ?Route.Resource {
     if (tail.len == 0) return .list;
     if (tail[0] != '/') return null;
     const rest = tail[1..];
+    var segments = std.mem.splitScalar(u8, rest, '/');
+    const first = segments.first();
+    if (segments.next()) |second| if (std.mem.eql(u8, second, "comments")) {
+        if (first.len == 0 or std.mem.eql(u8, first, "labels")) return null;
+        const comment = segments.next() orelse return .{ .comments = first };
+        if (comment.len == 0 or segments.next() != null) return null;
+        return .{ .comment = .{ .thread = first, .comment = comment } };
+    };
     const status_suffix = "/status";
     if (std.mem.endsWith(u8, rest, status_suffix)) {
         const id = rest[0 .. rest.len - status_suffix.len];

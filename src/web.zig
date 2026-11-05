@@ -1536,7 +1536,6 @@ fn handleCommentNew(
     }
 
     const thread_id_hex = std.fmt.bytesToHex(parts.thread_id, .lower);
-    const parent_id_hex = std.fmt.bytesToHex(parts.comment_id orelse parts.thread_id, .lower);
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse {
         try request.respond(not_found, .{
@@ -1546,24 +1545,17 @@ fn handleCommentNew(
         return;
     };
     defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    var event_id_hex: [evt.event_id_size * 2]u8 = undefined;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| event_id_hex = evt.Comment.create(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &thread_id_hex, &parent_id_hex, body, author) catch |err| switch (err) {
-                    // the url's thread or parent comment isn't what it claims
-                    error.NotFound => return request.respond(not_found, .{
-                        .status = .not_found,
-                        .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
-                    }),
-                    else => |e| return e,
-                },
-            }
-        },
-    }
+    var event_id: [evt.event_id_size]u8 = undefined;
+    io.random(&event_id);
+    thread_write.comment(host.event(), io, allocator, request_repo.source, parts.thread_kind, &parts.thread_id, if (parts.comment_id) |*parent| parent else null, &event_id, body, author) catch |err| switch (err) {
+        // the url's thread or parent comment isn't what it claims
+        error.NotFound => return request.respond(not_found, .{
+            .status = .not_found,
+            .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
+        }),
+        else => |e| return e,
+    };
+    const event_id_hex = std.fmt.bytesToHex(event_id, .lower);
 
     const location = try allocator.print("{s}/{s}:{s}/comment:{s}", .{ parts.repo_base, @tagName(parts.thread_kind), &thread_id_hex, &event_id_hex });
     defer allocator.free(location);
@@ -1919,32 +1911,6 @@ fn respondUploadError(request: *std.http.Server.Request, status: std.http.Status
     });
 }
 
-// re-emit the comment `parts` names with a new body, in the repo the host
-// resolves the base to.
-fn updateComment(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    host: Host,
-    parts: CommentBaseParts,
-    body: []const u8,
-    author: evt.CommitAuthor,
-) !void {
-    const comment_id = parts.comment_id orelse return error.NotFound;
-    const thread_id = std.fmt.bytesToHex(parts.thread_id, .lower);
-    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return error.NotFound;
-    defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try evt.Comment.update(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &thread_id, &comment_id, body, author),
-            }
-        },
-    }
-}
-
 // edit actions share a suffix; the base identifies the event being edited.
 fn handleEdit(
     io: std.Io,
@@ -1971,14 +1937,11 @@ fn handleCommentEdit(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
     // edits only reach here for a comment
     const comment_id = parts.comment_id orelse unreachable;
-    {
-        const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
-        defer request_repo.deinit(allocator);
-        if (!try request_repo.source.canModify(io, allocator, actor, .comment, &comment_id)) return respondForbidden(request);
-    }
+    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
+    defer request_repo.deinit(allocator);
+    if (!try request_repo.source.canModify(io, allocator, actor, .comment, &comment_id)) return respondForbidden(request);
 
     const form_body = try readFormBody(request, allocator);
     defer allocator.free(form_body);
@@ -1997,15 +1960,16 @@ fn handleCommentEdit(
         return;
     }
 
-    const not_found = "comment not found";
-    updateComment(io, allocator, host, parts, body, author) catch |err| switch (err) {
-        error.NotFound => {
-            try request.respond(not_found, .{
+    // the form replaces the body as it is, without a revision, as before
+    thread_write.editComment(host.event(), io, allocator, request_repo.source, actor, parts.thread_kind, &parts.thread_id, &comment_id, body, null) catch |err| switch (err) {
+        error.NotFound, error.Removed => {
+            try request.respond("comment not found", .{
                 .status = .not_found,
                 .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
             });
             return;
         },
+        error.Forbidden => return respondForbidden(request),
         else => |e| return e,
     };
 

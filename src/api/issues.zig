@@ -16,6 +16,7 @@ const api_thread = @import("./thread.zig");
 const evt = @import("../event.zig");
 const query_params = @import("./query.zig");
 const api_account = @import("./account.zig");
+const api_comments = @import("./comments.zig");
 const thread_write = @import("../thread_write.zig");
 const srch_thrd = @import("../search_thread.zig");
 const ui = @import("../ui.zig");
@@ -41,6 +42,10 @@ pub fn handle(
     // the still-encoded query string
     query: []const u8,
 ) !void {
+    switch (matched.resource) {
+        .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, matched, query, comment_kind),
+        else => {},
+    }
     const method = request.head.method;
     const read_methods = method == .GET or method == .HEAD;
     const change: ?Change = switch (matched.resource) {
@@ -48,6 +53,7 @@ pub fn handle(
         .labels => if (read_methods) null else return unsupported(request, allocator, "GET, HEAD"),
         .thread => if (read_methods) null else if (method == .PATCH) .edit else if (method == .DELETE) .remove else return unsupported(request, allocator, "GET, HEAD, PATCH, DELETE"),
         .status => if (method == .PUT) .set_status else return unsupported(request, allocator, "PUT"),
+        .comments, .comment => unreachable,
     };
     if (change) |value| return handleWrite(io, request, allocator, host, viewer, matched, value);
 
@@ -94,6 +100,9 @@ pub fn handle(
 
 const issues_off: api.Error = .{ .code = .not_found, .message = "This repository doesn't use issues." };
 const no_such_issue: api.Error = .{ .code = .not_found, .message = "There is no issue with this id." };
+
+// an issue's comments, as the shared comment routes serve them
+const comment_kind: api_comments.Kind = .{ .kind = .issue, .section = .issues, .noun = "issue", .plural = "issues", .off = issues_off, .no_such_thread = no_such_issue };
 const stale_cursor: api.Error = .{
     .code = .validation,
     .message = "Check the paging parameters.",
@@ -150,8 +159,8 @@ fn readRequest(aa: std.mem.Allocator, resource: api_thread.Route.Resource, query
             return .{ .ok = .{ .labels = .{ .search = search, .page = page } } };
         },
         .thread => |encoded| return .{ .ok = .{ .issue = std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded)) } },
-        // a write route; handle sends it elsewhere
-        .status => unreachable,
+        // a write route, or the comments'; handle sends them elsewhere
+        .status, .comments, .comment => unreachable,
     }
 }
 
@@ -343,6 +352,7 @@ fn handleWrite(
     const thread_id: ?[evt.event_id_size]u8 = switch (matched.resource) {
         .thread, .status => |encoded| evt.parseEventId(std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded))) catch return api.respondError(request, allocator, no_such_issue, .{}),
         .list, .labels => null,
+        .comments, .comment => unreachable,
     };
     if (thread_id) |*id| {
         if (try readDetail(&arena, io, &opened, id) == null) return api.respondError(request, allocator, no_such_issue, .{});

@@ -9,7 +9,10 @@
 //!   repo's owner, with the git config's author (`ui.localAuthor`);
 //! - who may change an existing event is `ui.RepoSource.canModify`: anyone
 //!   with the write role, otherwise only its author;
-//! - what a thread's fields must be is the kind's own `fieldsValid`.
+//! - what a thread's fields must be is the kind's own `fieldsValid`, and a
+//!   comment's `evt.Comment.fieldsValid`;
+//! - a reply's parent is the thread itself or a comment in it, and a comment
+//!   is changed only through its own thread (`evt.threadHolds`).
 //!
 //! patches have drafts, branches and forks of their own, which their callers
 //! handle before (or instead of) these.
@@ -271,6 +274,12 @@ pub fn remove(
                 inline else => |*repo| {
                     // a thread removed already stays removed
                     if (kind == thread_kind and !try threadLive(repo_kind, repo.self_repo_opts, io, allocator, repo, kind, id)) return error.NotFound;
+                    // a removed comment stays in its thread; removing it again
+                    // changes nothing, so writes nothing
+                    if (kind == .comment and try commentRemoved(repo_kind, repo.self_repo_opts, io, allocator, repo, id)) {
+                        if (!try evt.threadHolds(repo_kind, repo.self_repo_opts, io, allocator, repo, thread_kind, thread_id, .{ .comment = id })) return error.NotFound;
+                        return;
+                    }
                     evt.removeInThread(host, repo_kind, repo.self_repo_opts, io, allocator, repo, thread_kind, thread_id, kind, id, actor.author) catch |err| switch (err) {
                         error.EventNotFound => return error.NotFound,
                         else => |e| return e,
@@ -279,6 +288,21 @@ pub fn remove(
             }
         },
     }
+}
+
+// whether the comment `id` names exists and has been removed
+fn commentRemoved(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: *const [evt.event_id_size]u8,
+) !bool {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const record = (try evt.readFromRepo(evt.Comment, repo_kind, repo_opts, io, allocator, &arena, repo, id)) orelse return false;
+    return record.removed;
 }
 
 // whether the thread `id` names exists and isn't removed
@@ -310,6 +334,157 @@ fn threadLive(
         else => unreachable,
     } orelse return false;
     return !record.removed;
+}
+
+/// posts a comment on the thread `thread_id` names, of `thread_kind`: a reply
+/// to its comment `parent_id`, or to the thread itself when that is null,
+/// under `id`, written by `author`. the caller has checked the author's right
+/// to write in the kind's tab. error.InvalidFields for a body
+/// `evt.Comment.fieldsValid` refuses; error.NotFound when the thread isn't
+/// one of that kind or the parent isn't a comment in it; error.IdTaken when
+/// any event already has the id, so a retried post can't post twice.
+pub fn comment(
+    host: evt.Host,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ui.RepoSource,
+    thread_kind: evt.EventKind,
+    thread_id: *const [evt.event_id_size]u8,
+    parent_id: ?*const [evt.event_id_size]u8,
+    id: *const [evt.event_id_size]u8,
+    body: []const u8,
+    author: evt.CommitAuthor,
+) !void {
+    if (!evt.Comment.fieldsValid(body)) return error.InvalidFields;
+    // the thread itself is no comment, so naming it as the parent is no reply
+    const parent: ?*const [evt.event_id_size]u8 = if (parent_id) |p| (if (std.mem.eql(u8, p, thread_id)) null else p) else null;
+    const event = evt.EventWithId{
+        .id = std.fmt.bytesToHex(id.*, .lower),
+        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
+        .author = author,
+        .event = .{ .comment = .{
+            .thread_id = std.fmt.bytesToHex(thread_id.*, .lower),
+            .parent_id = std.fmt.bytesToHex((parent orelse thread_id).*, .lower),
+            .body = body,
+        } },
+    };
+    const locked = try lockEvents(io, source);
+    defer unlockEvents(io, locked);
+    try catchUp(host, io, allocator, source);
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                inline else => |*repo| {
+                    const repo_opts = repo.self_repo_opts;
+                    const child: ?evt.ThreadChild = if (parent) |p| .{ .comment = p } else null;
+                    if (!try evt.threadHolds(repo_kind, repo_opts, io, allocator, repo, thread_kind, thread_id, child)) return error.NotFound;
+                    if (repo_kind == .xit) {
+                        try evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{event}, IdFree(repo_opts.hash){ .id = id });
+                    } else {
+                        if (try idUsed(repo_kind, repo_opts, io, allocator, repo, id)) return error.IdTaken;
+                        try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{event});
+                    }
+                },
+            }
+        },
+    }
+}
+
+/// replaces the body of the comment `id` names, in the thread `thread_id`
+/// names, as `actor`; with a `revision` (`evt.Comment.contentRevision`), only
+/// while its body is still at it (error.Stale otherwise). error.InvalidFields
+/// for a body `evt.Comment.fieldsValid` refuses, error.NotFound when the
+/// comment isn't in that thread, error.Forbidden when the actor may not
+/// change it, error.Removed once it has been removed.
+pub fn editComment(
+    host: evt.Host,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ui.RepoSource,
+    actor: ui.Actor,
+    thread_kind: evt.EventKind,
+    thread_id: *const [evt.event_id_size]u8,
+    id: *const [evt.event_id_size]u8,
+    body: []const u8,
+    revision: ?evt.Comment.Revision,
+) !void {
+    if (!evt.Comment.fieldsValid(body)) return error.InvalidFields;
+    const locked = try lockEvents(io, source);
+    defer unlockEvents(io, locked);
+    try catchUp(host, io, allocator, source);
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                inline else => |*repo| if (!try evt.threadHolds(repo_kind, repo.self_repo_opts, io, allocator, repo, thread_kind, thread_id, .{ .comment = id })) return error.NotFound,
+            }
+        },
+    }
+    if (!try source.canModify(io, allocator, actor, .comment, id)) return error.Forbidden;
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                inline else => |*repo| {
+                    const repo_opts = repo.self_repo_opts;
+                    var arena = std.heap.ArenaAllocator.init(allocator);
+                    defer arena.deinit();
+                    const record = (try evt.readFromRepo(evt.Comment, repo_kind, repo_opts, io, allocator, &arena, repo, id)) orelse return error.NotFound;
+                    var events = [_]evt.EventWithId{.{
+                        .id = std.fmt.bytesToHex(id.*, .lower),
+                        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
+                        .author = actor.author,
+                        .event = .{ .comment = undefined },
+                    }};
+                    const rebase = CommentRebase(repo_opts.hash){ .arena = &arena, .id = id, .body = body, .revision = revision, .event = &events[0] };
+                    if (repo_kind == .xit) {
+                        // checked again in the write's own transaction, from
+                        // the comment as it is there
+                        try evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, rebase);
+                    } else {
+                        // a git repo's events have no transaction; the lock
+                        // holds the read and the write together
+                        try rebase.apply(record);
+                        try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
+                    }
+                },
+            }
+        },
+    }
+}
+
+// builds a comment edit's event from the comment as it is, refusing a
+// removed comment and a stale revision; a xit repo runs it inside the
+// write's transaction
+fn CommentRebase(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        // holds the read record's strings until the write is done
+        arena: *std.heap.ArenaAllocator,
+        id: *const [evt.event_id_size]u8,
+        body: []const u8,
+        revision: ?evt.Comment.Revision,
+        event: *evt.EventWithId,
+
+        pub fn check(self: @This(), moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+            const DB = evt.EventDB(hash_kind);
+            const record = (try evt.Comment.readById(DB, hash_kind, moment_maybe orelse return error.NotFound, self.arena, self.id)) orelse return error.NotFound;
+            try self.apply(record);
+        }
+
+        fn apply(self: @This(), record: evt.Comment.Record) !void {
+            if (record.removed) return error.Removed;
+            if (self.revision) |expected| {
+                if (!std.mem.eql(u8, &evt.Comment.contentRevision(record.event), &expected)) return error.Stale;
+            }
+            var updated = record.event;
+            updated.body = self.body;
+            self.event.event = .{ .comment = updated };
+        }
+    };
 }
 
 fn eventKind(comptime Event: type) evt.EventKind {

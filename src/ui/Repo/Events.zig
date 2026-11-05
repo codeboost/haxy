@@ -18,12 +18,39 @@ const Focus = xitui.focus.Focus;
 const active_tab_label = "active";
 const removed_tab_label = "removed";
 
-const page_size = 20;
+pub const page_size = 20;
+
+/// how many events each view's window holds: the shown view's and the
+/// other's (which is read for its count alone when 0)
+pub const WindowSizes = struct {
+    shown: usize = page_size,
+    others: usize = page_size,
+};
+
+/// the thread or comment an event opens. `thread_kind` is a thread kind
+/// (discuss, issue or patch) the repo has turned on; ids are hex.
+pub const Target = union(enum) {
+    thread: struct { thread_kind: evt.EventKind, thread: []const u8 },
+    comment: struct { thread_kind: evt.EventKind, thread: []const u8, comment: []const u8 },
+
+    /// the TUI's url of the target, or null when no route can name it
+    pub fn url(self: Target, arena: *std.heap.ArenaAllocator, identity: []const u8) !?[]const u8 {
+        const route = switch (self) {
+            .thread => |thread| ui.RoutablePage.repoThreadCommentsRoute(thread.thread_kind, identity, thread.thread, 0),
+            .comment => |comment| ui.RoutablePage.repoThreadCommentRoute(comment.thread_kind, identity, comment.thread, comment.comment, 0),
+        } orelse return null;
+        return try route.toUrl(arena);
+    }
+};
 
 pub const Item = struct {
     id: []const u8,
     kind: evt.EventKind,
     author: ui.Author,
+    // when the event was created, for kinds whose records keep it
+    created_timestamp: ?u64 = null,
+    // what the event's detail opens; only active events have one
+    target: ?Target = null,
     view_url: ?[]const u8 = null,
 };
 
@@ -69,6 +96,7 @@ pub fn init(
     moment_index: ?u64,
     local: bool,
     failure: ?[]const u8,
+    window_sizes: WindowSizes,
 ) !Self {
     const aa = arena.allocator();
     var result = try empty(aa, identity, requested_view, local, failure);
@@ -118,7 +146,7 @@ pub fn init(
     }
 
     if (moment_index != null) {
-        try readMomentEvents(repo_kind, repo_opts, arena, &result, haxy_moment, kind_map, admin_moment, identity, repo_event, selected);
+        try readMomentEvents(repo_kind, repo_opts, arena, &result, haxy_moment, kind_map, admin_moment, identity, repo_event, selected, window_sizes);
         return result;
     }
 
@@ -139,12 +167,13 @@ pub fn init(
         const selected_key = if (result.view == view) root_key else null;
         if (selected_key) |*key| if (!try id_set.contains(key)) return error.NotFound;
 
+        const size = if (result.view == view) window_sizes.shown else window_sizes.others;
         var iter = if (selected_key) |*key| try id_set.iteratorFrom(key) else try id_set.iteratorFromIndex(0);
         var events: std.ArrayList(Item) = .empty;
         while (try iter.next()) |cursor_value| {
             const id = try evt.readOrderKeyId(DB, cursor_value);
             const kind = (try evt.readEventKind(repo_opts.hash, kind_map, &id)) orelse continue;
-            if (events.items.len == page_size) {
+            if (events.items.len == size) {
                 event_window.next = .{ .id = try formatId(aa, &id), .kind = kind };
                 break;
             }
@@ -184,6 +213,7 @@ fn readMomentEvents(
     identity: []const u8,
     repo_event: evt.Repo,
     selected: []const u8,
+    window_sizes: WindowSizes,
 ) !void {
     const DB = evt.EventDB(repo_opts.hash);
     const aa = arena.allocator();
@@ -214,7 +244,8 @@ fn readMomentEvents(
             awaiting_selected = false;
         }
         const window_events = &events[@backingInt(view)];
-        if (window_events.items.len == page_size) {
+        const size = if (result.view == view) window_sizes.shown else window_sizes.others;
+        if (window_events.items.len == size) {
             if (event_window.next == null) event_window.next = .{ .id = try formatId(aa, &id), .kind = kind };
             continue;
         }
@@ -291,16 +322,36 @@ fn readItem(
     admin_moment: ?evt.AdminDB.HashMap(.read_only),
     identity: []const u8,
     repo_event: evt.Repo,
-    include_view_url: bool,
+    include_target: bool,
+    kind: evt.EventKind,
+    id: *const [evt.event_id_size]u8,
+) !?Item {
+    var item = (try readItemTarget(hash_kind, arena, haxy_moment, kind_map, admin_moment, repo_event, include_target, kind, id)) orelse return null;
+    if (item.target) |target| item.view_url = try target.url(arena, identity);
+    return item;
+}
+
+// an event's row: its author, when it was created, and (for `include_target`)
+// the thread or comment it opens in a thread tab the repo has turned on
+fn readItemTarget(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    kind_map: evt.EventDB(hash_kind).HashMap(.read_only),
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    repo_event: evt.Repo,
+    include_target: bool,
     kind: evt.EventKind,
     id: *const [evt.event_id_size]u8,
 ) !?Item {
     const DB = evt.EventDB(hash_kind);
+    const aa = arena.allocator();
     // the parts of a record a row shows
     const Authored = struct { author_email: ?[]const u8 };
+    const Created = struct { author_email: ?[]const u8, created_timestamp: u64 };
     const Owned = struct { event: struct { user_id: [evt.event_id_size * 2]u8 } };
     var item: Item = .{
-        .id = try formatId(arena.allocator(), id),
+        .id = try formatId(aa, id),
         .kind = kind,
         .author = .unknown,
     };
@@ -319,51 +370,42 @@ fn readItem(
         .fork => _ = (try evt.readRecordSubset(evt.Fork, struct { removed: bool }, DB, hash_kind, haxy_moment, arena, id)) orelse return null,
         .grant => _ = (try evt.readRecordSubset(evt.Grant, struct { removed: bool }, DB, hash_kind, haxy_moment, arena, id)) orelse return null,
         .notify => _ = (try evt.readRecordSubset(evt.Notify, struct { removed: bool }, DB, hash_kind, haxy_moment, arena, id)) orelse return null,
-        .discuss => {
-            const record = (try evt.readRecordSubset(evt.Discussion, Authored, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
+        inline .discuss, .issue, .patch => |thread_kind| {
+            const T = switch (thread_kind) {
+                .discuss => evt.Discussion,
+                .issue => evt.Issue,
+                .patch => evt.Patch,
+                else => comptime unreachable,
+            };
+            const record = (try evt.readRecordSubset(T, Created, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
             item.author = try ui.Author.initFromEmail(admin_moment, arena, record.author_email);
-            if (!include_view_url or repo_event.threadRole(.discuss) == null) return item;
-            const route = ui.RoutablePage.repoThreadCommentsRoute(.discuss, identity, item.id, 0) orelse return error.RouteTooLong;
-            item.view_url = try route.toUrl(arena);
-        },
-        .issue => {
-            const record = (try evt.readRecordSubset(evt.Issue, Authored, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
-            item.author = try ui.Author.initFromEmail(admin_moment, arena, record.author_email);
-            if (!include_view_url or repo_event.threadRole(.issue) == null) return item;
-            const route = ui.RoutablePage.repoThreadCommentsRoute(.issue, identity, item.id, 0) orelse return error.RouteTooLong;
-            item.view_url = try route.toUrl(arena);
+            item.created_timestamp = record.created_timestamp;
+            if (include_target and repo_event.threadRole(thread_kind) != null)
+                item.target = .{ .thread = .{ .thread_kind = thread_kind, .thread = item.id } };
         },
         .comment => {
-            const record = (try evt.readRecordSubset(evt.Comment, struct { author_email: ?[]const u8, event: struct { thread_id: [evt.event_id_size * 2]u8 } }, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
+            const record = (try evt.readRecordSubset(evt.Comment, struct { author_email: ?[]const u8, created_timestamp: u64, event: struct { thread_id: [evt.event_id_size * 2]u8 } }, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
             item.author = try ui.Author.initFromEmail(admin_moment, arena, record.author_email);
-            if (!include_view_url) return item;
+            item.created_timestamp = record.created_timestamp;
+            if (!include_target) return item;
             var thread_id: [evt.event_id_size]u8 = undefined;
             _ = std.fmt.hexToBytes(&thread_id, &record.event.thread_id) catch return error.InvalidEventId;
             const thread_kind = (try evt.readEventKind(hash_kind, kind_map, &thread_id)) orelse return item;
             if (repo_event.threadRole(thread_kind) == null) return item;
-            const route = ui.RoutablePage.repoThreadCommentRoute(thread_kind, identity, &record.event.thread_id, item.id, 0) orelse return item;
-            item.view_url = try route.toUrl(arena);
+            item.target = .{ .comment = .{ .thread_kind = thread_kind, .thread = try aa.dupe(u8, &record.event.thread_id), .comment = item.id } };
         },
         .attach => {
             const record = (try evt.readRecordSubset(evt.Attachment, struct { author_email: ?[]const u8, event: struct { target_id: [evt.event_id_size * 2]u8 } }, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
             item.author = try ui.Author.initFromEmail(admin_moment, arena, record.author_email);
-            if (!include_view_url) return item;
+            if (!include_target) return item;
             const target_id = try evt.parseEventId(&record.event.target_id);
             const target_kind = (try evt.readEventKind(hash_kind, kind_map, &target_id)) orelse return item;
             if (repo_event.threadRole(target_kind) == null) return item;
-            const route = ui.RoutablePage.repoThreadCommentsRoute(target_kind, identity, &record.event.target_id, 0) orelse return item;
-            item.view_url = try route.toUrl(arena);
+            item.target = .{ .thread = .{ .thread_kind = target_kind, .thread = try aa.dupe(u8, &record.event.target_id) } };
         },
         .assign => {
             const record = (try evt.readRecordSubset(evt.Assignment, Authored, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
             item.author = try ui.Author.initFromEmail(admin_moment, arena, record.author_email);
-        },
-        .patch => {
-            const record = (try evt.readRecordSubset(evt.Patch, Authored, DB, hash_kind, haxy_moment, arena, id)) orelse return null;
-            item.author = try ui.Author.initFromEmail(admin_moment, arena, record.author_email);
-            if (!include_view_url or repo_event.threadRole(.patch) == null) return item;
-            const route = ui.RoutablePage.repoThreadCommentsRoute(.patch, identity, item.id, 0) orelse return error.RouteTooLong;
-            item.view_url = try route.toUrl(arena);
         },
         .patchrev => {
             const record = (try evt.readRecordSubset(evt.PatchRev, Authored, DB, hash_kind, haxy_moment, arena, id)) orelse return null;

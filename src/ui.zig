@@ -2110,6 +2110,21 @@ pub fn ResolvedRefOrOid(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.
             requested_ref_or_oid: ?RoutablePage.RefOrOid,
             requested_value: []const u8,
         ) !?Self {
+            // a repo without a readable moment (an empty xit db) resolves no ref
+            var moment = repo.core.latestMoment() catch return initAt(null, io, aa, requested_ref_or_oid, requested_value);
+            const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
+            return initAt(state, io, aa, requested_ref_or_oid, requested_value);
+        }
+
+        // `init` read at one snapshot of the repo (`state`), so a caller can
+        // read the ref and what it names together; null reads no refs
+        pub fn initAt(
+            state_maybe: ?rp.Repo(repo_kind, repo_opts).State(.read_only),
+            io: std.Io,
+            aa: std.mem.Allocator,
+            requested_ref_or_oid: ?RoutablePage.RefOrOid,
+            requested_value: []const u8,
+        ) !?Self {
             var ref_or_oid: RoutablePage.RefOrOid = requested_ref_or_oid orelse .branch;
             // the decoded ref name / oid to look up. a named ref arrives url-encoded.
             var value: []const u8 = if (requested_ref_or_oid == null)
@@ -2119,7 +2134,8 @@ pub fn ResolvedRefOrOid(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.
             // no ref named: fall back to HEAD's branch (or its oid when detached).
             var head_buf: [rf.MAX_REF_CONTENT_SIZE]u8 = undefined;
             if (requested_ref_or_oid == null) {
-                if (repo.head(io, &head_buf)) |head| switch (head) {
+                const head_maybe = if (state_maybe) |state| rf.readHead(repo_kind, repo_opts, state, io, &head_buf) catch null else null;
+                if (head_maybe) |head| switch (head) {
                     .ref => |r| {
                         ref_or_oid = .branch;
                         value = r.name;
@@ -2128,7 +2144,7 @@ pub fn ResolvedRefOrOid(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.
                         ref_or_oid = .object;
                         value = o;
                     },
-                } else |_| {}
+                };
             }
 
             var oid: [hex_len]u8 = undefined;
@@ -2139,7 +2155,8 @@ pub fn ResolvedRefOrOid(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.
                 },
                 .branch, .tag => {
                     const ref_kind: rf.RefKind = if (ref_or_oid == .branch) .head else .tag;
-                    oid = (repo.readRef(io, .{ .kind = ref_kind, .name = value }) catch null) orelse return null;
+                    const state = state_maybe orelse return null;
+                    oid = (rf.readRecur(repo_kind, repo_opts, state, io, .{ .ref = .{ .kind = ref_kind, .name = value } }) catch null) orelse return null;
                 },
             }
             // store url-encoded so the route layer can hold the value verbatim.

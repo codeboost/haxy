@@ -16,10 +16,10 @@ const Focus = xitui.focus.Focus;
 const inp = @import("../input.zig");
 
 // how many commits a page shows before a "next" link appears.
-const page_size = 20;
+pub const page_size = 20;
 // the largest message read even when it has fewer than the preview's line
 // limit.
-const max_message_size = 100 * 1024;
+pub const max_message_size = 100 * 1024;
 
 // one commit on the current page.
 pub const Commit = struct {
@@ -65,12 +65,54 @@ no_commits: bool = false,
 
 const Self = @This();
 
-// walk the log for an opened repo. generic over the repo's backend and hash
-// kind so the oid buffers it threads through match the repo's opts. `message`
-// reads the walk root's message whole, up to the safety limit above. walks
-// with the arena's backing allocator (transient; the commits we keep are
-// duped into the page arena so they outlive it).
+// walk the log for an opened repo, a page of `page_size` commits. generic
+// over the repo's backend and hash kind so the oid buffers it threads through
+// match the repo's opts. `message` reads the walk root's message whole, up to
+// the safety limit above. walks with the arena's backing allocator
+// (transient; the commits we keep are duped into the page arena so they
+// outlive it).
 pub fn init(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    handle: ui.RepoHandle,
+    requested_ref_or_oid: ?ui.RoutablePage.RefOrOid,
+    requested_value: []const u8,
+    message: bool,
+    base_oid: []const u8,
+    search: []const u8,
+    from: []const u8,
+) !Self {
+    return initWindow(repo_kind, repo_opts, arena, repo, io, gpa, admin_moment, handle, requested_ref_or_oid, requested_value, message, base_oid, search, from, page_size, null);
+}
+
+/// one snapshot of a repo, which every read of a log goes through (void for
+/// a git repo, which has none)
+pub fn Moment(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.RepoOpts(repo_kind)) type {
+    return @typeInfo(@FieldType(rp.Repo(repo_kind, repo_opts).State(.read_only).Extra, "moment")).pointer.child;
+}
+
+/// a ref a caller has already resolved in the snapshot `moment`, so a log
+/// reads that snapshot and the commit the ref named in it, rather than
+/// resolving the ref again in a later one (which a push may have changed)
+pub fn Pinned(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.RepoOpts(repo_kind)) type {
+    return struct {
+        ref_or_oid: ui.RoutablePage.RefOrOid,
+        // its branch or tag name, url-encoded, or its oid
+        value: []const u8,
+        // the commit it resolved to, a full oid
+        oid: []const u8,
+        moment: Moment(repo_kind, repo_opts),
+    };
+}
+
+// `init` with pages of `limit` commits rather than the tab's own size, and
+// optionally walking from a `pinned` ref (the requested ref is then unused)
+pub fn initWindow(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -87,6 +129,8 @@ pub fn init(
     base_oid: []const u8,
     search: []const u8,
     from: []const u8,
+    limit: usize,
+    pinned: ?Pinned(repo_kind, repo_opts),
 ) !Self {
     const aa = arena.allocator();
     const hex_len = ui.ResolvedRefOrOid(repo_kind, repo_opts).hex_len;
@@ -98,17 +142,26 @@ pub fn init(
     }
     const query: ?[]const u8 = if (search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, search));
 
+    // every read below goes through one snapshot of the repo: the pinned
+    // one, or the latest (none when an xit db is still empty)
+    var moment_maybe: ?Moment(repo_kind, repo_opts) = if (pinned) |pin| pin.moment else repo.core.latestMoment() catch null;
+    const resolve_state: ?rp.Repo(repo_kind, repo_opts).State(.read_only) = if (moment_maybe) |*snapshot| .{ .core = &repo.core, .extra = .{ .moment = snapshot } } else null;
+
     // resolve the requested ref (or the default branch) to the commit oid to
     // walk from. an explicitly named ref that doesn't resolve is a bad url
     // (NotFound -> 404); the default-branch path falls through to empty.
-    var resolved = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).init(repo, io, aa, requested_ref_or_oid, requested_value)) orelse {
+    var resolved = if (pinned) |pin| ui.ResolvedRefOrOid(repo_kind, repo_opts){
+        .ref_or_oid = pin.ref_or_oid,
+        .value = try aa.dupe(u8, pin.value),
+        .oid = if (pin.oid.len == hex_len) pin.oid[0..hex_len].* else return error.NotFound,
+    } else (try ui.ResolvedRefOrOid(repo_kind, repo_opts).initAt(resolve_state, io, aa, requested_ref_or_oid, requested_value)) orelse {
         if (requested_ref_or_oid != null) return error.NotFound;
         var data = try emptyResult(aa, handle, .branch, requested_value, base_oid);
         data.no_commits = true;
         return data;
     };
 
-    var moment = repo.core.latestMoment() catch return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
+    var moment = moment_maybe orelse return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
     const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
 
     // resolve annotated tags once, independently of the page's starting commit.
@@ -123,30 +176,23 @@ pub fn init(
 
     // collect this page's commits, plus a peek at the one after it (its oid is
     // the next page's start).
-    var buf: [page_size]Commit = undefined;
+    const buf = try aa.alloc(Commit, limit);
     var count: usize = 0;
     var next_start: ?[]const u8 = null;
     var search_available = false;
     var default_branch: []const u8 = "";
     var searched = false;
 
-    // the index covers a repository's branch and tag tips, so a fork gets no
-    // search box and refuses a search: url. an object view or a list bounded by
-    // a base, whose version would also cover the commits before it, searches
-    // the default branch instead.
+    // a fork gets no search box and refuses a search: url; an object view or
+    // a base-bounded list links its search to the default branch
     if (comptime repo_kind == .xit) index: {
-        if (handle.location != .repo) break :index;
-        if (resolved.ref_or_oid == .object or base_oid.len != 0) {
-            var head_buffer: [xit.ref.MAX_REF_CONTENT_SIZE]u8 = undefined;
-            const branch = switch (repo.head(io, &head_buffer) catch break :index) {
-                .ref => |ref| ref.name,
-                .oid => break :index,
-            };
-            const tip = (try repo.readRef(io, .{ .kind = .head, .name = branch })) orelse break :index;
-            if (try srch_cmmt.lookup(repo_opts, moment, &tip) == null) break :index;
-            search_available = true;
-            default_branch = try ui.urlEncodeRef(aa, branch);
-            break :index;
+        switch ((try searchScope(repo_kind, repo_opts, aa, repo, io, moment, handle, resolved.ref_or_oid, &resolved.oid, base_oid)) orelse break :index) {
+            .default_branch => |branch| {
+                search_available = true;
+                default_branch = branch;
+                break :index;
+            },
+            .own => {},
         }
         const index = (try srch_cmmt.lookup(repo_opts, moment, &resolved.oid)) orelse break :index;
         search_available = true;
@@ -161,13 +207,13 @@ pub fn init(
         }
         while (try results.next()) |key| {
             const oid = try srch_cmmt.keyOid(repo_opts.hash, key);
-            if (count == page_size) {
+            if (count == limit) {
                 next_start = try aa.dupe(u8, &oid);
                 break;
             }
             var commit_object = try obj.Object(.xit, repo_opts).initCommit(state, io, gpa, &oid);
             defer commit_object.deinit();
-            buf[count] = try commitEntry(repo_kind, repo_opts, arena, repo, io, gpa, admin_moment, &commit_object, message and count == 0);
+            buf[count] = try commitEntry(repo_kind, repo_opts, arena, &moment, admin_moment, &commit_object, message and count == 0);
             count += 1;
         }
         searched = true;
@@ -179,17 +225,19 @@ pub fn init(
         var start_oid = resolved.oid;
         if (from.len != 0) @memcpy(&start_oid, from);
 
-        var iter = repo.log(io, gpa, .{ .start_oids = &.{start_oid}, .first_parent = true }) catch return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
+        // the log as `repo.log` walks it, in this snapshot
+        var iter = obj.ObjectIterator(repo_kind, repo_opts).init(state, io, gpa, .{ .kind = .commit, .first_parent = true }) catch return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
         defer iter.deinit();
+        iter.include(&start_oid) catch return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
         while (try iter.next(gpa)) |commit_object| {
             defer commit_object.deinit();
             // the base is a stopping point, not an ancestry exclusion
             if (std.mem.eql(u8, &commit_object.oid, base_oid)) break;
-            if (count == page_size) {
+            if (count == limit) {
                 next_start = try aa.dupe(u8, &commit_object.oid);
                 break;
             }
-            buf[count] = try commitEntry(repo_kind, repo_opts, arena, repo, io, gpa, admin_moment, commit_object, message and count == 0);
+            buf[count] = try commitEntry(repo_kind, repo_opts, arena, &moment, admin_moment, commit_object, message and count == 0);
             count += 1;
         }
     }
@@ -206,7 +254,7 @@ pub fn init(
             }
             break :blk evt.PatchRev.commitCount(repo_kind, repo_opts, state, io, gpa, base_oid, &resolved.oid) catch null;
         } else null,
-        .commits = try aa.dupe(Commit, buf[0..count]),
+        .commits = buf[0..count],
         .next_start = next_start,
         .message = message,
         .search = query,
@@ -215,14 +263,57 @@ pub fn init(
     };
 }
 
-// one commit's row: its message, author and stats.
-fn commitEntry(
+/// where a log's commit search runs
+pub const SearchScope = union(enum) {
+    // the log's own branch or tag, whose tip has an index
+    own,
+    // the default branch (its url-encoded name)
+    default_branch: []const u8,
+};
+
+// where commit search covers the log walking from `oid` (the resolved
+// ref's commit), or null where no index does. the index covers a
+// repository's branch and tag tips, so a fork has none. an object view or a
+// list bounded by a base, whose version would also cover the commits before
+// it, searches the default branch instead.
+pub fn searchScope(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    aa: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    // the repo's moment, which holds the index
+    moment: anytype,
+    handle: ui.RepoHandle,
+    ref_or_oid: ui.RoutablePage.RefOrOid,
+    oid: *const [ui.ResolvedRefOrOid(repo_kind, repo_opts).hex_len]u8,
+    base_oid: []const u8,
+) !?SearchScope {
+    if (comptime repo_kind != .xit) return null;
+    if (handle.location != .repo) return null;
+    if (ref_or_oid == .object or base_oid.len != 0) {
+        var snapshot = moment;
+        const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &snapshot } };
+        var head_buffer: [xit.ref.MAX_REF_CONTENT_SIZE]u8 = undefined;
+        const branch = switch ((xit.ref.readHead(repo_kind, repo_opts, state, io, &head_buffer) catch return null) orelse return null) {
+            .ref => |ref| ref.name,
+            .oid => return null,
+        };
+        const tip = (try xit.ref.readRecur(repo_kind, repo_opts, state, io, .{ .ref = .{ .kind = .head, .name = branch } })) orelse return null;
+        if (try srch_cmmt.lookup(repo_opts, moment, &tip) == null) return null;
+        return .{ .default_branch = try ui.urlEncodeRef(aa, branch) };
+    }
+    return if (try srch_cmmt.lookup(repo_opts, moment, oid) == null) null else .own;
+}
+
+// one commit's row: its message (a preview, or whole up to the safety limit
+// when `full_message`), author and stats.
+pub fn commitEntry(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    io: std.Io,
-    gpa: std.mem.Allocator,
+    // the snapshot of the repo its stats are read in
+    moment: *const Moment(repo_kind, repo_opts),
     admin_moment: ?evt.AdminDB.HashMap(.read_only),
     commit_object: *obj.Object(repo_kind, repo_opts),
     full_message: bool,
@@ -242,7 +333,7 @@ fn commitEntry(
             .unknown,
         .timestamp = std.math.cast(i64, md.timestamp) orelse -1,
         .merge = if (md.parent_oids) |parent_oids| parent_oids.len > 1 else false,
-        .stats = if (repo_kind == .xit) try repo.commitStats(io, gpa, .{ .oid = &commit_object.oid }) else null,
+        .stats = if (repo_kind == .xit) try xit.patch.readCommitStats(repo_opts, moment, &commit_object.oid) else null,
     };
 }
 
@@ -353,7 +444,7 @@ fn messageBox(allocator: std.mem.Allocator, message: []const u8, bottom_label: [
 }
 
 // the first line of a commit message, for the one-row list entries.
-fn firstLine(message: []const u8) []const u8 {
+pub fn firstLine(message: []const u8) []const u8 {
     const nl = std.mem.indexOfScalar(u8, message, '\n');
     return if (nl) |i| std.mem.trimEnd(u8, message[0..i], " \t\r") else message;
 }

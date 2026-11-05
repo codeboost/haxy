@@ -307,6 +307,27 @@ pub fn readRepoById(
     };
 }
 
+/// the repo `repo_id` from its owner's user repo while it is still named
+/// `name`, or null once it is gone or renamed. a request that resolved a repo
+/// by name reads it again by id with this, so a repo that took the name
+/// meanwhile is never mistaken for it.
+pub fn readNamedRepo(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    name: []const u8,
+) !?Repo.RepoWithId {
+    var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return null;
+    defer user_repo.deinit(io, allocator);
+    const moment = (try userMoment(&user_repo)) orelse return null;
+    const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, arena, repo_id)) orelse return null;
+    if (!std.mem.eql(u8, repo.event.name, name)) return null;
+    return .{ .repo = repo, .event_id = repo_id.* };
+}
+
 // a repo's active grants, from its owner's user repo
 pub fn readRepoGrants(
     io: std.Io,
@@ -2321,12 +2342,15 @@ pub fn registerNewRepo(
 }
 
 // change the name, description, read access, and tab roles of the repo
-// named `old_name` in its owner's user repo
+// named `old_name` in its owner's user repo, as `actor_id`, who must still own
+// it when the change lands. it changes those fields of the repo as it is
+// then, so a concurrent change of its other fields (a protected branch) stays.
 pub fn updateRepo(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     owner_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
     author: CommitAuthor,
     old_name: []const u8,
     name: []const u8,
@@ -2335,31 +2359,210 @@ pub fn updateRepo(
     discuss_role: ?Repo.Role,
     issue_role: ?Repo.Role,
     patch_role: ?Repo.Role,
+    // the settings revision the change was made from (Stale once another
+    // change of the settings landed); null changes the settings as they are
+    revision: ?Repo.Revision,
 ) !void {
     try Repo.validateName(name);
+    // the repo the name names now; every attempt changes this one
+    const repo_id = blk: {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+        defer user_repo.deinit(io, allocator);
+        const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
+        break :blk ((try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, old_name)) orelse return error.NotFound).event_id;
+    };
+    try changeRepo(io, allocator, users_dir, owner_id, &repo_id, actor_id, author, SettingsChange{
+        .old_name = old_name,
+        .name = name,
+        .description = description,
+        .read_access = read_access,
+        .discuss_role = discuss_role,
+        .issue_role = issue_role,
+        .patch_role = patch_role,
+        .revision = revision,
+    });
+}
+
+/// the fields a settings change sets, for `changeRepo`
+pub const SettingsChange = struct {
+    // the name the change was made for: a repo renamed meanwhile isn't the
+    // one its maker saw, so it is changed no more (NotFound)
+    old_name: []const u8,
+    name: []const u8,
+    description: []const u8,
+    read_access: Repo.Access,
+    discuss_role: ?Repo.Role,
+    issue_role: ?Repo.Role,
+    patch_role: ?Repo.Role,
+    // made from these settings (`Repo.settingsRevision`): another change of
+    // them since makes it Stale. null applies it to the settings as they are.
+    revision: ?Repo.Revision,
+
+    pub fn apply(self: SettingsChange, _: std.mem.Allocator, before: Repo) !?Repo {
+        if (!std.mem.eql(u8, before.name, self.old_name)) return error.NotFound;
+        if (self.revision) |revision| if (!std.mem.eql(u8, &revision, &before.settingsRevision())) return error.Stale;
+        var changed = before;
+        changed.name = self.name;
+        changed.description = self.description;
+        changed.read_access = self.read_access;
+        changed.discuss_role = self.discuss_role;
+        changed.issue_role = self.issue_role;
+        changed.patch_role = self.patch_role;
+        return changed;
+    }
+};
+
+/// change the repo `repo_id` in its owner's user repo as `actor_id`, who
+/// must own it: read it, let `change.apply(arena, before)` make the new repo
+/// event from it (null writes nothing), and write that only if the repo is
+/// still `before` when it lands (`writeRepoChange`). when another change
+/// landed first, it reads the same repo again and applies the change to it
+/// as it is now, so concurrent changes of other fields stay. the repo is
+/// always the one `repo_id` names, never another that took its name.
+pub fn changeRepo(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+    author: CommitAuthor,
+    change: anytype,
+) !void {
+    var attempts: usize = 0;
+    while (true) : (attempts += 1) {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const before = blk: {
+            var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+            defer user_repo.deinit(io, allocator);
+            const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
+            const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, repo_id)) orelse return error.NotFound;
+            // first, so a change by someone who isn't an owner is refused even
+            // when it would write nothing
+            try checkOwner(moment, &arena, owner_id, repo_id, actor_id);
+            break :blk repo.event;
+        };
+        const changed = (try change.apply(arena.allocator(), before)) orelse return;
+        writeRepoChange(io, allocator, users_dir, owner_id, repo_id, actor_id, before, changed, author) catch |err| switch (err) {
+            // another change landed between the read and the write: apply
+            // this one to the repo as it is now
+            error.RepoChanged => if (attempts + 1 < repo_change_attempts) continue else return err,
+            else => |e| return e,
+        };
+        return;
+    }
+}
+
+// how many times a repo change is read and applied again after another change
+// landed first
+const repo_change_attempts = 5;
+
+// write `changed` over the repo `repo_id` in its owner's user repo, as
+// `actor_id`. checked in the write's own transaction: the repo must still be
+// `before` (else RepoChanged, and the caller reads it again), its new name free
+// (NameTaken), and the actor still its owner (NotOwner).
+pub fn writeRepoChange(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+    before: Repo,
+    changed: Repo,
+    author: CommitAuthor,
+) !void {
+    const Unchanged = struct {
+        allocator: std.mem.Allocator,
+        owner_id: *const [event_id_size]u8,
+        repo_id: *const [event_id_size]u8,
+        actor_id: *const [event_id_size]u8,
+        before: Repo,
+        name: []const u8,
+
+        pub fn check(self: @This(), moment_maybe: ?UserDB.HashMap(.read_only)) !void {
+            const moment = moment_maybe orelse return error.NotFound;
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const now = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id)) orelse return error.NotFound;
+            try checkOwner(moment, &arena, self.owner_id, self.repo_id, self.actor_id);
+            if (!sameRepo(now.event, self.before)) return error.RepoChanged;
+            if (try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, self.name)) |taken| {
+                if (!std.mem.eql(u8, &taken.event_id, self.repo_id)) return error.NameTaken;
+            }
+        }
+    };
     var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
     defer user_repo.deinit(io, allocator);
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
-    const found = (try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, old_name)) orelse return error.NotFound;
-    if (try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, name)) |taken| {
-        if (!std.mem.eql(u8, &taken.event_id, &found.event_id)) return error.NameTaken;
-    }
-
-    var event = found.repo.event;
-    event.name = name;
-    event.description = description;
-    event.read_access = read_access;
-    event.discuss_role = discuss_role;
-    event.issue_role = issue_role;
-    event.patch_role = patch_role;
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
-        .id = std.fmt.bytesToHex(found.event_id, .lower),
+    try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
+        .id = std.fmt.bytesToHex(repo_id.*, .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         .author = author,
-        .event = .{ .repo = event },
-    }});
+        .event = .{ .repo = changed },
+    }}, Unchanged{ .allocator = allocator, .owner_id = owner_id, .repo_id = repo_id, .actor_id = actor_id, .before = before, .name = changed.name });
+}
+
+fn sameRepo(a: Repo, b: Repo) bool {
+    return std.mem.eql(u8, &a.user_id, &b.user_id) and
+        std.mem.eql(u8, a.name, b.name) and
+        std.mem.eql(u8, a.description, b.description) and
+        a.read_access == b.read_access and
+        a.discuss_role == b.discuss_role and
+        a.issue_role == b.issue_role and
+        a.patch_role == b.patch_role and
+        std.mem.eql(u8, a.protected_branches, b.protected_branches);
+}
+
+/// run `action.run()` for a change that isn't an event (such as moving the
+/// repo's HEAD) only while `actor_id` owns the repo `repo_id`: it holds the
+/// exclusive lock every write to the owner's user repo takes, so no role
+/// change lands between the check and the action. NotOwner when the actor
+/// doesn't own the repo, NotFound when it is gone; the action doesn't run then.
+pub fn whileOwner(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+    action: anytype,
+    // the name the change was asked for: a repo renamed meanwhile isn't
+    // changed (NotFound). null changes it whatever its name.
+    name: ?[]const u8,
+) !void {
+    var locked = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+    defer locked.deinit(io, allocator);
+    try locked.core.db_file.lock(io, .exclusive);
+    defer locked.core.db_file.unlock(io);
+    {
+        // opened after the lock, so it reads the state the last write left
+        var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+        defer user_repo.deinit(io, allocator);
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
+        const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, repo_id)) orelse return error.NotFound;
+        if (name) |expected| if (!std.mem.eql(u8, repo.event.name, expected)) return error.NotFound;
+        try checkOwner(moment, &arena, owner_id, repo_id, actor_id);
+    }
+    try action.run();
+}
+
+// fails with NotOwner unless `actor_id` owns the repo `repo_id` in `moment`,
+// its owner's: its creator always does, anyone else by an owner grant
+fn checkOwner(
+    moment: UserDB.HashMap(.read_only),
+    arena: *std.heap.ArenaAllocator,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+) !void {
+    if (std.mem.eql(u8, actor_id, owner_id)) return;
+    const role = try Grant.readRole(UserDB, user_repo_opts.hash, moment, arena, repo_id, actor_id);
+    if (role != .owner) return error.NotOwner;
 }
 
 // remove the repo `repo_id` from its owner's user repo, then its dir. tombstone
@@ -2371,110 +2574,147 @@ pub fn deleteRepo(
     owner_id: *const [event_id_size]u8,
     repo_id: *const [event_id_size]u8,
     author: CommitAuthor,
+    // the name the deletion was asked for: a repo renamed meanwhile isn't
+    // deleted (NotFound). null deletes it by id whatever its name.
+    name: ?[]const u8,
 ) !void {
+    // checked in the removal's own transaction, so a rename or a deletion
+    // landing meanwhile can't slip between the check and the tombstone
+    const Named = struct {
+        allocator: std.mem.Allocator,
+        repo_id: *const [event_id_size]u8,
+        name: ?[]const u8,
+
+        pub fn check(self: @This(), moment_maybe: ?UserDB.HashMap(.read_only)) !void {
+            const moment = moment_maybe orelse return error.NotFound;
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id)) orelse return error.NotFound;
+            if (self.name) |expected| if (!std.mem.eql(u8, repo.event.name, expected)) return error.NotFound;
+        }
+    };
     {
         var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
         defer user_repo.deinit(io, allocator);
-        try remove(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, repo_id, .repo, author);
+        try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
+            .id = std.fmt.bytesToHex(repo_id.*, .lower),
+            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
+            .author = author,
+            // a removal, as `remove` writes it
+            .event = .{ .repo = null },
+        }}, Named{ .allocator = allocator, .repo_id = repo_id, .name = name });
     }
     const path = try repoPath(allocator, users_dir, owner_id, repo_id);
     defer allocator.free(path);
     try std.Io.Dir.cwd().deleteTree(io, path);
 }
 
-// grant `user_id` `role` on the repo `repo_id` in its owner's user repo,
-// replacing any role they held
-pub fn grantRole(
+// set `user_id`'s grant on the repo `repo_id` in its owner's user repo from
+// `from` to `to` (null holds none: a grant from null adds them, a change to
+// null revokes them), as `actor_id`. checked in the write's own transaction:
+// the grant must still be `from` (else RoleChanged, so a promote never
+// re-adds someone revoked meanwhile and an add never demotes someone
+// promoted meanwhile), the actor must still own the repo (NotOwner), and the
+// repo must exist (NotFound). the main owner holds no grant and always owns
+// the repo, so no change applies to them (MainOwner).
+pub fn changeRole(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     owner_id: *const [event_id_size]u8,
     repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
     user_id: *const [event_id_size]u8,
-    role: Repo.Role,
+    from: ?Repo.Role,
+    to: ?Repo.Role,
     author: CommitAuthor,
+    // the name the change was asked for: a repo renamed meanwhile isn't
+    // changed (NotFound). null changes it whatever its name.
+    name: ?[]const u8,
 ) !void {
+    if (std.mem.eql(u8, user_id, owner_id)) return error.MainOwner;
+    // nothing to change from or to
+    if (from == null and to == null) return error.RoleChanged;
+    const Held = struct {
+        allocator: std.mem.Allocator,
+        owner_id: *const [event_id_size]u8,
+        repo_id: *const [event_id_size]u8,
+        actor_id: *const [event_id_size]u8,
+        user_id: *const [event_id_size]u8,
+        from: ?Repo.Role,
+        name: ?[]const u8,
+
+        pub fn check(self: @This(), moment_maybe: ?UserDB.HashMap(.read_only)) !void {
+            const moment = moment_maybe orelse return error.NotFound;
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id)) orelse return error.NotFound;
+            if (self.name) |expected| if (!std.mem.eql(u8, repo.event.name, expected)) return error.NotFound;
+            try checkOwner(moment, &arena, self.owner_id, self.repo_id, self.actor_id);
+            if (try Grant.readRole(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id, self.user_id) != self.from) return error.RoleChanged;
+        }
+    };
     var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
     defer user_repo.deinit(io, allocator);
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
+    try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
         .id = std.fmt.bytesToHex(Grant.idOf(repo_id, user_id), .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         .author = author,
-        .event = .{ .grant = .{ .target_id = std.fmt.bytesToHex(repo_id.*, .lower), .user_id = std.fmt.bytesToHex(user_id.*, .lower), .role = role } },
-    }});
-}
-
-// revoke `user_id`'s grant on the repo `repo_id` in its owner's user repo
-pub fn revokeRole(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    users_dir: []const u8,
-    owner_id: *const [event_id_size]u8,
-    repo_id: *const [event_id_size]u8,
-    user_id: *const [event_id_size]u8,
-    author: CommitAuthor,
-) !void {
-    var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
-    defer user_repo.deinit(io, allocator);
-    // a revoked grant stays in the kind index, which is all `remove` checks
-    {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        defer arena.deinit();
-        const moment = (try userMoment(&user_repo)) orelse return error.EventNotFound;
-        if (try Grant.readRole(UserDB, user_repo_opts.hash, moment, &arena, repo_id, user_id) == null) return error.EventNotFound;
-    }
-    try remove(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, &Grant.idOf(repo_id, user_id), .grant, author);
+        // a revoked grant is removed, as `remove` writes it
+        .event = .{ .grant = if (to) |role| .{ .target_id = std.fmt.bytesToHex(repo_id.*, .lower), .user_id = std.fmt.bytesToHex(user_id.*, .lower), .role = role } else null },
+    }}, Held{ .allocator = allocator, .owner_id = owner_id, .repo_id = repo_id, .actor_id = actor_id, .user_id = user_id, .from = from, .name = name });
 }
 
 // add `branch` to the protected branches of the repo `repo_id` in its owner's
-// user repo, or take it out when `protect` is false. taking out a branch that
-// isn't protected writes nothing.
+// user repo, or take it out when `protect` is false, as `actor_id`, who must
+// still own it when the change lands. taking out a branch that isn't
+// protected writes nothing. it changes the list as it is then, so a
+// concurrent change of the repo's other fields stays.
 pub fn protectBranch(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     owner_id: *const [event_id_size]u8,
     repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
     branch: []const u8,
     protect: bool,
     author: CommitAuthor,
+    // the name the change was asked for: a repo renamed meanwhile isn't
+    // changed (NotFound), on any attempt. null changes it whatever its name.
+    name: ?[]const u8,
 ) !void {
-    var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
-    defer user_repo.deinit(io, allocator);
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const aa = arena.allocator();
-    const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
-    const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, repo_id)) orelse return error.NotFound;
-    if (repo.removed) return error.NotFound;
+    const Protection = struct {
+        branch: []const u8,
+        protect: bool,
+        name: ?[]const u8,
 
-    var branches: std.ArrayList(u8) = .empty;
-    var count: usize = 0;
-    var held = false;
-    for (try repo.event.protectedBranchNames(aa)) |name| {
-        if (std.mem.eql(u8, name, branch)) {
-            held = true;
-            if (!protect) continue;
+        pub fn apply(self: @This(), aa: std.mem.Allocator, before: Repo) !?Repo {
+            if (self.name) |expected| if (!std.mem.eql(u8, before.name, expected)) return error.NotFound;
+            var branches: std.ArrayList(u8) = .empty;
+            var count: usize = 0;
+            var held = false;
+            for (try before.protectedBranchNames(aa)) |protected| {
+                if (std.mem.eql(u8, protected, self.branch)) {
+                    held = true;
+                    if (!self.protect) continue;
+                }
+                if (branches.items.len > 0) try branches.append(aa, '\n');
+                try branches.appendSlice(aa, protected);
+                count += 1;
+            }
+            if (self.protect) {
+                if (held) return error.BranchProtected;
+                if (count >= Repo.protected_branch_max_count) return error.TooManyProtectedBranches;
+                if (branches.items.len > 0) try branches.append(aa, '\n');
+                try branches.appendSlice(aa, self.branch);
+            } else if (!held) return null;
+            var changed = before;
+            changed.protected_branches = branches.items;
+            return changed;
         }
-        if (branches.items.len > 0) try branches.append(aa, '\n');
-        try branches.appendSlice(aa, name);
-        count += 1;
-    }
-    if (protect) {
-        if (held) return error.BranchProtected;
-        if (count >= Repo.protected_branch_max_count) return error.TooManyProtectedBranches;
-        if (branches.items.len > 0) try branches.append(aa, '\n');
-        try branches.appendSlice(aa, branch);
-    } else if (!held) return;
-
-    var event = repo.event;
-    event.protected_branches = branches.items;
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
-        .id = std.fmt.bytesToHex(repo_id.*, .lower),
-        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        .author = author,
-        .event = .{ .repo = event },
-    }});
+    };
+    try changeRepo(io, allocator, users_dir, owner_id, repo_id, actor_id, author, Protection{ .branch = branch, .protect = protect, .name = name });
 }
 
 // create a user and their user repo, returning the new user's id

@@ -50,6 +50,37 @@ pub fn init(
     confirm: ?Confirm,
 ) !Self {
     const aa = arena.allocator();
+    const window = try readWindow(io, allocator, arena, admin_moment, users_dir, owner_id, repo_id, start, page_size);
+    return .{
+        .identity = try aa.dupe(u8, identity),
+        .start = start,
+        .next_start = window.next_start,
+        .rows = window.rows,
+        .confirm = if (confirm) |value| .{ .action = value.action, .name = try aa.dupe(u8, value.name) } else null,
+    };
+}
+
+pub const Window = struct {
+    rows: []const Row,
+    // where the next window starts, or null on the last
+    next_start: ?usize,
+};
+
+// the `limit` members from `start` on, newest first: the repo's grants
+// without read grants, the creator (who owns the repo without one) or
+// removed users
+pub fn readWindow(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: evt.AdminDB.HashMap(.read_only),
+    users_dir: []const u8,
+    owner_id: *const [evt.event_id_size]u8,
+    repo_id: *const [evt.event_id_size]u8,
+    start: usize,
+    limit: usize,
+) !Window {
+    const aa = arena.allocator();
     const grants = try evt.readRepoGrants(io, allocator, arena, users_dir, owner_id, repo_id);
     var rows: std.ArrayList(Row) = .empty;
     var skipped: usize = 0;
@@ -64,19 +95,13 @@ pub fn init(
             skipped += 1;
             continue;
         }
-        if (rows.items.len == page_size) {
-            next_start = start + page_size;
+        if (rows.items.len == limit) {
+            next_start = start + limit;
             break;
         }
         try rows.append(aa, .{ .name = user.event.name, .role = grant.role });
     }
-    return .{
-        .identity = try aa.dupe(u8, identity),
-        .start = start,
-        .next_start = next_start,
-        .rows = rows.items,
-        .confirm = if (confirm) |value| .{ .action = value.action, .name = try aa.dupe(u8, value.name) } else null,
-    };
+    return .{ .rows = rows.items, .next_start = next_start };
 }
 
 // the confirmation of taking `name`'s role away
@@ -88,7 +113,11 @@ fn confirmRoute(identity: []const u8, start: usize, name: []const u8, action: Ac
 }
 
 // act on `name`'s role in the repo `identity` names as `actor`, one of its
-// owners. returns why an add wrote nothing, or null once written
+// owners. returns why an add wrote nothing, or null once written. the change
+// lands only on the role read here and while the actor still owns the repo
+// (evt.changeRole), else it fails with RoleChanged or NotOwner. the main
+// owner holds no grant, so only an add names them (already added); any
+// other action on them is MainOwner.
 pub fn perform(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -96,10 +125,13 @@ pub fn perform(
     users_dir: []const u8,
     actor: ui.Actor,
     identity: []const u8,
+    // the repo the caller authorized, by id; null resolves `identity` now
+    repo_id_maybe: ?*const [evt.event_id_size]u8,
     action: Action,
     name: []const u8,
 ) !?ui.Session.FormFeedback.MembersFailure {
     const owner_id = actor.repo_user_id orelse return error.NotFound;
+    const actor_id = actor.user_id orelse return error.NotFound;
     const parsed = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
     const user_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, admin_moment, name)) orelse
         return if (action == .grant) .not_found else error.EventNotFound;
@@ -110,26 +142,41 @@ pub fn perform(
         var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &owner_id)) orelse return error.NotFound;
         defer user_repo.deinit(io, allocator);
         const moment = (try evt.userMoment(&user_repo)) orelse return error.NotFound;
-        const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, parsed.name)) orelse return error.NotFound;
+        const found = (try readRepo(moment, &arena, parsed.name, repo_id_maybe)) orelse return error.NotFound;
         break :blk .{ found.event_id, try evt.Grant.readRole(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, &found.event_id, &user_id) };
     };
 
-    switch (action) {
+    const main_owner = std.mem.eql(u8, &user_id, &owner_id);
+    const to: ?evt.Repo.Role = switch (action) {
         // a reader becomes a member; anyone else with a role, and the
         // creator, who holds no grant, is already added
-        .grant => {
-            const already_added = if (role) |held| held != .read else std.mem.eql(u8, &user_id, &owner_id);
+        .grant => blk: {
+            const already_added = if (role) |held| held != .read else main_owner;
             if (already_added) return .already_added;
-            try evt.grantRole(io, allocator, users_dir, &owner_id, &repo_id, &user_id, .write, actor.author);
+            break :blk .write;
         },
-        .revoke => try evt.revokeRole(io, allocator, users_dir, &owner_id, &repo_id, &user_id, actor.author),
-        // only a listed grant changes role
-        .promote, .demote => {
-            if (role == null) return error.EventNotFound;
-            try evt.grantRole(io, allocator, users_dir, &owner_id, &repo_id, &user_id, if (action == .promote) .owner else .write, actor.author);
-        },
-    }
+        .revoke => null,
+        .promote => .owner,
+        .demote => .write,
+    };
+    if (main_owner) return error.MainOwner;
+    // only a listed grant is revoked or changes role
+    if (action != .grant and role == null) return error.EventNotFound;
+    try evt.changeRole(io, allocator, users_dir, &owner_id, &repo_id, &actor_id, &user_id, role, to, actor.author, parsed.name);
     return null;
+}
+
+// the repo named `name` in its owner's user repo `moment`: the one `repo_id`
+// names while it still has that name, else whichever has it now
+pub fn readRepo(
+    moment: evt.UserDB.HashMap(.read_only),
+    arena: *std.heap.ArenaAllocator,
+    name: []const u8,
+    repo_id_maybe: ?*const [evt.event_id_size]u8,
+) !?evt.Repo.RepoWithId {
+    const repo_id = repo_id_maybe orelse return evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, arena, name);
+    const repo = (try evt.Repo.readById(evt.UserDB, evt.user_repo_opts.hash, moment, arena, repo_id)) orelse return null;
+    return if (std.mem.eql(u8, repo.event.name, name)) .{ .repo = repo, .event_id = repo_id.* } else null;
 }
 
 // where an action lands: the same window of the list, or the files tab once
@@ -350,9 +397,12 @@ pub const View = struct {
         const admin_repo = self.session.admin_repo orelse return;
         const actor = (try self.session.authorize(self.data.identity, .owner, null)) orelse return;
         const moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
-        const failure = perform(io, allocator, moment, users_dir, actor, self.data.identity, action, name) catch |err| switch (err) {
-            // a stale row; the refresh below shows the list as it is
-            error.EventNotFound => null,
+        const failure = perform(io, allocator, moment, users_dir, actor, self.data.identity, null, action, name) catch |err| switch (err) {
+            // a stale row, or one another owner changed meanwhile; the
+            // refresh below shows the list as it is
+            error.EventNotFound, error.RoleChanged, error.MainOwner => null,
+            // demoted or revoked meanwhile, like a failed authorize
+            error.NotOwner => return,
             else => return err,
         };
         if (failure) |value| {

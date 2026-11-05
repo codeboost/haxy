@@ -11,6 +11,7 @@ const api_discovery = @import("./api/discovery.zig");
 const api_events = @import("./api/events.zig");
 const api_issues = @import("./api/issues.zig");
 const api_repo = @import("./api/repo.zig");
+const api_repo_admin = @import("./api/repo_admin.zig");
 const api_repo_create = @import("./api/repo_create.zig");
 const api_session = @import("./api/session.zig");
 const serve_common = @import("./serve_common.zig");
@@ -232,6 +233,13 @@ fn routeApiRequest(
             .local => null,
         };
         return api_discovery.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
+    if (api_repo_admin.route(path, request.head.method)) |route| {
+        const server: ?api_repo_admin.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .session_store = server.session_store },
+            .local => null,
+        };
+        return api_repo_admin.handle(io, request, allocator, server, route, query);
     }
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
@@ -910,8 +918,9 @@ fn handleRepoSettings(
     }
     const discuss_role, const issue_role, const patch_role = roles;
 
-    const updated = ui.Repo.Settings.update(io, allocator, server.users_dir, actor, route.repo_settings.slice(), name, description, access, discuss_role, issue_role, patch_role) catch |err| switch (err) {
+    const updated = ui.Repo.Settings.update(io, allocator, server.users_dir, actor, route.repo_settings.slice(), name, description, access, discuss_role, issue_role, patch_role, null, null) catch |err| switch (err) {
         error.NotFound => return respondRepoNotFound(request),
+        error.NotOwner => return respondForbidden(request),
         else => {
             const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
             return respondFormFailure(request, allocator, server.session_store, form_location, .{ .repo_settings = .{ .failure = failure, .fields = .{
@@ -960,8 +969,11 @@ fn handleMembers(io: std.Io, request: *std.http.Server.Request, allocator: std.m
         var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
         defer admin_repo.deinit(io, allocator);
         const moment = try evt.currentMoment(evt.admin_repo_opts, &admin_repo);
-        break :blk ui.Repo.Members.perform(io, allocator, moment, server.users_dir, actor, identity, action, name) catch |err| switch (err) {
-            error.NotFound, error.EventNotFound => return respondRepoNotFound(request),
+        break :blk ui.Repo.Members.perform(io, allocator, moment, server.users_dir, actor, identity, null, action, name) catch |err| switch (err) {
+            error.NotFound, error.EventNotFound, error.MainOwner => return respondRepoNotFound(request),
+            // another owner changed the row meanwhile: the list shows it as it is now
+            error.RoleChanged => null,
+            error.NotOwner => return respondForbidden(request),
             else => return err,
         };
     };
@@ -999,8 +1011,9 @@ fn handleBranches(io: std.Io, request: *std.http.Server.Request, allocator: std.
         .unprotect => if (target.branch.len != 0) std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, target.branch.slice())) else return respondRepoNotFound(request),
     };
 
-    const failure = ui.Repo.Branches.perform(io, allocator, server.users_dir, actor, identity, action, branch) catch |err| switch (err) {
+    const failure = ui.Repo.Branches.perform(io, allocator, server.users_dir, actor, identity, null, action, branch) catch |err| switch (err) {
         error.NotFound => return respondRepoNotFound(request),
+        error.NotOwner => return respondForbidden(request),
         else => return err,
     };
     const location = try (ui.RoutablePage.repoBranchesRoute(identity) orelse return error.RouteTooLong).toUrl(&arena);
@@ -1205,7 +1218,7 @@ fn handleDelete(io: std.Io, request: *std.http.Server.Request, allocator: std.me
     const confirm = (try parseFormField(arena.allocator(), body, "confirm")) orelse "";
     const password = (try parseFormField(arena.allocator(), body, "password")) orelse "";
 
-    const failure = ui.Delete.perform(io, allocator, server.users_dir, &admin_repo, user_id, target, confirm, password) catch |err| switch (err) {
+    const failure = ui.Delete.perform(io, allocator, server.users_dir, &admin_repo, user_id, target, confirm, password, null) catch |err| switch (err) {
         error.NotFound => return respondDeleteNotFound(request),
         else => return err,
     };

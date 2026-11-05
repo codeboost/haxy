@@ -495,7 +495,7 @@ fn deleteAccount(io: std.Io, request: *std.http.Server.Request, allocator: std.m
     const failure = blk: {
         var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
         defer admin_repo.deinit(io, allocator);
-        break :blk ui.Delete.perform(io, allocator, server.users_dir, &admin_repo, viewer.id, .{ .user = viewer.record.event.name }, fields.confirm, fields.password) catch |err| switch (err) {
+        break :blk ui.Delete.perform(io, allocator, server.users_dir, &admin_repo, viewer.id, .{ .user = viewer.record.event.name }, fields.confirm, fields.password, null) catch |err| switch (err) {
             // deleted meanwhile
             error.NotFound => return respondUnauthenticated(request, allocator),
             else => |e| return e,

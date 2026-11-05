@@ -63,6 +63,27 @@ pub fn protectedBranchNames(self: Self, allocator: std.mem.Allocator) ![]const [
     return try names.toOwnedSlice(allocator);
 }
 
+/// identifies a repo's settings (name, description, visibility and thread
+/// roles, not its protected branches): a change made from settings read
+/// earlier names the revision it read, and lands only while it is current
+pub const Revision = [16]u8;
+
+pub fn settingsRevision(self: Self) Revision {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    const roles = [_]?Role{ self.discuss_role, self.issue_role, self.patch_role };
+    var role_names: [roles.len][]const u8 = undefined;
+    for (&role_names, roles) |*name, role| name.* = if (role) |value| @tagName(value) else "";
+    for ([_][]const u8{ self.name, self.description, @tagName(self.read_access) } ++ role_names) |field| {
+        var len: [8]u8 = undefined;
+        std.mem.writeInt(u64, &len, field.len, .little);
+        hasher.update(&len);
+        hasher.update(field);
+    }
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return digest[0..@sizeOf(Revision)].*;
+}
+
 // the role a kind's tab needs for a write, or null when the tab is off or the
 // kind has no tab
 pub fn threadRole(self: Self, kind: evt.EventKind) ?Role {

@@ -19,6 +19,7 @@ const ui = @import("./ui.zig");
 const fork = @import("./fork.zig");
 const pch = @import("./patch.zig");
 const notify = @import("./notify.zig");
+const thread_write = @import("./thread_write.zig");
 const same_origin = @import("./origin.zig");
 const xitui = xit.xitui;
 const wgt = xitui.widget;
@@ -1340,40 +1341,24 @@ fn handleThreadNew(
             .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         });
         defer allocator.free(fork_path);
-    } else {
-        const event = evt.EventWithId{
-            .id = event_id_hex,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-            .author = author,
-            .event = switch (kind) {
-                .issue => .{ .issue = .{ .title = title, .description = description, .labels = labels } },
-                .patch => .{ .patch = .{ .title = title, .description = description, .labels = labels, .target_branch = target_branch, .source_branch = source_branch } },
-                .discuss => .{ .discuss = .{ .title = title, .description = description, .labels = labels } },
-                else => unreachable,
-            },
-        };
-
+    } else if (kind == .patch) {
+        const patch: evt.Patch = .{ .title = title, .description = description, .labels = labels, .target_branch = target_branch, .source_branch = source_branch };
         switch (source.repo_kind) {
             inline else => |repo_kind| {
                 var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
                 defer any_repo.deinit(io, allocator);
                 switch (any_repo) {
-                    inline else => |*repo| {
-                        const result = if (kind == .patch)
-                            pch.writeBranchPatch(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, event_id_hex, event.event.patch orelse unreachable, null, author)
-                        else
-                            evt.consume(host.event(), .repo, repo_kind, repo.self_repo_opts, io, allocator, repo, evt.events_ref, &.{event});
-                        result catch |err| {
-                            if (kind != .patch) return err;
-                            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
-                            const form_location = try allocator.print("{s}/patches/new", .{base});
-                            defer allocator.free(form_location);
-                            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, source_branch));
-                        };
+                    inline else => |*repo| pch.writeBranchPatch(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, event_id_hex, patch, null, author) catch |err| {
+                        const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
+                        const form_location = try allocator.print("{s}/patches/new", .{base});
+                        defer allocator.free(form_location);
+                        return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, source_branch));
                     },
                 }
             },
         }
+    } else {
+        try thread_write.create(host.event(), io, allocator, source, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description }, author);
     }
 
     const location = try allocator.print("{s}/{s}:{s}", .{ base, @tagName(kind), &event_id_hex });
@@ -2117,20 +2102,11 @@ fn handleRemove(
     };
 
     // a draft is its author's alone, which its removal above checks
-    if (!try source.canModify(io, allocator, actor, parts.kind, &parts.id)) return respondForbidden(request);
-
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| evt.removeInThread(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &parts.thread_id, parts.kind, &parts.id, author) catch |err| switch (err) {
-                    error.EventNotFound => return respondRemoveNotFound(request),
-                    else => |e| return e,
-                },
-            }
-        },
-    }
+    thread_write.remove(host.event(), io, allocator, source, actor, parts.thread_kind, &parts.thread_id, parts.kind, &parts.id) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
+        error.NotFound => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
 
     // back to the thread a comment or attachment was on, or to the list a thread left
     const location = if (parts.kind == parts.thread_kind)
@@ -2210,18 +2186,15 @@ fn handleThreadStatus(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
-    {
-        const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
-        defer request_repo.deinit(allocator);
-        if (!try request_repo.source.canModify(io, allocator, actor, parts.thread_kind, &parts.thread_id)) return respondForbidden(request);
-    }
+    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
+    defer request_repo.deinit(allocator);
 
     (switch (parts.thread_kind) {
-        .issue => updateThread(evt.Issue, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .status = if (open) .open else .closed }, author),
-        .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .status = if (open) .open else .closed }, author),
+        .issue => thread_write.setStatus(evt.Issue, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, if (open) .open else .closed),
+        .patch => thread_write.setStatus(evt.Patch, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, if (open) .open else .closed),
         else => return respondRemoveNotFound(request),
     }) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
         error.NotFound => {
             try request.respond(not_found, .{
                 .status = .not_found,
@@ -2338,11 +2311,11 @@ fn handleThreadEdit(
         else => unreachable,
     };
     (switch (parts.thread_kind) {
-        .issue => updateThread(evt.Issue, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .fields = .{
+        .issue => thread_write.editIssue(host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .description = description,
-        } }, author),
+        }, null),
         .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .fields = .{
             .title = title,
             .labels = labels,
@@ -2352,6 +2325,7 @@ fn handleThreadEdit(
         .discuss => updateDiscussion(io, allocator, host, parts.repo_base, &parts.thread_id, title, labels, description, author),
         else => unreachable,
     }) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
         error.NotFound => {
             try request.respond(not_found, .{
                 .status = .not_found,

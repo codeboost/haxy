@@ -1,5 +1,6 @@
 const std = @import("std");
 const api = @import("../api.zig");
+const evt = @import("../event.zig");
 const api_thread = @import("../api/thread.zig");
 const query_params = @import("../api/query.zig");
 const ui = @import("../ui.zig");
@@ -99,4 +100,65 @@ test "a search's filters are split by haxy's own parser" {
     try std.testing.expectEqualStrings("bug", filters.labels[0]);
     try std.testing.expectEqualStrings("alice", filters.assignees[0]);
     try std.testing.expectEqualStrings("crash tab", filters.words);
+}
+
+test "a thread's status is its own route under the thread; nothing else follows a thread" {
+    const status = api_thread.route("/api/v1/repos/bobby/linux/issues/0123456789abcdef0123456789abcdef/status", "issues").?;
+    try std.testing.expectEqualStrings("0123456789abcdef0123456789abcdef", status.resource.status);
+    try std.testing.expectEqualStrings("abc", api_thread.route("/api/v1/repo/issues/abc/status", "issues").?.resource.status);
+    for ([_][]const u8{
+        "/api/v1/repos/bobby/linux/issues/abc/status/",
+        "/api/v1/repos/bobby/linux/issues/abc/edit",
+        "/api/v1/repos/bobby/linux/issues//status",
+        "/api/v1/repos/bobby/linux/issues/labels/status",
+    }) |path| {
+        try std.testing.expectEqual(null, api_thread.route(path, "issues"));
+    }
+}
+
+fn expectJson(expected: []const u8, value: anytype) !void {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.json.Stringify.value(value, .{}, &out.writer);
+    try std.testing.expectEqualStrings(expected, out.written());
+}
+
+test "what a viewer may do with a kind's threads follows the TUI's rules, with a reason when they may not" {
+    // anyone who may write in the tab may open a thread
+    try expectJson("{\"create\":{\"available\":true}}", api_thread.listActions(.issue, .{ .may_write = true, .signed_in = true }));
+    try expectJson("{\"create\":{\"available\":false,\"reason\":{\"code\":\"unauthenticated\",\"message\":\"Log in to open an issue.\"}}}", api_thread.listActions(.issue, .{ .may_write = false, .signed_in = false }));
+    try expectJson("{\"create\":{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Your role in this repository doesn't allow opening issues.\"}}}", api_thread.listActions(.issue, .{ .may_write = false, .signed_in = true }));
+
+    // changing one takes its author or a writer
+    try expectJson("{\"edit\":{\"available\":true},\"set_status\":{\"available\":true},\"remove\":{\"available\":true}}", api_thread.threadActions(.issue, .{ .may_write = true, .signed_in = true }));
+    const refused = api_thread.threadActions(.issue, .{ .may_write = false, .signed_in = true });
+    try expectJson("{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Only the issue's author and the repository's writers can change it.\"}}", refused.edit);
+    try expectJson("{\"available\":false,\"reason\":{\"code\":\"unauthenticated\",\"message\":\"Log in to change this issue.\"}}", api_thread.threadActions(.issue, .{ .may_write = false, .signed_in = false }).remove);
+}
+
+test "a write names a thread's fields; an id or revision it sends must be one haxy could have given out" {
+    try std.testing.expectEqual(null, api_thread.parseNewId("").?);
+    const id = api_thread.parseNewId("0123456789abcdef0123456789abcdef").?.?;
+    try std.testing.expectEqual(0x01, id[0]);
+    try std.testing.expectEqual(0xef, id[15]);
+    for ([_][]const u8{ "0123", "0123456789ABCDEF0123456789ABCDEF", "0123456789abcdef0123456789abcdeg", "0123456789abcdef0123456789abcdef0" }) |text| {
+        try std.testing.expectEqual(null, api_thread.parseNewId(text));
+    }
+
+    // a revision is as an issue's answer writes it: its fields' digest, in hex
+    const revision = evt.Issue.contentRevision(.{ .title = "Crash", .labels = "bug", .description = "" });
+    const written = std.fmt.bytesToHex(revision, .lower);
+    try std.testing.expectEqualSlices(u8, &revision, &api_thread.parseRevision(&written).?);
+    for ([_][]const u8{ "", "42", "x", "0123456789ABCDEF0123456789ABCDEF", "0123456789abcdef0123456789abcdef0" }) |text| {
+        try std.testing.expectEqual(null, api_thread.parseRevision(text));
+    }
+    // it moves with any field an edit replaces, never with the status
+    try std.testing.expect(!std.mem.eql(u8, &revision, &evt.Issue.contentRevision(.{ .title = "Crash", .labels = "bug ui", .description = "" })));
+    try std.testing.expect(!std.mem.eql(u8, &evt.Issue.contentRevision(.{ .title = "ab", .labels = "", .description = "c" }), &evt.Issue.contentRevision(.{ .title = "a", .labels = "", .description = "bc" })));
+    try std.testing.expectEqualSlices(u8, &revision, &evt.Issue.contentRevision(.{ .title = "Crash", .labels = "bug", .description = "", .status = .closed }));
+
+    // the shared field rules, reported beside the field
+    try std.testing.expectEqualStrings("title", api_thread.fieldsError(.required_title).field_errors[0].field);
+    try std.testing.expectEqualStrings("labels", api_thread.fieldsError(.invalid_labels).field_errors[0].field);
+    try std.testing.expectEqual(.validation, api_thread.fieldsError(.invalid_labels).code);
 }

@@ -92,12 +92,26 @@ pub fn initPatchRev(
     path: []const u8,
     line: usize,
 ) !Self {
-    const id = evt.parseEventId(id_hex) catch return error.NotFound;
-    const record = (try evt.readFromRepo(evt.PatchRev, repo_kind, repo_opts, io, gpa, arena, repo, &id)) orelse return error.NotFound;
-    if (record.removed) return error.NotFound;
+    const record = (try readPatchRev(repo_kind, repo_opts, arena, repo, io, gpa, id_hex)) orelse return error.NotFound;
     var data = try init(repo_kind, repo_opts, arena, repo, io, gpa, handle, .object, record.head_tree_oid, path, line, "");
     data.patchrev_id = try arena.allocator().dupe(u8, id_hex);
     return data;
+}
+
+/// the patch revision `id_hex` names in `repo`, or null when there is none
+/// (a malformed id, an unknown one, or a removed revision)
+pub fn readPatchRev(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    id_hex: []const u8,
+) !?evt.PatchRev.Record {
+    const id = evt.parseEventId(id_hex) catch return null;
+    const record = (try evt.readFromRepo(evt.PatchRev, repo_kind, repo_opts, io, gpa, arena, repo, &id)) orelse return null;
+    return if (record.removed) null else record;
 }
 
 pub fn filesRoute(self: *const Self, path: []const u8, line: usize) ?ui.RoutablePage {

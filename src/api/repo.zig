@@ -13,6 +13,7 @@ const tr = xit.tree;
 const api = @import("../api.zig");
 const api_md = @import("./markdown.zig");
 const api_path = @import("./path.zig");
+const api_refs = @import("./refs.zig");
 const evt = @import("../event.zig");
 const md = @import("../markdown.zig");
 const ui = @import("../ui.zig");
@@ -50,14 +51,15 @@ pub const Route = struct {
         server: struct { owner: []const u8, name: []const u8 },
     };
 
-    pub const Resource = enum { overview, files };
+    pub const Resource = enum { overview, files, branches, tags };
 };
 
 /// the repo route `path` names, or null when it names none
 pub fn route(path: []const u8) ?Route {
     const local_prefix = "/api/v1/repo";
     if (std.mem.eql(u8, path, local_prefix)) return .{ .target = .local, .resource = .overview };
-    if (std.mem.eql(u8, path, local_prefix ++ "/files")) return .{ .target = .local, .resource = .files };
+    if (std.mem.startsWith(u8, path, local_prefix ++ "/"))
+        return .{ .target = .local, .resource = subResource(path[local_prefix.len + 1 ..]) orelse return null };
 
     const prefix = "/api/v1/repos/";
     if (!std.mem.startsWith(u8, path, prefix)) return null;
@@ -66,11 +68,17 @@ pub fn route(path: []const u8) ?Route {
     const name = segments.next() orelse return null;
     if (owner.len == 0 or name.len == 0) return null;
     const resource: Route.Resource = if (segments.next()) |segment|
-        (if (std.mem.eql(u8, segment, "files")) .files else return null)
+        subResource(segment) orelse return null
     else
         .overview;
     if (segments.next() != null) return null;
     return .{ .target = .{ .server = .{ .owner = owner, .name = name } }, .resource = resource };
+}
+
+// the resource a repo route's last segment names; the overview has none
+fn subResource(segment: []const u8) ?Route.Resource {
+    const resource = std.meta.stringToEnum(Route.Resource, segment) orelse return null;
+    return if (resource == .overview) null else resource;
 }
 
 pub fn handle(
@@ -141,7 +149,9 @@ pub fn handle(
                 inline else => |*opened| {
                     const failure = switch (matched.resource) {
                         .overview => try writeOverview(repo_kind, opened.self_repo_opts, io, aa, opened, &session, resolved, repo_handle, &body.writer),
-                        .files => try writeFiles(repo_kind, opened.self_repo_opts, io, allocator, aa, opened, query, &body.writer),
+                        .files => try writeFiles(repo_kind, opened.self_repo_opts, io, allocator, &arena, opened, query, &body.writer),
+                        .branches => try api_refs.writeList(repo_kind, opened.self_repo_opts, opened, io, allocator, aa, .branch, query, &body.writer),
+                        .tags => try api_refs.writeList(repo_kind, opened.self_repo_opts, opened, io, allocator, aa, .tag, query, &body.writer),
                     };
                     if (failure) |err| return api.respondError(request, allocator, err, .{});
                 },
@@ -212,42 +222,32 @@ fn writeOverview(
     return null;
 }
 
-// the ref a files response was read at
-const Ref = struct {
-    kind: enum { branch, tag, commit },
-    // the branch or tag name; null for a commit
-    name: ?[]const u8,
-    commit: []const u8,
-};
-
 fn writeFiles(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     io: std.Io,
     gpa: std.mem.Allocator,
-    aa: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
     repo: *rp.Repo(repo_kind, repo_opts),
     query: []const u8,
     writer: *std.Io.Writer,
 ) !?api.Error {
+    const aa = arena.allocator();
     const path = std.mem.trim(u8, (query_params.param(aa, query, "path") catch |err| switch (err) {
         error.InvalidPercentEncoding => return invalidField("path", "The path isn't validly encoded."),
         else => |e| return e,
     }) orelse "", "/");
 
-    // later slices name other refs; today every view is at the default branch
-    const resolved = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).init(repo, io, aa, null, "")) orelse
-        return .{ .code = .not_found, .message = "This repository has no commits yet." };
-    const ref: Ref = .{
-        .kind = switch (resolved.ref_or_oid) {
-            .branch => .branch,
-            .tag => .tag,
-            .object => .commit,
-        },
-        // for display, like every name a response carries
-        .name = if (resolved.ref_or_oid == .object) null else try api_path.display(aa, std.Uri.percentDecodeInPlace(try aa.dupe(u8, resolved.value))),
-        .commit = try aa.dupe(u8, &resolved.oid),
+    // the default branch unless `ref` names another ref, commit or revision
+    const selection = switch (try api_refs.selectionParam(aa, query)) {
+        .ok => |selection| selection,
+        .invalid => |err| return err,
     };
+    const resolved = (try api_refs.resolve(repo_kind, repo_opts, arena, repo, io, gpa, selection)) orelse return if (selection == .default)
+        .{ .code = .not_found, .message = "This repository has no commits yet." }
+    else
+        .{ .code = .not_found, .message = "This repository has no such branch, tag, commit or revision." };
+    const ref = resolved.ref;
 
     var moment = try repo.core.latestMoment();
     const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
@@ -319,7 +319,7 @@ const DirItem = struct {
     kind: enum { dir, file },
 };
 
-fn writeFile(writer: *std.Io.Writer, ref: Ref, path: []const u8, name: []const u8, line: usize, content: Files.FileContent, aa: std.mem.Allocator) !void {
+fn writeFile(writer: *std.Io.Writer, ref: api_refs.Ref, path: []const u8, name: []const u8, line: usize, content: Files.FileContent, aa: std.mem.Allocator) !void {
     var json: std.json.Stringify = .{ .writer = writer };
     try json.beginObject();
     try json.objectField("ref");

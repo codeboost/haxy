@@ -32,13 +32,13 @@ var git_events_mutex: std.Io.Mutex = .init;
 
 // takes the git events lock for `source`'s writes, when it is a git repo;
 // release with `unlockEvents` and the same answer
-fn lockEvents(io: std.Io, source: ui.RepoSource) !bool {
+pub fn lockEvents(io: std.Io, source: ui.RepoSource) !bool {
     if (source.repo_kind != .git) return false;
     try git_events_mutex.lock(io);
     return true;
 }
 
-fn unlockEvents(io: std.Io, locked: bool) void {
+pub fn unlockEvents(io: std.Io, locked: bool) void {
     if (locked) git_events_mutex.unlock(io);
 }
 

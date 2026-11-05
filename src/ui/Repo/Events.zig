@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const evt = @import("../../event.zig");
 const copy = @import("../../copy.zig");
 const ui = @import("../../ui.zig");
+const thread_write = @import("../../thread_write.zig");
 const inp = @import("../input.zig");
 const xit = @import("xit");
 const rp = xit.repo;
@@ -739,11 +740,9 @@ pub const Header = struct {
         failure: ?[]const u8,
     ) !Header {
         if (failure != null) return Header.empty(aa, failure);
-        const remote_name = (try remoteName(repo_kind, repo_opts, repo, io, aa)) orelse return .{ .sync_status = nothing };
-        const remote_ref: rf.Ref = .{ .kind = .{ .remote = remote_name }, .name = evt.events_ref.name };
-        const local_oid = (try repo.readRef(io, evt.events_ref)) orelse return .{ .sync_status = nothing };
-        const remote_oid = (try repo.readRef(io, remote_ref)) orelse return .{ .sync_status = nothing };
-        return .{ .sync_status = if (std.mem.eql(u8, &local_oid, &remote_oid)) nothing else unsynced };
+        const status = try syncStatus(repo_kind, repo_opts, repo, io, aa);
+        // only local events the remote lacks need a sync here
+        return .{ .sync_status = if (status.state == .sync_needed and status.local_events) unsynced else nothing };
     }
 
     pub fn empty(aa: std.mem.Allocator, failure: ?[]const u8) !Header {
@@ -936,7 +935,222 @@ fn isLoopbackSshUrl(url: []const u8) bool {
         std.mem.eql(u8, host, "[::1]");
 }
 
-pub fn sync(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource) !?[]u8 {
+/// how the events branch compares with the remote's, as last fetched. a sync
+/// fetches before it compares, so this only says what the last fetch knew.
+pub const SyncState = enum {
+    // no remote is configured
+    no_remote,
+    // the remote's events were never fetched, so nothing is known
+    not_fetched,
+    // the events branch is the remote's, as last fetched
+    in_sync,
+    // they differ: one side has events the other lacks
+    sync_needed,
+};
+
+pub const SyncStatus = struct {
+    // the remote a sync reaches, null when none is configured
+    remote: ?[]u8,
+    state: SyncState,
+    // whether the repo has an events branch of its own
+    local_events: bool,
+};
+
+/// where the events branch stands against the remote a sync would reach
+pub fn syncStatus(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+) !SyncStatus {
+    const local_oid = try repo.readRef(io, evt.events_ref);
+    const remote_name = (try remoteName(repo_kind, repo_opts, repo, io, allocator)) orelse
+        return .{ .remote = null, .state = .no_remote, .local_events = local_oid != null };
+    const remote_ref: rf.Ref = .{ .kind = .{ .remote = remote_name }, .name = evt.events_ref.name };
+    const remote_oid = (try repo.readRef(io, remote_ref)) orelse
+        return .{ .remote = remote_name, .state = .not_fetched, .local_events = local_oid != null };
+    const same = if (local_oid) |*oid| std.mem.eql(u8, oid, &remote_oid) else false;
+    return .{ .remote = remote_name, .state = if (same) .in_sync else .sync_needed, .local_events = local_oid != null };
+}
+
+/// the step a sync failed at. what it leaves behind follows from the step:
+/// before the merge nothing changed; a failed push has merged the remote's
+/// events here without sending ours; a failed confirmation has sent them
+/// but couldn't re-read the remote. local events are never discarded.
+pub const SyncStage = enum {
+    // finding the remote to reach
+    remote,
+    // fetching the remote's events
+    fetch,
+    // merging them into the events branch
+    merge,
+    // pushing the merged events branch
+    push,
+    // fetching again, to record what the remote now holds
+    confirm,
+};
+
+pub const SyncFailure = struct {
+    stage: SyncStage,
+    err: anyerror,
+    // what the remote reported, when it said why (owned)
+    remote_message: ?[]u8 = null,
+};
+
+pub const SyncResult = union(enum) {
+    synced,
+    failed: SyncFailure,
+
+    pub fn deinit(self: *SyncResult, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .synced => {},
+            .failed => |failure| if (failure.remote_message) |message| allocator.free(message),
+        }
+    }
+};
+
+/// a finished sync, as `lastSync` reports it
+pub const LastSync = struct {
+    // drawn at random once per process, so a restarted Haxy's syncs never
+    // reuse an earlier process's ids
+    incarnation: [8]u8,
+    // counts syncs since this process started
+    id: u64,
+    finished_at: i64,
+    // null when it synced
+    failure: ?struct {
+        stage: SyncStage,
+        err: []const u8,
+        remote_message: ?[]const u8,
+    },
+    remote_message_buffer: [max_remote_message]u8,
+
+    pub const max_id_text = 16 + 1 + 20;
+
+    /// the sync's id as clients see it: unique across this process's syncs
+    /// and every other process's
+    pub fn idText(self: *const LastSync, buffer: *[max_id_text]u8) []const u8 {
+        const incarnation = std.fmt.bytesToHex(self.incarnation, .lower);
+        return std.fmt.bufPrint(buffer, "{s}-{d}", .{ &incarnation, self.id }) catch unreachable;
+    }
+};
+
+// what a remote's message is cut to when kept as the last sync's
+const max_remote_message = 1024;
+
+// held for a whole sync, so a process runs one at a time (the TUI and the
+// web API alike)
+var sync_mutex: std.Io.Mutex = .init;
+// guards whether a sync runs and the last one's record, which change together
+// when a sync finishes
+var last_mutex: std.Io.Mutex = .init;
+var sync_running = false;
+var last_sync: ?LastSync = null;
+var sync_count: u64 = 0;
+var process_incarnation: ?[8]u8 = null;
+
+/// whether a sync is running in this process, and the last one it finished
+/// (null before the first), read together: a sync that just finished is
+/// either still running or already the last one, never neither
+pub const SyncSnapshot = struct {
+    running: bool,
+    last: ?*const LastSync,
+};
+
+/// the sync snapshot, its record copied into `buffer`
+pub fn syncSnapshot(io: std.Io, buffer: *LastSync) SyncSnapshot {
+    last_mutex.lockUncancelable(io);
+    defer last_mutex.unlock(io);
+    return .{ .running = sync_running, .last = if (last_sync) |last| copyLast(last, buffer) else null };
+}
+
+/// whether a sync is running in this process now
+pub fn syncRunning(io: std.Io) bool {
+    last_mutex.lockUncancelable(io);
+    defer last_mutex.unlock(io);
+    return sync_running;
+}
+
+/// the last sync this process finished, copied into `buffer`; null before
+/// the first
+pub fn lastSync(io: std.Io, buffer: *LastSync) ?*const LastSync {
+    return syncSnapshot(io, buffer).last;
+}
+
+fn setRunning(io: std.Io, running: bool) void {
+    last_mutex.lockUncancelable(io);
+    defer last_mutex.unlock(io);
+    sync_running = running;
+}
+
+// `record` in `buffer`, its message pointing into the buffer's own copy
+fn copyLast(record: LastSync, buffer: *LastSync) *const LastSync {
+    buffer.* = record;
+    if (buffer.failure) |*failure| {
+        if (failure.remote_message) |message| failure.remote_message = buffer.remote_message_buffer[0..message.len];
+    }
+    return buffer;
+}
+
+fn recordSync(io: std.Io, result: SyncResult, copy_into: ?*LastSync) void {
+    last_mutex.lockUncancelable(io);
+    defer last_mutex.unlock(io);
+    sync_count += 1;
+    const this_process = process_incarnation orelse blk: {
+        var bytes: [8]u8 = undefined;
+        io.random(&bytes);
+        process_incarnation = bytes;
+        break :blk bytes;
+    };
+    // finished: no longer running, and the last sync, in one step
+    sync_running = false;
+    var record: LastSync = .{
+        .incarnation = this_process,
+        .id = sync_count,
+        .finished_at = std.Io.Timestamp.now(io, .real).toSeconds(),
+        .failure = null,
+        .remote_message_buffer = undefined,
+    };
+    switch (result) {
+        .synced => {},
+        .failed => |failure| {
+            var kept: ?[]const u8 = null;
+            if (failure.remote_message) |message| {
+                // cut at a character boundary; a message that isn't utf-8 isn't kept
+                if (std.unicode.utf8ValidateSlice(message)) {
+                    var len = @min(message.len, max_remote_message);
+                    while (len < message.len and len > 0 and message[len] & 0xc0 == 0x80) len -= 1;
+                    @memcpy(record.remote_message_buffer[0..len], message[0..len]);
+                    kept = record.remote_message_buffer[0..len];
+                }
+            }
+            record.failure = .{ .stage = failure.stage, .err = @errorName(failure.err), .remote_message = kept };
+        },
+    }
+    last_sync = record;
+    if (copy_into) |buffer| _ = copyLast(record, buffer);
+}
+
+/// syncs the events branch with the remote, as the TUI's sync button does:
+/// fetch the remote's events, merge them with the shared event merge rules,
+/// push the result, then fetch again so the remote's ref records it. only the
+/// events branch moves, so the code HEAD and work tree stay as they are.
+/// failures say which step failed; nothing here discards local events.
+/// error.SyncInProgress when another sync is running in this process.
+/// `record`, when given, gets this sync's record as `lastSync` keeps it.
+pub fn runSync(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource, record: ?*LastSync) !SyncResult {
+    if (!sync_mutex.tryLock()) return error.SyncInProgress;
+    defer sync_mutex.unlock(io);
+    setRunning(io, true);
+    // a sync that stopped with an error records nothing; it isn't running
+    errdefer setRunning(io, false);
+    const result = try runSyncLocked(io, allocator, source);
+    recordSync(io, result, record);
+    return result;
+}
+
+fn runSyncLocked(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource) !SyncResult {
     var message: std.Io.Writer.Allocating = .init(allocator);
     defer message.deinit();
 
@@ -947,7 +1161,8 @@ pub fn sync(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource) !?[
             switch (any_repo) {
                 inline else => |*repo| {
                     const repo_opts = repo.self_repo_opts;
-                    const remote_name = (try remoteName(repo_kind, repo_opts, repo, io, allocator)) orelse return error.RemoteNotFound;
+                    const remote_name = (try remoteName(repo_kind, repo_opts, repo, io, allocator)) orelse
+                        return .{ .failed = .{ .stage = .remote, .err = error.RemoteNotFound } };
                     defer allocator.free(remote_name);
 
                     var config = try repo.listConfig(io, allocator);
@@ -956,8 +1171,10 @@ pub fn sync(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource) !?[
                     const ssh = if (configured_ssh) |command| if (command.len > 0) command else "ssh" else "ssh";
                     const remote_section = try allocator.print("remote.{s}", .{remote_name});
                     defer allocator.free(remote_section);
-                    const remote_config = config.sections.get(remote_section) orelse return error.RemoteNotFound;
-                    const fetch_url = remote_config.get("url") orelse return error.UrlNotFound;
+                    const remote_config = config.sections.get(remote_section) orelse
+                        return .{ .failed = .{ .stage = .remote, .err = error.RemoteNotFound } };
+                    const fetch_url = remote_config.get("url") orelse
+                        return .{ .failed = .{ .stage = .remote, .err = error.UrlNotFound } };
                     const push_url = remote_config.get("pushurl") orelse fetch_url;
                     const loopback_opts = " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
                     const fetch_ssh_command = try allocator.print("{s}{s} -o BatchMode=yes -o LogLevel=QUIET", .{ ssh, if (isLoopbackSshUrl(fetch_url)) loopback_opts else "" });
@@ -972,36 +1189,59 @@ pub fn sync(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource) !?[
                     var fetch_opts = fetch_transport_opts;
                     fetch_opts.refspecs = &.{fetch_refspec};
                     message.clearRetainingCapacity();
-                    repo.fetch(io, allocator, remote_name, fetch_opts) catch |err| {
-                        if (err == error.ServerReportedError and message.written().len != 0) return try allocator.dupe(u8, message.written());
-                        return err;
-                    };
+                    repo.fetch(io, allocator, remote_name, fetch_opts) catch |err|
+                        return try transportFailure(allocator, .fetch, err, &message);
 
                     const remote_ref: rf.Ref = .{ .kind = .{ .remote = remote_name }, .name = evt.events_ref.name };
-                    const local_oid = try repo.readRef(io, evt.events_ref);
-                    const remote_oid = try repo.readRef(io, remote_ref);
-                    if (local_oid == null and remote_oid == null) {
-                        try evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{});
-                        return null;
+                    merge: {
+                        // a local git repo's events have no transaction, so the
+                        // merge holds the lock every shared event write takes
+                        const locked = thread_write.lockEvents(io, source) catch |err|
+                            return .{ .failed = .{ .stage = .merge, .err = err } };
+                        defer thread_write.unlockEvents(io, locked);
+                        const local_oid = repo.readRef(io, evt.events_ref) catch |err|
+                            return .{ .failed = .{ .stage = .merge, .err = err } };
+                        const remote_oid = repo.readRef(io, remote_ref) catch |err|
+                            return .{ .failed = .{ .stage = .merge, .err = err } };
+                        if (local_oid == null and remote_oid == null) {
+                            evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{}) catch |err|
+                                return .{ .failed = .{ .stage = .merge, .err = err } };
+                            return .synced;
+                        }
+                        if (remote_oid != null) evt.mergeEvents(repo_kind, repo_opts, io, allocator, repo, remote_ref) catch |err|
+                            return .{ .failed = .{ .stage = .merge, .err = err } };
+                        evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{}) catch |err|
+                            return .{ .failed = .{ .stage = .merge, .err = err } };
+                        break :merge;
                     }
-                    if (remote_oid != null) try evt.mergeEvents(repo_kind, repo_opts, io, allocator, repo, remote_ref);
-                    try evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{});
 
                     const push_refspec = try allocator.print("refs/heads/{s}:refs/heads/{s}", .{ evt.events_ref.name, evt.events_ref.name });
                     defer allocator.free(push_refspec);
                     message.clearRetainingCapacity();
-                    repo.push(io, allocator, remote_name, push_refspec, false, push_transport_opts) catch |err| {
-                        if (err == error.ServerReportedError and message.written().len != 0) return try allocator.dupe(u8, message.written());
-                        return err;
-                    };
+                    repo.push(io, allocator, remote_name, push_refspec, false, push_transport_opts) catch |err|
+                        return try transportFailure(allocator, .push, err, &message);
                     message.clearRetainingCapacity();
-                    repo.fetch(io, allocator, remote_name, fetch_opts) catch |err| {
-                        if (err == error.ServerReportedError and message.written().len != 0) return try allocator.dupe(u8, message.written());
-                        return err;
-                    };
+                    repo.fetch(io, allocator, remote_name, fetch_opts) catch |err|
+                        return try transportFailure(allocator, .confirm, err, &message);
                 },
             }
         },
     }
-    return null;
+    return .synced;
+}
+
+// a fetch or push that failed, with what the remote said when it reported why
+fn transportFailure(allocator: std.mem.Allocator, stage: SyncStage, err: anyerror, message: *std.Io.Writer.Allocating) !SyncResult {
+    const remote_message = if (err == error.ServerReportedError and message.written().len != 0) try allocator.dupe(u8, message.written()) else null;
+    return .{ .failed = .{ .stage = stage, .err = err, .remote_message = remote_message } };
+}
+
+/// the TUI's sync: null when it synced, the remote's message when it
+/// reported one, otherwise the error that stopped it
+pub fn sync(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource) !?[]u8 {
+    const result = try runSync(io, allocator, source, null);
+    switch (result) {
+        .synced => return null,
+        .failed => |failure| return failure.remote_message orelse failure.err,
+    }
 }

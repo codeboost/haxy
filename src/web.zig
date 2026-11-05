@@ -9,6 +9,7 @@ const api_account = @import("./api/account.zig");
 const api_commits = @import("./api/commits.zig");
 const api_discovery = @import("./api/discovery.zig");
 const api_events = @import("./api/events.zig");
+const api_sync = @import("./api/sync.zig");
 const api_issues = @import("./api/issues.zig");
 const api_repo = @import("./api/repo.zig");
 const api_repo_admin = @import("./api/repo_admin.zig");
@@ -243,6 +244,7 @@ fn routeApiRequest(
     }
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_sync.route(path)) return api_sync.handle(io, request, allocator, apiRepoHost(host));
     if (api_events.route(path)) |route| return api_events.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_commits.route(path)) |route| return api_commits.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_repo.route(path)) |route| {

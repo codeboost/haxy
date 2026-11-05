@@ -14,6 +14,7 @@ comptime {
     _ = @import("test/origin.zig");
     _ = @import("test/serve.zig");
     _ = @import("test/ssh.zig");
+    _ = @import("test/thread_write.zig");
     _ = @import("test/ui.zig");
     _ = @import("test/undo.zig");
 }

@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const pch = @import("../../patch.zig");
 const evt = @import("../../event.zig");
 const notify = @import("../../notify.zig");
+const thread_write = @import("../../thread_write.zig");
 const ui = @import("../../ui.zig");
 const widget = @import("../widget.zig");
 const xit = @import("xit");
@@ -1622,18 +1623,11 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
 
             const io = self.session.io orelse return;
             const source = self.data.repo_source orelse return;
-            if (!try source.canModify(io, allocator, actor, event_kind, &id)) return;
             const thread_id = evt.parseEventId((self.entry orelse return).id) catch return;
-
-            switch (source.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try evt.removeInThread(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, event_kind, &id, author),
-                    }
-                },
-            }
+            thread_write.remove(self.session.eventHost(), io, allocator, source, actor, kind, &thread_id, event_kind, &id) catch |err| switch (err) {
+                error.Forbidden, error.NotFound => return,
+                else => |e| return e,
+            };
 
             // back to the thread, or to its list when the thread itself was removed
             const entry = self.entry orelse return;
@@ -1736,20 +1730,12 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const source = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
             const status = (statusChange(entryStatus(entry)) orelse return).status;
             const id = try evt.parseEventId(entry.id);
-            if (!try source.canModify(io, allocator, actor, kind, &id)) return;
-
-            switch (source.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id, .{ .status = status }, author),
-                    }
-                },
-            }
+            thread_write.setStatus(Event, self.session.eventHost(), io, allocator, source, actor, &id, status) catch |err| switch (err) {
+                error.Forbidden => return,
+                else => |e| return e,
+            };
 
             const route = listRoute(self.data.identity, status, entry.id) orelse return;
             try self.session.navigate(route);
@@ -3124,27 +3110,7 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             var id_bytes: [evt.event_id_size]u8 = undefined;
             io.random(&id_bytes);
             const event_id_hex = std.fmt.bytesToHex(id_bytes, .lower);
-
-            const event = evt.EventWithId{
-                .id = event_id_hex,
-                .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-                .author = actor.author,
-                .event = @unionInit(evt.Event, @tagName(kind), Event{
-                    .title = title,
-                    .description = description,
-                    .labels = labels,
-                }),
-            };
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try evt.consume(self.session.eventHost(), .repo, repo_kind, repo.self_repo_opts, io, allocator, repo, evt.events_ref, &.{event}),
-                    }
-                },
-            }
+            try thread_write.create(self.session.eventHost(), io, allocator, src, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description }, actor.author);
 
             // wipe the form so a return visit starts fresh
             title_input.clear(allocator);
@@ -3199,34 +3165,33 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             }
 
             const id_bytes = try evt.parseEventId(entry.id);
-            if (!try src.canModify(io, allocator, actor, kind, &id_bytes)) return;
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| if (supports_drafts) {
-                            Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, .{ .fields = .{
-                                .title = title,
-                                .labels = labels,
-                                .description = description,
-                                .target_branch = target_branch,
-                            } }, author) catch |err| {
-                                const failure = FeedbackFailure.fromError(err) orelse return err;
-                                try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
-                                return;
-                            };
-                        } else if (has_status)
-                            try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, .{ .fields = .{
-                                .title = title,
-                                .labels = labels,
-                                .description = description,
-                            } }, author)
-                        else
-                            try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, title, labels, description, author),
-                    }
-                },
+            if (comptime kind == .issue) {
+                thread_write.editIssue(self.session.eventHost(), io, allocator, src, actor, &id_bytes, .{ .title = title, .labels = labels, .description = description }, null) catch |err| switch (err) {
+                    error.Forbidden => return,
+                    else => |e| return e,
+                };
+            } else {
+                if (!try src.canModify(io, allocator, actor, kind, &id_bytes)) return;
+                switch (src.repo_kind) {
+                    inline else => |repo_kind| {
+                        var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
+                        defer any_repo.deinit(io, allocator);
+                        switch (any_repo) {
+                            inline else => |*repo| if (supports_drafts) {
+                                Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, .{ .fields = .{
+                                    .title = title,
+                                    .labels = labels,
+                                    .description = description,
+                                    .target_branch = target_branch,
+                                } }, author) catch |err| {
+                                    const failure = FeedbackFailure.fromError(err) orelse return err;
+                                    try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
+                                    return;
+                                };
+                            } else try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, title, labels, description, author),
+                        }
+                    },
+                }
             }
 
             const route = listRoute(self.data.identity, entryStatus(entry.*), entry.id) orelse return;
@@ -3315,18 +3280,11 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
 
             const io = self.session.io orelse return;
             const src = self.data.repo_source orelse return;
-            if (!try src.canModify(io, allocator, actor, event_kind, &id)) return;
             const thread_id = evt.parseEventId(self.data.selected_id) catch return;
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try evt.removeInThread(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, event_kind, &id, author),
-                    }
-                },
-            }
+            thread_write.remove(self.session.eventHost(), io, allocator, src, actor, kind, &thread_id, event_kind, &id) catch |err| switch (err) {
+                error.Forbidden, error.NotFound => return,
+                else => |e| return e,
+            };
 
             // back to the thread, or to its list when the thread itself was removed
             const selected = self.data.selectedThread() orelse return;

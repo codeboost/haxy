@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const evt = @import("../event.zig");
 const diff3 = @import("../diff3.zig");
 const srch_thrd = @import("../search_thread.zig");
@@ -209,11 +210,61 @@ pub fn update(
     change: Update,
     author: evt.CommitAuthor,
 ) !void {
+    return updateAt(host, repo_kind, repo_opts, io, allocator, repo, id_bytes, change, author, null);
+}
+
+pub const Revision = [16]u8;
+
+// for tests only: run between `updateAt`'s read of an issue and its write,
+// so a test can make something happen in that window
+pub const testing = struct {
+    pub var after_read: ?*const fn (std.Io) void = null;
+};
+
+// a version of what an edit replaces: a digest of the title, labels and
+// description, so it moves whenever any of them changes, however the change
+// arrived (an edit, a conflict resolution, a merge from another host), and
+// stays when only the status does
+pub fn contentRevision(issue: Self) Revision {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    for ([_][]const u8{ issue.title, issue.labels, issue.description }) |field| {
+        var len: [8]u8 = undefined;
+        std.mem.writeInt(u64, &len, field.len, .little);
+        hasher.update(&len);
+        hasher.update(field);
+    }
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return digest[0..@sizeOf(Revision)].*;
+}
+
+// `update`, only while the issue's fields are still at `revision`
+// (`contentRevision`), else error.Stale; null applies it to whatever the
+// issue is now. a xit repo checks again inside the write's transaction, so a
+// change that lands meanwhile is never overwritten.
+pub fn updateAt(
+    host: evt.Host,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id_bytes: *const [evt.event_id_size]u8,
+    change: Update,
+    author: evt.CommitAuthor,
+    revision: ?Revision,
+) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     const issue = (try readById(repo_kind, repo_opts, io, allocator, &arena, repo, id_bytes)) orelse return error.NotFound;
     if (issue.removed) return error.NotFound;
+    if (revision) |expected| {
+        if (!std.mem.eql(u8, &contentRevision(issue.event), &expected)) return error.Stale;
+    }
+    if (builtin.is_test) {
+        if (testing.after_read) |hook| hook(io);
+    }
 
     var updated = issue.event;
     switch (change) {
@@ -232,12 +283,66 @@ pub fn update(
         },
     }
 
-    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &[_]evt.EventWithId{.{
+    var events = [_]evt.EventWithId{.{
         .id = std.fmt.bytesToHex(id_bytes.*, .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         .author = author,
         .event = .{ .issue = updated },
-    }});
+    }};
+    // a xit repo builds the event again inside the write's transaction, from
+    // the issue as it is there: a change that landed since the read above
+    // stands (a status change under an edit, an edit under a status change),
+    // and the revision is checked against it. a git repo's events have no
+    // transaction; its writers serialize the read and the write instead
+    // (thread_write). a resolution's fields come from the conflict entry read
+    // above, so it is written as built.
+    if (repo_kind == .xit and change != .resolve) {
+        return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, Rebase(repo_opts.hash){
+            .arena = &arena,
+            .id = id_bytes,
+            .change = change,
+            .revision = revision,
+            .event = &events[0],
+        });
+    }
+    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
+}
+
+// the check `updateAt` runs inside a xit repo's write transaction: it
+// rebuilds the event from the issue as the transaction sees it, refusing a
+// removed issue, a stale revision, and a status the issue already has
+// (which cancels the write)
+fn Rebase(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        // holds the rebuilt event's strings until the write is done
+        arena: *std.heap.ArenaAllocator,
+        id: *const [evt.event_id_size]u8,
+        change: Update,
+        revision: ?Revision,
+        event: *evt.EventWithId,
+
+        pub fn check(self: @This(), moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+            const record = (try readFromMoment(hash_kind, self.arena, moment_maybe orelse return error.NotFound, self.id)) orelse return error.NotFound;
+            if (record.removed) return error.NotFound;
+            if (self.revision) |expected| {
+                if (!std.mem.eql(u8, &contentRevision(record.event), &expected)) return error.Stale;
+            }
+            var updated = record.event;
+            switch (self.change) {
+                .status => |status| {
+                    if (updated.status == status) return error.CancelTransaction;
+                    updated.status = status;
+                },
+                .fields => |fields| {
+                    updated.title = fields.title;
+                    updated.labels = fields.labels;
+                    updated.description = fields.description;
+                },
+                .resolve => unreachable,
+            }
+            self.event.event = .{ .issue = updated };
+        }
+    };
 }
 
 // the live fields with `resolve` applied: submitted title/labels stand in for the
@@ -316,7 +421,6 @@ fn readById(
     repo: *rp.Repo(repo_kind, repo_opts),
     id_bytes: *const [evt.event_id_size]u8,
 ) !?Record {
-    const DB = evt.EventDB(repo_opts.hash);
     var event_db_maybe: ?evt.LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir) else null;
     defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
     const moment = (if (event_db_maybe) |*event_db|
@@ -325,11 +429,22 @@ fn readById(
         return null
     else
         evt.currentMoment(repo_opts, repo)) catch return null;
-    const event_id_to_issue_cursor = (try moment.getCursor(hash.hashInt(repo_opts.hash, record_map_key))) orelse return null;
+    return readFromMoment(repo_opts.hash, arena, moment, id_bytes);
+}
+
+// the issue `id_bytes` names in a haxy moment, or null
+fn readFromMoment(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    id_bytes: *const [evt.event_id_size]u8,
+) !?Record {
+    const DB = evt.EventDB(hash_kind);
+    const event_id_to_issue_cursor = (try moment.getCursor(hash.hashInt(hash_kind, record_map_key))) orelse return null;
     const event_id_to_issue = try DB.HashMap(.read_only).init(event_id_to_issue_cursor);
-    const issue_cursor = (try event_id_to_issue.getCursor(hash.hashInt(repo_opts.hash, id_bytes))) orelse return null;
+    const issue_cursor = (try event_id_to_issue.getCursor(hash.hashInt(hash_kind, id_bytes))) orelse return null;
     const issue_map = try DB.HashMap(.read_only).init(issue_cursor);
-    return try evt.read(Record, DB, repo_opts.hash, arena, issue_map);
+    return try evt.read(Record, DB, hash_kind, arena, issue_map);
 }
 
 // remove an issue's order key from its labels' `status` sets, pruning entries

@@ -53,7 +53,9 @@ pub fn write(
         .ok => |selection| selection,
         .invalid => |err| return err,
     };
-    const resolved = (try api_refs.resolve(repo_kind, repo_opts, arena, repo, io, gpa, selection)) orelse return if (selection == .default)
+    // one snapshot for resolving the ref and reading its file index
+    var moment = try repo.core.latestMoment();
+    const resolved = (try api_refs.resolveAt(repo_kind, repo_opts, arena, repo, io, gpa, &moment, selection)) orelse return if (selection == .default)
         .{ .code = .not_found, .message = "This repository has no commits yet." }
     else
         .{ .code = .not_found, .message = "This repository has no such branch, tag, commit or revision." };
@@ -68,7 +70,6 @@ pub fn write(
     };
     const branch = if (read == .branch) read.branch else "";
 
-    const moment = try repo.core.latestMoment();
     const file_index = try Files.fileIndex(repo_kind, repo_opts, moment, ref_or_oid, branch, &resolved.oid);
     if (comptime repo_kind == .xit) if (file_index == .indexed) {
         // an empty search matches nothing: it only asks whether the view is

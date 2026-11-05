@@ -245,13 +245,14 @@ fn writeFiles(
         .ok => |selection| selection,
         .invalid => |err| return err,
     };
-    const resolved = (try api_refs.resolve(repo_kind, repo_opts, arena, repo, io, gpa, selection)) orelse return if (selection == .default)
+    // one snapshot for resolving the ref and reading what it names
+    var moment = try repo.core.latestMoment();
+    const resolved = (try api_refs.resolveAt(repo_kind, repo_opts, arena, repo, io, gpa, &moment, selection)) orelse return if (selection == .default)
         .{ .code = .not_found, .message = "This repository has no commits yet." }
     else
         .{ .code = .not_found, .message = "This repository has no such branch, tag, commit or revision." };
     const ref = resolved.ref;
 
-    var moment = try repo.core.latestMoment();
     const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
     var tree_dir = tr.TreeDir(repo_kind, repo_opts).init(state, io, gpa, &resolved.oid, path) catch |err| switch (err) {
         error.TreeEntryNotFound => return .{ .code = .not_found, .message = "There is no file or directory at this path." },

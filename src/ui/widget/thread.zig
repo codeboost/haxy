@@ -2981,44 +2981,32 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const src = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
             const form = self.formBox() orelse return;
             const body_input = try formField(form, "body");
             const body = try body_input.text(allocator);
             defer allocator.free(body);
             if (!evt.Comment.fieldsValid(body)) return;
 
-            var thread_id: [evt.event_id_size * 2]u8 = undefined;
-            @memcpy(&thread_id, self.data.selected_id);
-            const parent_id = if (self.data.comment_id.len == 0) thread_id else blk: {
-                var parent: [evt.event_id_size * 2]u8 = undefined;
-                @memcpy(&parent, self.data.comment_id);
-                break :blk parent;
-            };
-            var event_id_hex: [evt.event_id_size * 2]u8 = undefined;
-            const editing = self.data.view == .edit_comment;
-            if (editing) {
-                const comment_id = evt.parseEventId(self.data.comment_id) catch return;
-                if (!try src.canModify(io, allocator, actor, .comment, &comment_id)) return;
+            // the shared comment writes check the thread, the parent and who
+            // may change a comment
+            const thread_id = evt.parseEventId(self.data.selected_id) catch return;
+            var event_id: [evt.event_id_size]u8 = undefined;
+            if (self.data.view == .edit_comment) {
+                event_id = evt.parseEventId(self.data.comment_id) catch return;
+                thread_write.editComment(self.session.eventHost(), io, allocator, src, actor, kind, &thread_id, &event_id, body, null) catch |err| switch (err) {
+                    error.Forbidden, error.NotFound, error.Removed => return,
+                    else => |e| return e,
+                };
+            } else {
+                const parent_id: ?[evt.event_id_size]u8 = if (self.data.comment_id.len == 0) null else evt.parseEventId(self.data.comment_id) catch return;
+                io.random(&event_id);
+                try thread_write.comment(self.session.eventHost(), io, allocator, src, kind, &thread_id, if (parent_id) |*p| p else null, &event_id, body, actor.author);
             }
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| if (editing) {
-                            const comment_id = evt.parseEventId(self.data.comment_id) catch return;
-                            try evt.Comment.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, &comment_id, body, author);
-                            event_id_hex = std.fmt.bytesToHex(comment_id, .lower);
-                        } else {
-                            event_id_hex = try evt.Comment.create(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, &parent_id, body, author);
-                        },
-                    }
-                },
-            }
+            const event_id_hex = std.fmt.bytesToHex(event_id, .lower);
+            const thread_id_hex = std.fmt.bytesToHex(thread_id, .lower);
 
             body_input.clear(allocator);
-            const route = ui.RoutablePage.repoThreadCommentRoute(kind, self.data.identity, &thread_id, &event_id_hex, 0) orelse return;
+            const route = ui.RoutablePage.repoThreadCommentRoute(kind, self.data.identity, &thread_id_hex, &event_id_hex, 0) orelse return;
             try self.session.navigate(route);
         }
 

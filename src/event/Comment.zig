@@ -33,6 +33,21 @@ pub fn fieldsValid(body: []const u8) bool {
     return body.len != 0;
 }
 
+pub const Revision = [16]u8;
+
+// a version of what an edit replaces: a digest of the body, so it moves
+// whenever the body changes, however the change arrived
+pub fn contentRevision(comment: Self) Revision {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    var len: [8]u8 = undefined;
+    std.mem.writeInt(u64, &len, comment.body.len, .little);
+    hasher.update(&len);
+    hasher.update(comment.body);
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return digest[0..@sizeOf(Revision)].*;
+}
+
 pub fn consume(
     comptime DB: type,
     comptime hash_kind: hash.HashKind,
@@ -135,53 +150,6 @@ pub fn create(
         } },
     }});
     return event_id;
-}
-
-// replace a comment's body while preserving its thread and parent. `repo` must
-// be writable.
-pub fn update(
-    host: evt.Host,
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    thread_kind: evt.EventKind,
-    thread_id: *const [evt.event_id_size * 2]u8,
-    comment_id: *const [evt.event_id_size]u8,
-    body: []const u8,
-    author: evt.CommitAuthor,
-) !void {
-    if (!fieldsValid(body)) return error.InvalidFields;
-
-    const thread_id_bytes = evt.parseEventId(thread_id) catch return error.NotFound;
-    if (!try evt.threadHolds(repo_kind, repo_opts, io, allocator, repo, thread_kind, &thread_id_bytes, .{ .comment = comment_id })) return error.NotFound;
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const comment = blk: {
-        const DB = evt.EventDB(repo_opts.hash);
-        var event_db_maybe: ?evt.LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir) else null;
-        defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
-        const moment = (if (event_db_maybe) |*event_db|
-            evt.currentMomentFromDb(repo_opts.hash, event_db.db)
-        else if (repo_kind == .git)
-            return error.NotFound
-        else
-            evt.currentMoment(repo_opts, repo)) catch return error.NotFound;
-        break :blk (try readById(DB, repo_opts.hash, moment, &arena, comment_id)) orelse return error.NotFound;
-    };
-    if (comment.removed) return error.NotFound;
-
-    var updated = comment.event;
-    updated.body = body;
-    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{.{
-        .id = std.fmt.bytesToHex(comment_id.*, .lower),
-        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        .author = author,
-        .event = .{ .comment = updated },
-    }});
 }
 
 // read a comment by event id, or null if the id isn't a known comment. field

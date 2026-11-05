@@ -24,7 +24,11 @@ test "thread routes name a kind's list, its labels or one thread, on a server or
         "/api/v1/repos/bobby/linux",
         "/api/v1/repos/bobby/linux/files",
         "/api/v1/repos/bobby/linux/issues/",
-        "/api/v1/repos/bobby/linux/issues/abc/comments",
+        "/api/v1/repos/bobby/linux/issues/abc/comments/",
+        "/api/v1/repos/bobby/linux/issues/abc/comments/x/y",
+        "/api/v1/repos/bobby/linux/issues//comments",
+        "/api/v1/repos/bobby/linux/issues/labels/comments",
+        "/api/v1/repos/bobby/linux/issues/abc/replies",
         "/api/v1/repos/bobby/linux/issuesx",
         "/api/v1/repos//linux/issues",
         "/api/v1/repos/bobby/issues",
@@ -34,6 +38,15 @@ test "thread routes name a kind's list, its labels or one thread, on a server or
     }) |path| {
         try std.testing.expectEqual(null, api_thread.route(path, "issues"));
     }
+}
+
+test "comment routes name a thread's comments, or one comment in it" {
+    const all = api_thread.route("/api/v1/repos/bobby/linux/issues/0123/comments", "issues").?;
+    try std.testing.expectEqualStrings("0123", all.resource.comments);
+    const one = api_thread.route("/api/v1/repo/issues/0123/comments/4567", "issues").?;
+    try std.testing.expectEqual(.local, std.meta.activeTag(one.target));
+    try std.testing.expectEqualStrings("0123", one.resource.comment.thread);
+    try std.testing.expectEqualStrings("4567", one.resource.comment.comment);
 }
 
 test "an instant is written as an RFC 3339 UTC string with whole seconds" {

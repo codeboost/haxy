@@ -46,13 +46,45 @@ pub fn init(
     start: usize,
     viewer: ?ui.Viewer,
 ) !Permalink {
+    return initSized(hash_kind, arena, admin_moment, haxy_moment, thread_id, selected_id, start, page_size, viewer);
+}
+
+// `init`, with a replies window of `size` comments (the JSON API's page size)
+pub fn initSized(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    thread_id: []const u8,
+    selected_id: []const u8,
+    start: usize,
+    size: usize,
+    viewer: ?ui.Viewer,
+) !Permalink {
     const selected = (try readOne(hash_kind, arena, admin_moment, haxy_moment, selected_id, viewer)) orelse return error.NotFound;
     if (!std.mem.eql(u8, &selected.comment.event.thread_id, thread_id)) return error.NotFound;
 
     return .{
         .selected = selected,
-        .replies = try loadWindow(hash_kind, arena, admin_moment, haxy_moment, evt.Comment.parent_id_to_comment_id_set_key, &try evt.parseEventId(selected_id), start, viewer),
+        .replies = try loadWindowSized(hash_kind, arena, admin_moment, haxy_moment, evt.Comment.parent_id_to_comment_id_set_key, &try evt.parseEventId(selected_id), start, size, viewer),
     };
+}
+
+// where `comment` sits in its thread's chronological comments (0 = first),
+// which says the thread window that shows it
+pub fn threadPosition(
+    comptime hash_kind: hash.HashKind,
+    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    comment: CommentWithId,
+) !usize {
+    const DB = evt.EventDB(hash_kind);
+    const id_bytes = idBytes(&comment.id) orelse return error.NotFound;
+    const index_cursor = try haxy_moment.getCursor(hash.hashInt(hash_kind, evt.Comment.thread_id_to_comment_id_set_key)) orelse return error.NotFound;
+    const index = try DB.HashMap(.read_only).init(index_cursor);
+    const thread_bytes = idBytes(&comment.comment.event.thread_id) orelse return error.NotFound;
+    const set_cursor = try index.getCursor(hash.hashInt(hash_kind, &thread_bytes)) orelse return error.NotFound;
+    const set = try DB.SortedSet(.read_only).init(set_cursor);
+    return @intCast(try set.rank(&evt.orderKey(comment.comment.created_order, &id_bytes)));
 }
 
 // read one chronological comment window from an id-to-comment-set index.
@@ -64,6 +96,21 @@ pub fn loadWindow(
     index_key: []const u8,
     owner_id: *const [evt.event_id_size]u8,
     start: usize,
+    viewer: ?ui.Viewer,
+) !Window {
+    return loadWindowSized(hash_kind, arena, admin_moment, haxy_moment, index_key, owner_id, start, page_size, viewer);
+}
+
+// `loadWindow`, `size` comments long (the JSON API's page size)
+pub fn loadWindowSized(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    index_key: []const u8,
+    owner_id: *const [evt.event_id_size]u8,
+    start: usize,
+    size: usize,
     viewer: ?ui.Viewer,
 ) !Window {
     const DB = evt.EventDB(hash_kind);
@@ -80,7 +127,9 @@ pub fn loadWindow(
     };
     const set = try DB.SortedSet(.read_only).init(set_cursor);
     const count: usize = @intCast(try set.count());
-    const end = start + @min(page_size, count -| start);
+    // a window past the end shows nothing
+    if (start >= count) return .{ .comments = &.{}, .start = start, .count = count };
+    const end = start + @min(size, count - start);
     var iter = try set.iteratorFromIndex(start);
     var comments: std.ArrayList(CommentWithId) = .empty;
     var i = start;

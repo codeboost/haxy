@@ -370,3 +370,136 @@ test "in a git repository, assigning and unassigning check the events branch as 
     try forget(path);
     try std.testing.expectError(error.NotAssigned, thread_write.unassign(.local, io, allocator, source, writer, .issue, &id, &evt.Assignment.idOf(&id, "ada@example.test")));
 }
+
+// --- comments ------------------------------------------------------------------
+
+// the comment `id` names, as the repo's views read it
+fn readComment(arena: *std.heap.ArenaAllocator, repo: *rp.Repo(.xit, .{}), id: *const [evt.event_id_size]u8) !?evt.Comment.Record {
+    const opts: rp.RepoOpts(.xit) = .{};
+    return evt.Comment.readById(evt.EventDB(opts.hash), opts.hash, try evt.currentMoment(opts, repo), arena, id);
+}
+
+test "a comment posted under a chosen id can't be posted twice; a reply's parent must be a comment in the same thread" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var repo = try rp.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const issue: [evt.event_id_size]u8 = @splat(20);
+    const other: [evt.event_id_size]u8 = @splat(21);
+    try thread_write.create(.local, io, allocator, source, .issue, &issue, .{ .title = "Crash", .labels = "", .description = "" }, writer.author);
+    try thread_write.create(.local, io, allocator, source, .issue, &other, .{ .title = "Other", .labels = "", .description = "" }, writer.author);
+
+    const first: [evt.event_id_size]u8 = @splat(22);
+    try thread_write.comment(.local, io, allocator, source, .issue, &issue, null, &first, "Seen it too.", reader.author);
+    const posted = (try readComment(&arena, &repo, &first)).?;
+    try std.testing.expectEqualStrings("Seen it too.", posted.event.body);
+    try std.testing.expectEqualSlices(u8, &std.fmt.bytesToHex(issue, .lower), &posted.event.parent_id);
+    try std.testing.expectEqualStrings(reader.author.email, posted.author_email.?);
+
+    // a retry of the same post, or anything else under the id, is refused
+    try std.testing.expectError(error.IdTaken, thread_write.comment(.local, io, allocator, source, .issue, &issue, null, &first, "Seen it too.", reader.author));
+    try std.testing.expectError(error.IdTaken, thread_write.comment(.local, io, allocator, source, .issue, &issue, null, &issue, "Under the issue's id", reader.author));
+
+    const reply: [evt.event_id_size]u8 = @splat(23);
+    try thread_write.comment(.local, io, allocator, source, .issue, &issue, &first, &reply, "Which version?", writer.author);
+    try std.testing.expectEqualSlices(u8, &std.fmt.bytesToHex(first, .lower), &(try readComment(&arena, &repo, &reply)).?.event.parent_id);
+
+    // the thread must be of the kind claimed, and a parent a comment in it
+    const stray: [evt.event_id_size]u8 = @splat(24);
+    try std.testing.expectError(error.NotFound, thread_write.comment(.local, io, allocator, source, .discuss, &issue, null, &stray, "Wrong kind", writer.author));
+    try std.testing.expectError(error.NotFound, thread_write.comment(.local, io, allocator, source, .issue, &other, &first, &stray, "Wrong thread", writer.author));
+    try std.testing.expectError(error.NotFound, thread_write.comment(.local, io, allocator, source, .issue, &issue, &other, &stray, "Not a comment", writer.author));
+    try std.testing.expectError(error.InvalidFields, thread_write.comment(.local, io, allocator, source, .issue, &issue, null, &stray, "", writer.author));
+    try std.testing.expectEqual(null, try readComment(&arena, &repo, &stray));
+}
+
+test "a comment edit made against a stale revision changes nothing; only its author or a writer may change or remove it" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var repo = try rp.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const stranger: ui.Actor = .{ .author = .{ .name = "sam", .email = "sam@example.test" }, .role = .read };
+
+    const issue: [evt.event_id_size]u8 = @splat(30);
+    const comment_id: [evt.event_id_size]u8 = @splat(31);
+    try thread_write.create(.local, io, allocator, source, .issue, &issue, .{ .title = "Crash", .labels = "", .description = "" }, writer.author);
+    try thread_write.comment(.local, io, allocator, source, .issue, &issue, null, &comment_id, "Frist", reader.author);
+    const loaded = evt.Comment.contentRevision((try readComment(&arena, &repo, &comment_id)).?.event);
+
+    // its author fixes it; an edit based on the text before that is refused
+    try thread_write.editComment(.local, io, allocator, source, reader, .issue, &issue, &comment_id, "First", loaded);
+    try std.testing.expectError(error.Stale, thread_write.editComment(.local, io, allocator, source, reader, .issue, &issue, &comment_id, "Overwritten", loaded));
+    const fixed = (try readComment(&arena, &repo, &comment_id)).?;
+    try std.testing.expectEqualStrings("First", fixed.event.body);
+    try std.testing.expect(!std.mem.eql(u8, &loaded, &evt.Comment.contentRevision(fixed.event)));
+
+    // a reader who didn't write it may neither edit nor remove it; a writer may
+    try std.testing.expectError(error.Forbidden, thread_write.editComment(.local, io, allocator, source, stranger, .issue, &issue, &comment_id, "Mine now", null));
+    try std.testing.expectError(error.Forbidden, thread_write.remove(.local, io, allocator, source, stranger, .issue, &issue, .comment, &comment_id));
+    try thread_write.editComment(.local, io, allocator, source, writer, .issue, &issue, &comment_id, "First (moderated)", null);
+    try std.testing.expectError(error.InvalidFields, thread_write.editComment(.local, io, allocator, source, writer, .issue, &issue, &comment_id, "", null));
+
+    // a comment is edited only through its own thread
+    const other: [evt.event_id_size]u8 = @splat(32);
+    try thread_write.create(.local, io, allocator, source, .issue, &other, .{ .title = "Other", .labels = "", .description = "" }, writer.author);
+    try std.testing.expectError(error.NotFound, thread_write.editComment(.local, io, allocator, source, writer, .issue, &other, &comment_id, "Elsewhere", null));
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, writer, .issue, &other, .comment, &comment_id));
+
+    // removed, it stays in its thread (so its replies stay connected) and
+    // takes no more edits; removing it again writes nothing
+    try thread_write.remove(.local, io, allocator, source, reader, .issue, &issue, .comment, &comment_id);
+    try std.testing.expect((try readComment(&arena, &repo, &comment_id)).?.removed);
+    try std.testing.expectError(error.Removed, thread_write.editComment(.local, io, allocator, source, writer, .issue, &issue, &comment_id, "Back", null));
+    const before = (try repo.readRef(io, evt.events_ref)).?;
+    try thread_write.remove(.local, io, allocator, source, writer, .issue, &issue, .comment, &comment_id);
+    try std.testing.expectEqualSlices(u8, &before, &(try repo.readRef(io, evt.events_ref)).?);
+}
+
+test "in a git repository, a comment's id and revision are checked against the events branch as it is" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    const opts: rp.RepoOpts(.git) = .{};
+    {
+        var repo = try rp.Repo(.git, opts).init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+    }
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .git };
+    const forget = struct {
+        fn run(dir_path: []const u8) !void {
+            var repo = try rp.Repo(.git, opts).open(std.testing.io, std.testing.allocator, .{ .path = dir_path });
+            defer repo.deinit(std.testing.io, std.testing.allocator);
+            try evt.LocalEventDB(opts.hash).delete(std.testing.io, repo.core.repo_dir);
+        }
+    }.run;
+
+    const issue: [evt.event_id_size]u8 = @splat(40);
+    const comment_id: [evt.event_id_size]u8 = @splat(41);
+    try thread_write.create(.local, io, allocator, source, .issue, &issue, .{ .title = "Cloned", .labels = "", .description = "" }, writer.author);
+    try thread_write.comment(.local, io, allocator, source, .issue, &issue, null, &comment_id, "Hello", writer.author);
+    try forget(path);
+    try std.testing.expectError(error.IdTaken, thread_write.comment(.local, io, allocator, source, .issue, &issue, null, &comment_id, "Hello", writer.author));
+    try forget(path);
+    const hello = evt.Comment.contentRevision(.{ .thread_id = std.fmt.bytesToHex(issue, .lower), .parent_id = std.fmt.bytesToHex(issue, .lower), .body = "Hello" });
+    try thread_write.editComment(.local, io, allocator, source, writer, .issue, &issue, &comment_id, "Hello, edited", hello);
+    try forget(path);
+    try std.testing.expectError(error.Stale, thread_write.editComment(.local, io, allocator, source, writer, .issue, &issue, &comment_id, "Again", hello));
+}

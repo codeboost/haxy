@@ -27,6 +27,23 @@ pub const DetailButton = struct {
     label: []const u8,
     text: []const u8,
     link: ?[]const u8 = null,
+    // what `link` opens, for clients that build their own links (the API)
+    target: ?Target = null,
+};
+
+/// what a detail opens, by structure rather than by a Haxy url
+pub const Target = union(enum) {
+    /// the undo history at a transaction: what an undo undid or redid
+    transaction: u64,
+    /// the events a transaction wrote
+    events: u64,
+    /// a user, by name
+    user: []const u8,
+    /// the commits a push added to (or dropped from) a branch: those from
+    /// `tip` back to `base`, an object id each
+    commits: struct { tip: []const u8, base: []const u8 },
+    /// a branch or tag, by name
+    ref: struct { kind: enum { branch, tag }, name: []const u8 },
 };
 
 pub const Item = struct {
@@ -42,6 +59,11 @@ pub const Item = struct {
 
 identity: []const u8,
 count: u64 = 0,
+// the history as this read saw it, which an undo chosen from it names
+revision: Revision = @splat(0),
+// the oldest transaction listed: the initial state, or where a copied repo's
+// own history starts. it can't be undone (see `undoable`).
+floor: u64 = 0,
 items: []const Item = &.{},
 next: ?u64 = null,
 failure: ?[]const u8 = null,
@@ -53,6 +75,12 @@ fn isEmpty(self: *const Self, session: *ui.Session) bool {
 }
 
 pub fn init(comptime opts: rp.RepoOpts(.xit), arena: *std.heap.ArenaAllocator, repo: *rp.Repo(.xit, opts), haxy_moment: ?evt.AdminDB.HashMap(.read_only), identity: []const u8, selected: ?u64, handle: ui.RepoHandle) !Self {
+    return initWindow(opts, arena, repo, haxy_moment, identity, selected, handle, page_size);
+}
+
+/// a window of up to `size` transactions, newest first, from `selected` (the
+/// newest when null) down; NotFound when `selected` isn't listed
+pub fn initWindow(comptime opts: rp.RepoOpts(.xit), arena: *std.heap.ArenaAllocator, repo: *rp.Repo(.xit, opts), haxy_moment: ?evt.AdminDB.HashMap(.read_only), identity: []const u8, selected: ?u64, handle: ui.RepoHandle, size: usize) !Self {
     const aa = arena.allocator();
     const DB = rp.Repo(.xit, opts).DB;
     const history = try DB.ArrayList(.read_only).init(repo.core.db.rootCursor().readOnly());
@@ -80,7 +108,7 @@ pub fn init(comptime opts: rp.RepoOpts(.xit), arena: *std.heap.ArenaAllocator, r
         if (try undoneFrom(arena, record)) |from| undone_from = from;
     }
 
-    while (remaining > floor and items.items.len < page_size) {
+    while (remaining > floor and items.items.len < size) {
         remaining -= 1;
         const moment = try repo.core.momentAt(remaining);
         const record = try xit.undo.read(opts, moment, &buffer);
@@ -106,7 +134,7 @@ pub fn init(comptime opts: rp.RepoOpts(.xit), arena: *std.heap.ArenaAllocator, r
             .undone = row_undone,
         });
     }
-    return .{ .identity = try aa.dupe(u8, identity), .handle = handle, .count = count, .items = items.items, .next = if (remaining > floor) remaining - 1 else null };
+    return .{ .identity = try aa.dupe(u8, identity), .handle = handle, .count = count, .revision = try historyRevision(opts, &repo.core, count), .floor = floor, .items = items.items, .next = if (remaining > floor) remaining - 1 else null };
 }
 
 const Detail = struct {
@@ -195,6 +223,7 @@ fn undoneButton(
         .label = if (target.redo) " what was redone " else " what was undone ",
         .text = if (detail) |value| value.action else try formatRecord(opts, arena, core, target.record),
         .link = try arena.allocator().print("a:{s}", .{try route.toUrl(arena)}),
+        .target = .{ .transaction = target.index },
     };
 }
 
@@ -207,6 +236,7 @@ fn eventsButton(arena: *std.heap.ArenaAllocator, identity: []const u8, history_i
         .label = " events ",
         .text = try aa.print("view events ({d})", .{count}),
         .link = try aa.print("a:{s}", .{try route.toUrl(arena)}),
+        .target = .{ .events = history_index },
     };
 }
 
@@ -256,6 +286,12 @@ fn pushRefs(arena: *std.heap.ArenaAllocator, identity: []const u8, payload: []co
                 try aa.print(" {s} {s} ", .{ if (removed) "removed" else if (created) "created" else "moved", if (head) "branch" else "tag" }),
             .text = try aa.dupe(u8, name),
             .link = if (route) |value| try aa.print("a:{s}", .{try value.toUrl(arena)}) else null,
+            .target = if (removed)
+                null
+            else if (changed)
+                .{ .commits = .{ .tip = try aa.dupe(u8, if (ref.dropped) ref.old else ref.new), .base = try aa.dupe(u8, if (ref.forced) ref.base else ref.old) } }
+            else
+                .{ .ref = .{ .kind = if (head) .branch else .tag, .name = try aa.dupe(u8, name) } },
         });
     }
 }
@@ -273,7 +309,7 @@ fn pushUser(arena: *std.heap.ArenaAllocator, haxy_moment: ?evt.AdminDB.HashMap(.
     return switch (try ui.Author.initFromEmail(haxy_moment, arena, parsed.value.author.email)) {
         .unknown => null,
         .email => |email| .{ .label = " user ", .text = email },
-        .user_name => |name| .{ .label = " user ", .text = name, .link = try ui.userLink(arena, name) },
+        .user_name => |name| .{ .label = " user ", .text = name, .link = try ui.userLink(arena, name), .target = .{ .user = name } },
     };
 }
 
@@ -319,15 +355,126 @@ fn momentIndex(comptime opts: rp.RepoOpts(.xit), haxy_moment: evt.EventDB(opts.h
     return try cursor.readUint();
 }
 
-pub fn execute(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource, index: u64) !void {
+/// whether the transaction at `index` can be undone in a history whose undo
+/// floor is `floor` (null when it has none): never the initial state, nor
+/// the history a copied repo carries from its source
+pub fn undoable(index: u64, floor: ?u64) bool {
+    return index > (floor orelse 0);
+}
+
+/// identifies the history as one read saw it: the database's generation
+/// (its file id, which clearing the history draws anew when it compacts the
+/// database), and its newest transaction, by its index, its place in the
+/// database and its undo record, with the record of the history's first
+/// transaction, which a clear rewrites. an index alone isn't enough: a
+/// cleared history starts over, so its indices name other transactions than
+/// a page read before showed.
+pub const Revision = [16]u8;
+
+// the revision of the history whose newest transaction is `count - 1`
+fn historyRevision(comptime opts: rp.RepoOpts(.xit), core: *rp.Repo(.xit, opts).Core, count: u64) !Revision {
+    const DB = rp.Repo(.xit, opts).DB;
+    if (count == 0) return error.TransactionNotFound;
+    const newest = count - 1;
+    const history = try DB.ArrayList(.read_only).init(core.db.rootCursor().readOnly());
+    const slot = try history.getSlot(newest) orelse return error.TransactionNotFound;
+    var hasher = std.crypto.hash.Blake3.init(.{});
+    var int: [8]u8 = undefined;
+    // the database file's random id, which every compaction (a clear)
+    // draws anew, so a history cleared and rebuilt the same way, within the
+    // same second, still differs
+    for ([_]u64{ core.db.header.file_id, newest, slot.value, @backingInt(slot.tag) }) |value| {
+        std.mem.writeInt(u64, &int, value, .big);
+        hasher.update(&int);
+    }
+    var buffer: [opts.max_read_size]u8 = undefined;
+    for ([_]u64{ 0, newest }) |index| {
+        const record = try xit.undo.read(opts, try core.momentAt(index), &buffer) orelse {
+            hasher.update("-");
+            continue;
+        };
+        std.mem.writeInt(i64, &int, record.timestamp, .big);
+        hasher.update(&int);
+        for ([_][]const u8{ record.action_kind, record.payload }) |bytes| {
+            std.mem.writeInt(u64, &int, bytes.len, .big);
+            hasher.update(&int);
+            hasher.update(bytes);
+        }
+    }
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    return digest[0..@sizeOf(Revision)].*;
+}
+
+pub const Executed = struct {
+    /// the undo's own transaction
+    index: u64,
+    /// the history right after the undo, which a later undo (such as one
+    /// reversing it) names
+    revision: Revision,
+    /// the undo's own record, as a window of one, when the undo was asked to
+    /// read it (see `RecordRead`)
+    record: ?Self = null,
+};
+
+/// what an undo needs to read its own record back, as `initWindow` reads a
+/// window. it is read under the lock the undo ran in, so no change landing
+/// after it (a clear that reuses its index) can stand in for it.
+pub const RecordRead = struct {
+    arena: *std.heap.ArenaAllocator,
+    haxy_moment: ?evt.AdminDB.HashMap(.read_only),
+    identity: []const u8,
+    handle: ui.RepoHandle,
+};
+
+/// undoes the transaction at `index` and every one after it. `latest` is the
+/// revision of the history the undo was chosen from: when the history has
+/// moved on since (another undo, a push, a clear), nothing is undone
+/// (HistoryChanged), so a request repeated after a lost answer can't undo
+/// twice. null undoes whatever is newest, as the TUI's own undo does. the
+/// check and the undo hold the repo's write lock together, so nothing lands
+/// between them.
+pub fn execute(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource, index: u64, latest: ?Revision, read: ?RecordRead) !Executed {
     var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, source.localInitOpts());
     defer any_repo.deinit(io, allocator);
     switch (any_repo) {
-        inline else => |*repo| {
-            if (try copy.undoFloor(repo.self_repo_opts, &repo.core)) |floor| if (index <= floor) return error.InvalidHistoryIndex;
-            try repo.undo(io, index);
-        },
+        inline else => |*repo| return appendUndo(repo.self_repo_opts, repo, io, index, latest, read),
     }
+}
+
+// xit's own undo (`Repo.undo`), with `latest` checked under its lock
+fn appendUndo(comptime opts: rp.RepoOpts(.xit), repo: *rp.Repo(.xit, opts), io: std.Io, index: u64, latest: ?Revision, read: ?RecordRead) !Executed {
+    const DB = rp.Repo(.xit, opts).DB;
+    const Ctx = struct {
+        core: *rp.Repo(.xit, opts).Core,
+        timestamp: i64,
+        action: xit.undo.Action(opts.hash),
+
+        pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
+            var moment = try DB.HashMap(.read_write).init(cursor.*);
+            const state = rp.Repo(.xit, opts).State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+            try xit.undo.write(opts, state, ctx.timestamp, ctx.action);
+        }
+    };
+
+    try repo.core.db_file.lock(io, .exclusive);
+    defer repo.core.db_file.unlock(io);
+
+    const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+    const count = try history.count();
+    if (latest) |expected| if (!std.mem.eql(u8, &expected, &try historyRevision(opts, &repo.core, count))) return error.HistoryChanged;
+    if (index >= count or !undoable(index, try copy.undoFloor(opts, &repo.core))) return error.InvalidHistoryIndex;
+    const slot = try history.getSlot(index - 1) orelse return error.TransactionNotFound;
+    try history.appendContext(.{ .slot = slot }, Ctx{
+        .core = &repo.core,
+        .timestamp = std.Io.Timestamp.now(io, .real).toSeconds(),
+        .action = .{ .undo = .{ .index = index, .last_index = count - 1 } },
+    });
+    return .{
+        .index = count,
+        .revision = try historyRevision(opts, &repo.core, count + 1),
+        .record = if (read) |value| try initWindow(opts, value.arena, repo, value.haxy_moment, value.identity, count, value.handle, 1) else null,
+    };
 }
 
 // keep action failures on the current tab without rebuilding a stale route.
@@ -339,27 +486,71 @@ pub fn handleRequest(allocator: std.mem.Allocator, session: *ui.Session, target:
     session.data.undo_failure = null;
 }
 
-// both terminal hosts resolve and authorize the request afresh before opening
-// the repository; the web handler uses its matching http authorization path.
+/// `execute` while `actor_id` owns the repo `repo_id`, its owner `owner_id`'s:
+/// the check and the undo hold the lock role changes take
+/// (`evt.whileOwner`), so an owner demoted after choosing the undo undoes
+/// nothing (NotOwner), and a repo renamed or deleted meanwhile is NotFound.
+/// `name` is the repo's name as the undo was chosen, or null for any.
+pub fn executeAsOwner(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    owner_id: *const [evt.event_id_size]u8,
+    repo_id: *const [evt.event_id_size]u8,
+    actor_id: *const [evt.event_id_size]u8,
+    name: ?[]const u8,
+    index: u64,
+    latest: ?Revision,
+    read: ?RecordRead,
+) !Executed {
+    const path = try evt.repoPath(allocator, users_dir, owner_id, repo_id);
+    defer allocator.free(path);
+    var executed: Executed = undefined;
+    const Run = struct {
+        io: std.Io,
+        allocator: std.mem.Allocator,
+        source: ui.RepoSource,
+        index: u64,
+        latest: ?Revision,
+        read: ?RecordRead,
+        result: *Executed,
+
+        pub fn run(self: @This()) !void {
+            self.result.* = try execute(self.io, self.allocator, self.source, self.index, self.latest, self.read);
+        }
+    };
+    try evt.whileOwner(io, allocator, users_dir, owner_id, repo_id, actor_id, Run{
+        .io = io,
+        .allocator = allocator,
+        .source = .{ .path = path, .repo_kind = .xit },
+        .index = index,
+        .latest = latest,
+        .read = read,
+        .result = &executed,
+    }, name);
+    return executed;
+}
+
+// both terminal hosts resolve and authorize the request afresh, and the undo
+// runs only while the viewer still owns the repo (executeAsOwner); the web
+// handler uses its matching http authorization path.
 pub fn perform(allocator: std.mem.Allocator, session: *ui.Session, target: ui.RoutablePage.RepoUndoRoute) !void {
     const identity = target.name.slice();
     const index = target.index orelse return error.InvalidHistoryIndex;
-    const source = try authorizedSource(session, identity) orelse return error.Forbidden;
-    const io = session.io orelse return error.NotFound;
-    try execute(io, allocator, source, index);
-    try session.navigate(ui.RoutablePage.repoUndoRoute(identity, null) orelse return error.RouteTooLong);
-}
-
-// the repo an owner may act on, or null when they may not
-fn authorizedSource(session: *ui.Session, identity: []const u8) !?ui.RepoSource {
-    if (try session.authorize(identity, .owner, null) == null) return null;
+    if (try session.authorize(identity, .owner, null) == null) return error.Forbidden;
+    const actor_id = session.userId() orelse return error.Forbidden;
     const admin_repo = session.admin_repo orelse return error.NotFound;
     const moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
     const pair = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
     const io = session.io orelse return error.NotFound;
     const users_dir = session.users_dir orelse return error.NotFound;
     const found = try evt.readRepoByOwnerAndName(io, session.page_arena.child_allocator, session.page_arena, moment, users_dir, pair.owner, pair.name, null) orelse return error.NotFound;
-    return .{ .path = try evt.repoPath(session.page_arena.allocator(), users_dir, &try evt.parseEventId(&found.repo.event.user_id), &found.event_id), .repo_kind = .xit };
+    const owner_id = try evt.parseEventId(&found.repo.event.user_id);
+    _ = executeAsOwner(io, allocator, users_dir, &owner_id, &found.event_id, &actor_id, pair.name, index, null, null) catch |err| switch (err) {
+        error.NotOwner => return error.Forbidden,
+        else => |e| return e,
+    };
+    try session.navigate(ui.RoutablePage.repoUndoRoute(identity, null) orelse return error.RouteTooLong);
 }
 
 pub const View = struct {
@@ -527,13 +718,13 @@ pub const View = struct {
             entry.value.widget.deinit(allocator);
         }
         const item = self.data.items[index];
-        const enabled = self.data.handle.canUndo() and item.index > 0;
+        const enabled = self.data.handle.canUndo() and undoable(item.index, self.data.floor);
 
         // the fixed rows are filled first, since adding the ones below
         // invalidates every pointer into the box
         {
             const button = &details.children.values()[0].widget.text_box;
-            try button.setContent(allocator, if (item.index == 0) "initial state cannot be undone" else if (item.index == self.data.count - 1) "undo this" else "undo this and all above it");
+            try button.setContent(allocator, if (!undoable(item.index, self.data.floor)) "initial state cannot be undone" else if (item.index == self.data.count - 1) "undo this" else "undo this and all above it");
             button.getFocus().kind = if (enabled) .{ .custom = "submit" } else .text_box;
         }
         const timestamp = try ui.timestamp.format(self.session.page_arena.allocator(), item.timestamp, try self.session.nowSeconds());
@@ -612,7 +803,7 @@ pub const View = struct {
         if (self.detailActive()) {
             const details = &self.detailScroll().child.box;
             if (self.selected()) |index| {
-                if (inp.activated(root_focus, details.children.keys()[0], key) and self.data.handle.canUndo() and self.data.items[index].index > 0) {
+                if (inp.activated(root_focus, details.children.keys()[0], key) and self.data.handle.canUndo() and undoable(self.data.items[index].index, self.data.floor)) {
                     self.requestUndo(ui.RoutablePage.repoUndoRoute(self.data.identity, self.data.items[index].index) orelse return error.RouteTooLong);
                     return;
                 }

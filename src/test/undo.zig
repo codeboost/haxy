@@ -225,3 +225,202 @@ test "malformed undo history is shown as an error" {
     defer allocator.free(html);
     try std.testing.expect(std.mem.indexOf(u8, html, "InvalidUndoRecord") != null);
 }
+
+test "an undo names the newest transaction it was chosen at, so a changed history refuses it" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    {
+        var repo = try xit.repo.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+        for ([_][]const u8{ "first", "second", "third" }) |value| try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = value });
+    }
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    const read = try revisionAt(path);
+
+    // a page read before the newest transaction landed is stale
+    {
+        var repo = try xit.repo.Repo(.xit, .{}).open(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+        try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = "fourth" });
+    }
+    try std.testing.expectError(error.HistoryChanged, Undo.execute(io, allocator, source, 2, read, null));
+    const current = try revisionAt(path);
+    // the initial state and anything past the newest can't be undone
+    try std.testing.expectError(error.InvalidHistoryIndex, Undo.execute(io, allocator, source, 0, current, null));
+    try std.testing.expectError(error.InvalidHistoryIndex, Undo.execute(io, allocator, source, 5, current, null));
+
+    // the undo lands as the new newest transaction, and names the history after it
+    const executed = try Undo.execute(io, allocator, source, 2, current, null);
+    try std.testing.expectEqual(5, executed.index);
+    try std.testing.expectEqualSlices(u8, &try revisionAt(path), &executed.revision);
+    {
+        var repo = try xit.repo.Repo(.xit, .{}).open(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+        try expectConfig(&repo, "first");
+    }
+    // the same request again finds the history it named changed, and undoes nothing more
+    try std.testing.expectError(error.HistoryChanged, Undo.execute(io, allocator, source, 2, current, null));
+    // without a revision to check (the TUI's own undo), it undoes
+    try std.testing.expectEqual(6, (try Undo.execute(io, allocator, source, 5, null, null)).index);
+    var repo = try xit.repo.Repo(.xit, .{}).open(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    try expectConfig(&repo, "fourth");
+}
+
+// the revision of the history at `path` as a read sees it now
+fn revisionAt(path: []const u8) !Undo.Revision {
+    var repo = try xit.repo.Repo(.xit, .{}).open(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    return (try Undo.init(.{}, &arena, &repo, null, "", null, .{ .location = .{ .repo = "" } })).revision;
+}
+
+test "an undo runs only while its actor still owns the repo" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+    const base = try temp.dir.realPathFileAlloc(io, ".", aa);
+    const users_dir = try std.Io.Dir.path.join(aa, &.{ base, "users" });
+    const owner: [evt.event_id_size]u8 = @splat(1);
+    const granted: [evt.event_id_size]u8 = @splat(2);
+    const stranger: [evt.event_id_size]u8 = @splat(3);
+    const repo_id: [evt.event_id_size]u8 = @splat(4);
+    const author: evt.CommitAuthor = .{ .name = "test", .email = "test@example.test" };
+    const host: evt.Host = .{ .server = .{ .users_dir = users_dir } };
+    const grant_id = std.fmt.bytesToHex(evt.Grant.idOf(&repo_id, &granted), .lower);
+    const grant = struct {
+        fn event(id: [2 * evt.event_id_size]u8, role: evt.Repo.Role, target: [2 * evt.event_id_size]u8, user: [2 * evt.event_id_size]u8) evt.EventWithId {
+            return .{ .id = id, .author = .{ .name = "test", .email = "test@example.test" }, .event = .{ .grant = .{ .target_id = target, .user_id = user, .role = role } } };
+        }
+    }.event;
+    const repo_hex = std.fmt.bytesToHex(repo_id, .lower);
+    const granted_hex = std.fmt.bytesToHex(granted, .lower);
+    var user_repo = try evt.initUserRepo(io, allocator, try evt.userRepoPath(aa, users_dir, &owner));
+    defer user_repo.deinit(io, allocator);
+    try evt.consume(host, .user, .xit, evt.user_repo_opts, io, allocator, &user_repo, evt.events_ref, &.{
+        .{ .id = repo_hex, .author = author, .event = .{ .repo = .{ .user_id = std.fmt.bytesToHex(owner, .lower), .name = "demo", .description = "", .read_access = .public } } },
+        grant(grant_id, .owner, repo_hex, granted_hex),
+    });
+    const path = try evt.repoPath(aa, users_dir, &owner, &repo_id);
+    {
+        var repo = try xit.repo.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+        for ([_][]const u8{ "first", "second", "third" }) |value| try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = value });
+    }
+
+    // the main owner and a granted owner may undo; anyone else changes nothing
+    try std.testing.expectError(error.NotOwner, Undo.executeAsOwner(io, allocator, users_dir, &owner, &repo_id, &stranger, "demo", 3, try revisionAt(path), null));
+    try std.testing.expectEqual(4, (try Undo.executeAsOwner(io, allocator, users_dir, &owner, &repo_id, &granted, "demo", 3, try revisionAt(path), null)).index);
+    try std.testing.expectEqual(5, (try Undo.executeAsOwner(io, allocator, users_dir, &owner, &repo_id, &owner, "demo", 4, try revisionAt(path), null)).index);
+
+    // demoted after choosing the undo: refused when it runs
+    try evt.consume(host, .user, .xit, evt.user_repo_opts, io, allocator, &user_repo, evt.events_ref, &.{grant(grant_id, .write, repo_hex, granted_hex)});
+    try std.testing.expectError(error.NotOwner, Undo.executeAsOwner(io, allocator, users_dir, &owner, &repo_id, &granted, "demo", 2, try revisionAt(path), null));
+    // a repo renamed meanwhile isn't the one the undo was chosen in
+    try std.testing.expectError(error.NotFound, Undo.executeAsOwner(io, allocator, users_dir, &owner, &repo_id, &owner, "renamed", 2, try revisionAt(path), null));
+    var repo = try xit.repo.Repo(.xit, .{}).open(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    try expectConfig(&repo, "third");
+    const history = try Undo.init(.{}, &arena, &repo, null, "alice:demo", null, .{ .location = .{ .repo = "" } });
+    try std.testing.expectEqual(6, history.count);
+}
+
+test "an undo naming ids past any history refuses them instead of overflowing" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    {
+        var repo = try xit.repo.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+        try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = "first" });
+    }
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    const max = std.math.maxInt(u64);
+    try std.testing.expectError(error.InvalidHistoryIndex, Undo.execute(io, allocator, source, max, try revisionAt(path), null));
+    var repo = try xit.repo.Repo(.xit, .{}).open(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    try std.testing.expectError(error.NotFound, Undo.init(.{}, &arena, &repo, null, "", max, .{ .location = .{ .repo = "" } }));
+}
+
+test "an undo chosen before the history was cleared is refused once new transactions reuse its ids" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    var repo = try xit.repo.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    for ([_][]const u8{ "first", "second" }) |value| try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = value });
+    const loaded = try Undo.init(.{}, &arena, &repo, null, "", null, .{ .location = .{ .repo = "" } });
+    try std.testing.expectEqual(3, loaded.count);
+
+    // the history is cleared (as the clear-undo push does), and two new
+    // transactions take the indices the loaded page showed
+    _ = try repo.garbageCollect(io, allocator, .{}, null);
+    for ([_][]const u8{ "third", "fourth" }) |value| try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = value });
+    const now = try Undo.init(.{}, &arena, &repo, null, "", null, .{ .location = .{ .repo = "" } });
+    try std.testing.expectEqual(3, now.count);
+
+    try std.testing.expectError(error.HistoryChanged, Undo.execute(io, allocator, source, 2, loaded.revision, null));
+    try std.testing.expectEqual(3, (try Undo.execute(io, allocator, source, 2, now.revision, null)).index);
+}
+
+test "a history cleared and rebuilt the same way is still a different history" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    var repo = try xit.repo.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    _ = try repo.garbageCollect(io, allocator, .{}, null);
+    try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = "same" });
+    const loaded = try Undo.init(.{}, &arena, &repo, null, "", null, .{ .location = .{ .repo = "" } });
+
+    // undone, cleared and made again: within a second, the newest transaction's
+    // index, record and place in the database, and the clear's record, can all
+    // be what the page read
+    try repo.undo(io, 1);
+    _ = try repo.garbageCollect(io, allocator, .{}, null);
+    try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = "same" });
+    const now = try Undo.init(.{}, &arena, &repo, null, "", null, .{ .location = .{ .repo = "" } });
+    try std.testing.expectEqual(loaded.count, now.count);
+
+    try std.testing.expectError(error.HistoryChanged, Undo.execute(io, allocator, source, 1, loaded.revision, null));
+}
+
+test "an undo reads its own record under the lock it ran in, so no later change can stand in for it" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    {
+        var repo = try xit.repo.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+        for ([_][]const u8{ "first", "second" }) |value| try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = value });
+    }
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    const executed = try Undo.execute(io, allocator, source, 2, try revisionAt(path), .{ .arena = &arena, .haxy_moment = null, .identity = "", .handle = .{ .location = .{ .repo = "" } } });
+    const record = executed.record.?;
+    try std.testing.expectEqual(1, record.items.len);
+    try std.testing.expectEqual(executed.index, record.items[0].index);
+    try std.testing.expectEqualStrings("undo", record.items[0].action);
+    try std.testing.expectEqual(2, record.items[0].buttons[0].target.?.transaction);
+    try std.testing.expectEqualSlices(u8, &executed.revision, &record.revision);
+    // the TUI's own undo reads nothing back
+    try std.testing.expectEqual(null, (try Undo.execute(io, allocator, source, 3, null, null)).record);
+}

@@ -182,7 +182,7 @@ pub fn init(
     }
 
     const discussion_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
-    const loaded_window = try thread.loadWindow(Self, .discuss, repo_opts.hash, arena, admin_moment, haxy_moment, records, sets, root_key, null, empty.selected_id, discussion_comments_start, filters.words, viewer);
+    const loaded_window = try thread.loadWindow(Self, .discuss, repo_opts.hash, arena, admin_moment, haxy_moment, records, sets, root_key, null, empty.selected_id, discussion_comments_start, filters.words, viewer, page_size);
     const comment_page = if (empty.comment_id.len == 0)
         null
     else

@@ -58,22 +58,11 @@ pub const Page = struct {
             page.start = parseCount(text) orelse
                 return .{ .invalid = invalid("cursor", "This cursor isn't one Haxy gave out; start from the first page.") };
         }
-        page.limit = switch (try size(arena, query, limits)) {
+        page.limit = switch (try pageSize(arena, query, limits)) {
             .ok => |limit| limit,
             .invalid => |err| return .{ .invalid = err },
         };
         return .{ .ok = page };
-    }
-
-    /// reads `page_size` alone, for a route whose cursor isn't an offset
-    pub fn size(arena: std.mem.Allocator, query: []const u8, limits: Limits) !union(enum) { ok: usize, invalid: api.Error } {
-        const text = param(arena, query, "page_size") catch |err| switch (err) {
-            error.InvalidPercentEncoding => return .{ .invalid = invalid("page_size", "The page size must be a positive whole number.") },
-            else => |e| return e,
-        } orelse return .{ .ok = limits.default };
-        const value = parseCount(text) orelse 0;
-        if (value == 0) return .{ .invalid = invalid("page_size", "The page size must be a positive whole number.") };
-        return .{ .ok = @min(value, limits.max) };
     }
 
     /// the cursor for the page starting at `next_start`, or null without one
@@ -82,6 +71,18 @@ pub const Page = struct {
         return try std.fmt.allocPrint(arena, "{d}", .{start});
     }
 };
+
+/// reads `page_size` alone, for routes whose cursors aren't offsets: the
+/// route's default when absent, lowered to its maximum when above it
+pub fn pageSize(arena: std.mem.Allocator, query: []const u8, limits: Page.Limits) !union(enum) { ok: usize, invalid: api.Error } {
+    const size = param(arena, query, "page_size") catch |err| switch (err) {
+        error.InvalidPercentEncoding => return .{ .invalid = invalid("page_size", "The page size must be a positive whole number.") },
+        else => |e| return e,
+    } orelse return .{ .ok = limits.default };
+    const value = parseCount(size) orelse 0;
+    if (value == 0) return .{ .invalid = invalid("page_size", "The page size must be a positive whole number.") };
+    return .{ .ok = @min(value, limits.max) };
+}
 
 // bounded so a forged cursor can't overflow position arithmetic
 const max_count = std.math.maxInt(u32);

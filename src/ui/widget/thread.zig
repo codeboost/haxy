@@ -277,19 +277,22 @@ pub fn loadWindow(
     // the words the listing is narrowed to, "" for none
     words: []const u8,
     viewer: ?ui.Viewer,
+    // how many threads the window holds (the tab's `Data.page_size`); 0
+    // reads only the count and the first thread's id
+    page_size: usize,
 ) !Data.Window {
     if (sets.len == 0) return .empty;
-    if (sets.len > 1 or words.len != 0) return loadSearchWindow(Data, kind, hash_kind, arena, admin_moment, haxy_moment, records, sets, root_key, conflict_set, selected_id, comments_start, words, viewer);
+    if (sets.len > 1 or words.len != 0) return loadSearchWindow(Data, kind, hash_kind, arena, admin_moment, haxy_moment, records, sets, root_key, conflict_set, selected_id, comments_start, words, viewer, page_size);
     const set = sets[0];
     const aa = arena.allocator();
 
     var prev_id: ?[]const u8 = null;
     var iter = if (root_key) |key| blk: {
         const rank = try set.rank(key);
-        if (rank > 0 and rank <= Data.page_size) {
+        if (rank > 0 and rank <= page_size) {
             prev_id = "";
-        } else if (rank > Data.page_size) {
-            const pair = try set.getIndexKeyValuePair(@intCast(rank - Data.page_size)) orelse return error.NotFound;
+        } else if (rank > page_size) {
+            const pair = try set.getIndexKeyValuePair(@intCast(rank - page_size)) orelse return error.NotFound;
             var previous: OrderKey = undefined;
             _ = try pair.key_cursor.readBytes(&previous);
             prev_id = try aa.dupe(u8, &keyIdHex(&previous));
@@ -304,7 +307,7 @@ pub fn loadWindow(
         const pair = try cursor.readKeyValuePair();
         var order_key: OrderKey = undefined;
         _ = try pair.key_cursor.readBytes(&order_key);
-        if (items.items.len == Data.page_size) {
+        if (items.items.len == page_size) {
             next_id = try aa.dupe(u8, &keyIdHex(&order_key));
             break;
         }
@@ -341,6 +344,7 @@ fn loadSearchWindow(
     comments_start: usize,
     words: []const u8,
     viewer: ?ui.Viewer,
+    page_size: usize,
 ) !Data.Window {
     const DB = evt.EventDB(hash_kind);
     const aa = arena.allocator();
@@ -372,7 +376,7 @@ fn loadSearchWindow(
             const order_key = try resultKey((try listed.next()) orelse break);
             if (matches) |*found| if (!found.remove(order_key[@sizeOf(u64)..].*)) continue;
             try keys.append(aa, order_key);
-            if (windowKnown(Data, keys.items, root)) break;
+            if (windowKnown(keys.items, root, page_size)) break;
         }
     } else {
         // issues and patches list in the index's own order, so the listed sets
@@ -381,7 +385,7 @@ fn loadSearchWindow(
         for (sets) |set| try results.require(aa, set);
         while (try results.next()) |key| {
             try keys.append(aa, try resultKey(key));
-            if (windowKnown(Data, keys.items, root)) break;
+            if (windowKnown(keys.items, root, page_size)) break;
         }
     }
 
@@ -390,7 +394,7 @@ fn loadSearchWindow(
     while (first < keys.items.len and std.mem.order(u8, &keys.items[first], root) == .lt) first += 1;
 
     var items: std.ArrayList(Data.Entry) = .empty;
-    const last = @min(first + Data.page_size, keys.items.len);
+    const last = @min(first + page_size, keys.items.len);
     for (keys.items[first..last]) |*order_key| {
         const entry = (try loadEntry(Data, hash_kind, arena, admin_moment, haxy_moment, records, order_key, conflict_set, selected_id, comments_start, viewer)) orelse continue;
         try items.append(aa, entry);
@@ -399,7 +403,7 @@ fn loadSearchWindow(
     return .{
         .items = items.items,
         // the page a window back, which is the first one when it holds the root
-        .prev_id = if (first == 0) null else if (first <= Data.page_size) "" else try aa.dupe(u8, &keyIdHex(&keys.items[first - Data.page_size])),
+        .prev_id = if (first == 0) null else if (first <= page_size) "" else try aa.dupe(u8, &keyIdHex(&keys.items[first - page_size])),
         .next_id = if (last < keys.items.len) try aa.dupe(u8, &keyIdHex(&keys.items[last])) else null,
         .count = @min(keys.items.len, max_search_results),
         .more = keys.items.len > max_search_results,
@@ -408,9 +412,9 @@ fn loadSearchWindow(
 
 // whether a search pass can stop: the count is capped, and the window rooted at
 // `root` and the key after it have been collected
-fn windowKnown(comptime Data: type, keys: []const OrderKey, root: []const u8) bool {
+fn windowKnown(keys: []const OrderKey, root: []const u8, page_size: usize) bool {
     if (keys.len <= max_search_results) return false;
-    return std.mem.order(u8, &keys[keys.len - 1 - Data.page_size], root) != .lt;
+    return std.mem.order(u8, &keys[keys.len - 1 - page_size], root) != .lt;
 }
 
 // one list entry: the record `order_key` names, with its author, comments,

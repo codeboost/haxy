@@ -7,6 +7,7 @@ const evt = @import("./event.zig");
 const api = @import("./api.zig");
 const api_account = @import("./api/account.zig");
 const api_discovery = @import("./api/discovery.zig");
+const api_issues = @import("./api/issues.zig");
 const api_repo = @import("./api/repo.zig");
 const api_session = @import("./api/session.zig");
 const serve_common = @import("./serve_common.zig");
@@ -221,6 +222,8 @@ fn routeApiRequest(
         };
         return api_discovery.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
     }
+    if (api_issues.route(path)) |route|
+        return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_repo.route(path)) |route| {
         const repo_host: api_repo.Host = switch (host) {
             .server => |server| .{ .server = .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .web_url = server.web_url, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix } },
@@ -238,6 +241,14 @@ fn routeApiRequest(
     defer body.deinit();
     try api.writeStatus(&body.writer, host);
     return api.respondJson(request, body.written(), .{});
+}
+
+// what the repo-scoped API routes are given of the host
+fn apiRepoHost(host: Host) api_repo.Host {
+    return switch (host) {
+        .server => |server| .{ .server = .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .web_url = server.web_url, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix } },
+        .local => |source| .{ .local = source },
+    };
 }
 
 // the viewer an API request's session cookie names, or null when anonymous.

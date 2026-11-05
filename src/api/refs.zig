@@ -192,7 +192,7 @@ pub fn writeList(
     query: []const u8,
     writer: *std.Io.Writer,
 ) !?api.Error {
-    const limit = switch (try query_params.Page.size(aa, query, .{ .default = Refs.page_size, .max = max_page_size })) {
+    const limit = switch (try query_params.pageSize(aa, query, .{ .default = Refs.page_size, .max = max_page_size })) {
         .ok => |limit| limit,
         .invalid => |err| return err,
     };

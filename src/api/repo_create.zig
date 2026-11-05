@@ -132,17 +132,7 @@ pub fn handle(
     const user = (try ui.activeUser(moment, &arena, user_id)) orelse
         return api.respondError(request, allocator, unauthenticated, .{ .keep_alive = false });
 
-    // the viewer binding (#04's X-Haxy-Viewer check), the one place #30's
-    // shared write guard replaces. the header names who the form was loaded
-    // for; read before the body, which invalidates the headers
-    var expected: ?[]const u8 = null;
-    var headers = request.iterateHeaders();
-    while (headers.next()) |header| {
-        if (std.ascii.eqlIgnoreCase(header.name, api_account.viewer_header)) expected = header.value;
-    }
-    if (api_account.checkViewer(expected, user.event.name)) |err|
-        return api.respondError(request, allocator, err, .{ .keep_alive = false });
-
+    // the optional X-Haxy-Viewer header is checked by guardWrite (api/session.zig)
     const body = (try api_account.readBody(Request, request, allocator, &arena)) orelse return;
     const fields = switch (readFields(body)) {
         .ok => |fields| fields,

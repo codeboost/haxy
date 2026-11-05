@@ -15,6 +15,7 @@ const obj = xit.object;
 const api = @import("../api.zig");
 const api_path = @import("./path.zig");
 const query_params = @import("./query.zig");
+const evt = @import("../event.zig");
 const ui = @import("../ui.zig");
 
 const Files = ui.Repo.Files;
@@ -105,15 +106,30 @@ pub fn resolve(
     gpa: std.mem.Allocator,
     selection: Selection,
 ) !?Resolved(repo_kind, repo_opts) {
+    var moment = try repo.core.latestMoment();
+    return resolveAt(repo_kind, repo_opts, arena, repo, io, gpa, &moment, selection);
+}
+
+/// `resolve` read at one snapshot of the repo (`moment`), so a caller can
+/// read what the ref names in that same snapshot
+pub fn resolveAt(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    moment: anytype,
+    selection: Selection,
+) !?Resolved(repo_kind, repo_opts) {
     const aa = arena.allocator();
     const ResolvedRef = ui.ResolvedRefOrOid(repo_kind, repo_opts);
     const hex_len = ResolvedRef.hex_len;
-    var moment = try repo.core.latestMoment();
-    const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
+    const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = moment } };
 
     if (selection == .revision) {
         // the files tab shows a revision's head tree, its source commit's
-        const record = (try Files.readPatchRev(repo_kind, repo_opts, arena, repo, io, gpa, selection.revision)) orelse return null;
+        const record = (try readPatchRevAt(repo_kind, repo_opts, arena, repo, io, gpa, moment, selection.revision)) orelse return null;
         if (record.head_tree_oid.len != hex_len) return null;
         return .{
             .ref = .{ .kind = .revision, .name = null, .id = try selection.id(aa), .commit = record.event.source_oid },
@@ -123,10 +139,10 @@ pub fn resolve(
 
     // the files tab's own resolution, which takes ref names url-encoded
     const resolved = switch (selection) {
-        .default => try ResolvedRef.init(repo, io, aa, null, ""),
-        .branch => |name| try ResolvedRef.init(repo, io, aa, .branch, try ui.urlEncodeRef(aa, name)),
-        .tag => |name| try ResolvedRef.init(repo, io, aa, .tag, try ui.urlEncodeRef(aa, name)),
-        .commit => |oid| if (isOid(oid, hex_len)) try ResolvedRef.init(repo, io, aa, .object, oid) else null,
+        .default => try ResolvedRef.initAt(state, io, aa, null, ""),
+        .branch => |name| try ResolvedRef.initAt(state, io, aa, .branch, try ui.urlEncodeRef(aa, name)),
+        .tag => |name| try ResolvedRef.initAt(state, io, aa, .tag, try ui.urlEncodeRef(aa, name)),
+        .commit => |oid| if (isOid(oid, hex_len)) try ResolvedRef.initAt(state, io, aa, .object, oid) else null,
         .revision => unreachable,
     } orelse return null;
 
@@ -162,6 +178,25 @@ pub fn resolve(
         },
         .oid = resolved.oid,
     };
+}
+
+/// the patch revision `id_hex` names, as `Files.readPatchRev` reads it, but
+/// in an xit repo's snapshot `moment` (a git repo's events have no snapshots)
+pub fn readPatchRevAt(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    moment: anytype,
+    id_hex: []const u8,
+) !?evt.PatchRev.Record {
+    if (comptime repo_kind == .git) return Files.readPatchRev(repo_kind, repo_opts, arena, repo, io, gpa, id_hex);
+    const id = evt.parseEventId(id_hex) catch return null;
+    const events = evt.currentMomentFromRepoMoment(repo_opts.hash, moment.*) catch return null;
+    const record = (try evt.PatchRev.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, events, arena, &id)) orelse return null;
+    return if (record.removed) null else record;
 }
 
 // a full object id in lowercase hex, as haxy writes them

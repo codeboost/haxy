@@ -10,6 +10,8 @@ const pch = @import("../../patch.zig");
 const push = @import("../../push.zig");
 const serve_common = @import("../../serve_common.zig");
 const ui = @import("../../ui.zig");
+const api_commits = @import("../../api/commits.zig");
+const api_refs = @import("../../api/refs.zig");
 const progress = @import("../../progress.zig");
 
 const repo_opts: rp.RepoOpts(.xit) = .{ .is_test = true };
@@ -1127,10 +1129,42 @@ fn patchLifecycle(merge_revision: evt.Patch.MergeRevision) !void {
     try std.testing.expectEqualStrings(&base_oid, result.event.base_oid);
     try std.testing.expectEqualStrings(&selected_oid, result.event.source_oid);
     try std.testing.expect(null != try evt.PatchRev.readById(Repo.DB, repo_opts.hash, merged_moment, &arena, &first_patchrev_id));
+    try expectRevisionHistory(&target, &arena, &first_patchrev_hex, &source_oid, merge_revision == .source);
 
     _ = arena.reset(.retain_capacity);
     const removed_fork = (try evt.Fork.readById(evt.UserDB, evt.user_repo_opts.hash, try evt.currentMoment(evt.user_repo_opts, &user_repo), &arena, &patch_id)) orelse return error.NotFound;
     try std.testing.expect(removed_fork.removed);
+}
+
+// the JSON API's history of the merged revision `revision_hex`: a squash merge
+// keeps the revision but leaves its source commit in the fork, so its history
+// is unavailable (never an empty list), while its files, the squash commit's
+// tree, still read
+fn expectRevisionHistory(target: *Repo, arena: *std.heap.ArenaAllocator, revision_hex: []const u8, source_oid: []const u8, source_present: bool) !void {
+    const io = std.testing.io;
+    const aa = arena.allocator();
+    var out: std.Io.Writer.Allocating = .init(aa);
+    const context: api_commits.Context = .{ .handle = .{ .location = .{ .repo = "" } }, .host_kind = .server };
+    const query = try std.fmt.allocPrint(aa, "ref=revision:{s}", .{revision_hex});
+    try std.testing.expectEqual(null, try api_commits.writeList(.xit, repo_opts, arena, target, io, std.testing.allocator, context, query, &out.writer));
+    const json = (try std.json.parseFromSliceLeaky(std.json.Value, aa, out.written(), .{})).object;
+    try std.testing.expectEqualStrings(source_oid, json.get("ref").?.object.get("commit").?.string);
+    const history = json.get("history").?.object;
+    try std.testing.expectEqual(source_present, history.get("available").?.bool);
+    if (source_present) {
+        try std.testing.expectEqualStrings(source_oid, json.get("items").?.array.items[0].object.get("id").?.string);
+    } else {
+        try std.testing.expectEqualStrings("unsupported", history.get("reason").?.object.get("code").?.string);
+        try std.testing.expectEqual(0, json.get("items").?.array.items.len);
+        try std.testing.expectEqual(false, json.get("page").?.object.get("has_more").?.bool);
+    }
+
+    const files = (try api_refs.resolve(.xit, repo_opts, arena, target, io, std.testing.allocator, .{ .revision = revision_hex })) orelse return error.NotFound;
+    var moment = try target.core.latestMoment();
+    const state = Repo.State(.read_only){ .core = &target.core, .extra = .{ .moment = &moment } };
+    var tree = try xit.tree.TreeDir(.xit, repo_opts).init(state, io, std.testing.allocator, &files.oid, "");
+    defer tree.deinit();
+    try std.testing.expect(tree.entries.count() > 0);
 }
 
 fn draftForkCount(moment: evt.UserDB.HashMap(.read_only), repo_id: []const u8) !u64 {

@@ -6,6 +6,7 @@ const hash = xit.hash;
 const evt = @import("./event.zig");
 const api = @import("./api.zig");
 const api_account = @import("./api/account.zig");
+const api_commits = @import("./api/commits.zig");
 const api_discovery = @import("./api/discovery.zig");
 const api_events = @import("./api/events.zig");
 const api_issues = @import("./api/issues.zig");
@@ -234,6 +235,7 @@ fn routeApiRequest(
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_events.route(path)) |route| return api_events.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_commits.route(path)) |route| return api_commits.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_repo.route(path)) |route| {
         const repo_host: api_repo.Host = switch (host) {
             .server => |server| .{ .server = .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .web_url = server.web_url, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix } },

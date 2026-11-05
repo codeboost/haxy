@@ -171,18 +171,20 @@ pub fn init(
     var preloaded_bytes: usize = 0;
     var find_available = false;
 
-    // the index covers branch tips only, so any other view gets no search box
-    // and refuses a find: url.
+    // only an indexed view gets the search box; any other refuses a find: url.
+    const branch = std.Uri.percentDecodeInPlace(try aa.dupe(u8, resolved.value));
+    const file_index = try fileIndex(repo_kind, repo_opts, moment, resolved.ref_or_oid, branch, &resolved.oid);
     if (comptime repo_kind == .xit) index: {
-        if (resolved.ref_or_oid != .branch) break :index;
-        const branch = std.Uri.percentDecodeInPlace(try aa.dupe(u8, resolved.value));
-        const files = (try fnd.lookup(repo_opts, moment, branch, &resolved.oid)) orelse break :index;
+        const files = switch (file_index) {
+            .indexed => |files| files,
+            .missing, .unsupported => break :index,
+        };
         find_available = true;
         const value = term orelse break :index;
         // a result's name is its full path, so the listing has no directory and
         // the selected row is named in full.
         const selected: ?[]const u8 = if (path.len == 0) null else try aa.dupe(u8, path);
-        const results = try fnd.search(repo_opts, files, aa, value, max_list_entries);
+        const results = try findFiles(repo_opts, files, aa, value);
         capped = results.capped;
         var found = false;
         for (results.matches) |match| {
@@ -262,6 +264,56 @@ pub fn init(
         .capped = capped,
         .find_available = find_available,
     };
+}
+
+/// why haxy has no file index for a view: it indexes only the branch tips of
+/// an xit repo, so a git repo's views and a tag, commit or revision have none
+pub const Unindexed = enum { repository, ref };
+
+/// whether a view of a `repo_kind` repo at `ref_or_oid` can have a file index,
+/// or why not
+pub fn indexable(repo_kind: rp.RepoKind, ref_or_oid: ui.RoutablePage.RefOrOid) ?Unindexed {
+    if (repo_kind != .xit) return .repository;
+    if (ref_or_oid != .branch) return .ref;
+    return null;
+}
+
+/// the file index a view searches, or why it has none
+pub fn FileIndex(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.RepoOpts(repo_kind)) type {
+    return union(enum) {
+        // the index covering the viewed branch's tip
+        indexed: if (repo_kind == .xit) rp.Repo(.xit, repo_opts).DB.SortedMap(.read_only) else noreturn,
+        // a branch with no index covering its tip (not built yet, or stale)
+        missing,
+        // a view haxy never indexes
+        unsupported: Unindexed,
+    };
+}
+
+/// the file index of the view at `ref_or_oid` (`branch` is its decoded name
+/// when it is a branch) whose commit is `oid`, read from `moment`
+pub fn fileIndex(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    moment: anytype,
+    ref_or_oid: ui.RoutablePage.RefOrOid,
+    branch: []const u8,
+    oid: *const [xit.hash.hexLen(repo_opts.hash)]u8,
+) !FileIndex(repo_kind, repo_opts) {
+    if (indexable(repo_kind, ref_or_oid)) |reason| return .{ .unsupported = reason };
+    if (comptime repo_kind != .xit) unreachable;
+    return if (try fnd.lookup(repo_opts, moment, branch, oid)) |files| .{ .indexed = files } else .missing;
+}
+
+/// the indexed files whose name starts with `term`, ignoring ascii case, by
+/// name then path; at most a listing's worth, flagged `capped` past that
+pub fn findFiles(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    files: rp.Repo(.xit, repo_opts).DB.SortedMap(.read_only),
+    aa: std.mem.Allocator,
+    term: []const u8,
+) !fnd.Results(repo_opts.hash) {
+    return fnd.search(repo_opts, files, aa, term, max_list_entries);
 }
 
 // build one file's row, reading its content window when the preload budget (or

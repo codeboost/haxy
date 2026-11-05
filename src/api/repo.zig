@@ -14,6 +14,7 @@ const api = @import("../api.zig");
 const api_md = @import("./markdown.zig");
 const api_path = @import("./path.zig");
 const api_refs = @import("./refs.zig");
+const api_find = @import("./find.zig");
 const evt = @import("../event.zig");
 const md = @import("../markdown.zig");
 const ui = @import("../ui.zig");
@@ -51,7 +52,7 @@ pub const Route = struct {
         server: struct { owner: []const u8, name: []const u8 },
     };
 
-    pub const Resource = enum { overview, files, branches, tags };
+    pub const Resource = enum { overview, files, branches, tags, find };
 };
 
 /// the repo route `path` names, or null when it names none
@@ -152,6 +153,7 @@ pub fn handle(
                         .files => try writeFiles(repo_kind, opened.self_repo_opts, io, allocator, &arena, opened, query, &body.writer),
                         .branches => try api_refs.writeList(repo_kind, opened.self_repo_opts, opened, io, allocator, aa, .branch, query, &body.writer),
                         .tags => try api_refs.writeList(repo_kind, opened.self_repo_opts, opened, io, allocator, aa, .tag, query, &body.writer),
+                        .find => try api_find.write(repo_kind, opened.self_repo_opts, io, allocator, &arena, opened, query, &body.writer),
                     };
                     if (failure) |err| return api.respondError(request, allocator, err, .{});
                 },

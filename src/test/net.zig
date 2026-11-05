@@ -554,7 +554,7 @@ fn testPushFork(
         repo_id = target.event_id;
         user_id = try evt.parseEventId(&target.repo.event.user_id);
         // patches are off on a new repo
-        try evt.updateRepo(io, allocator, users_dir, &user_id, .{ .name = "admin", .email = "admin@example.test" }, "target", "target", target.repo.event.description, target.repo.event.read_access, .read, .read, .read);
+        try evt.updateRepo(io, allocator, users_dir, &user_id, &user_id, .{ .name = "admin", .email = "admin@example.test" }, "target", "target", target.repo.event.description, target.repo.event.read_access, .read, .read, .read, null);
         var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &user_id)) orelse return error.NotFound;
         defer user_repo.deinit(io, allocator);
         break :blk try fork.create(.{}, io, allocator, users_dir, .{

@@ -9,6 +9,7 @@ const api_account = @import("./api/account.zig");
 const api_commits = @import("./api/commits.zig");
 const api_discovery = @import("./api/discovery.zig");
 const api_events = @import("./api/events.zig");
+const api_undo = @import("./api/undo.zig");
 const api_issues = @import("./api/issues.zig");
 const api_repo = @import("./api/repo.zig");
 const api_repo_admin = @import("./api/repo_admin.zig");
@@ -243,6 +244,7 @@ fn routeApiRequest(
     }
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_undo.route(path)) |route| return api_undo.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_events.route(path)) |route| return api_events.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_commits.route(path)) |route| return api_commits.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_repo.route(path)) |route| {
@@ -2473,7 +2475,7 @@ fn handleUndo(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.
     _ = (try authorizeWrite(io, allocator, &arena, request, host, repo_base, .owner, null)) orelse return;
     const resolved = (try requestRepoSource(io, allocator, host, repo_base)) orelse return respondRepoNotFound(request);
     defer resolved.deinit(allocator);
-    ui.Repo.Undo.execute(io, allocator, resolved.source, target.index orelse return respondRepoNotFound(request)) catch |err| switch (err) {
+    _ = ui.Repo.Undo.execute(io, allocator, resolved.source, target.index orelse return respondRepoNotFound(request), null, null) catch |err| switch (err) {
         error.NotFound, error.InvalidHistoryIndex, error.TransactionNotFound => return respondRepoNotFound(request),
         else => return err,
     };

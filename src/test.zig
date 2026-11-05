@@ -11,6 +11,7 @@ comptime {
     _ = @import("test/api_repo_create.zig");
     _ = @import("test/api_repo_admin.zig");
     _ = @import("test/api_session.zig");
+    _ = @import("test/api_undo.zig");
     _ = @import("test/event.zig");
     _ = @import("test/event/admin.zig");
     _ = @import("test/event/notify.zig");

@@ -248,3 +248,54 @@ test "a repo's removal lands only while it still has the name it was deleted by"
     try std.testing.expectEqual(null, try evt.readNamedRepo(io, allocator, &arena, users_dir, &owner_id, &created.repo_id, "renamed"));
     try std.testing.expectError(error.NotFound, evt.deleteRepo(io, allocator, users_dir, &owner_id, &created.repo_id, alice, null));
 }
+
+test "one member's role is read as the members list holds it, from the repository authorized" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    const xit = @import("xit");
+    const ui = @import("../ui.zig");
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const base = try temp.dir.realPathFileAlloc(io, ".", arena.allocator());
+    const admin_path = try std.Io.Dir.path.join(arena.allocator(), &.{ base, "admin" });
+    const users_dir = try std.Io.Dir.path.join(arena.allocator(), &.{ base, "users" });
+    var admin_repo = try xit.repo.Repo(.xit, evt.admin_repo_opts).init(io, allocator, .{ .path = admin_path });
+    defer admin_repo.deinit(io, allocator);
+    const alice_id = try evt.createUser(io, allocator, users_dir, &admin_repo, "alice", "alice@example.test", "pw", "pw");
+    const bob_id = try evt.createUser(io, allocator, users_dir, &admin_repo, "bobby", "bob@example.test", "pw", "pw");
+    const carol_id = try evt.createUser(io, allocator, users_dir, &admin_repo, "carol", "carol@example.test", "pw", "pw");
+    _ = try evt.createUser(io, allocator, users_dir, &admin_repo, "dave", "dave@example.test", "pw", "pw");
+    const alice = evt.CommitAuthor{ .name = "alice", .email = "alice@example.test" };
+    const tools = try evt.createRepo(io, allocator, users_dir, &alice_id, alice, "tools", "", .private, .sha1, null);
+    try evt.changeRole(io, allocator, users_dir, &alice_id, &tools.repo_id, &alice_id, &bob_id, null, .write, alice, null);
+    try evt.changeRole(io, allocator, users_dir, &alice_id, &tools.repo_id, &alice_id, &carol_id, null, .read, alice, null);
+
+    const moment = try evt.currentMoment(evt.admin_repo_opts, &admin_repo);
+    const roleOf = struct {
+        fn of(m: evt.AdminDB.HashMap(.read_only), a: *std.heap.ArenaAllocator, dir: []const u8, owner: *const [evt.event_id_size]u8, repo: *const [evt.event_id_size]u8, repo_name: []const u8, name: []const u8) !?evt.Repo.Role {
+            return ui.Repo.Members.readRole(std.testing.io, std.testing.allocator, a, m, dir, owner, repo, repo_name, name);
+        }
+    }.of;
+    // the main owner owns it without a grant; a member is listed with their role
+    try std.testing.expectEqual(.owner, (try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "alice")).?);
+    try std.testing.expectEqual(.write, (try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "bobby")).?);
+    // a reader, someone without a grant and no user at all aren't members
+    try std.testing.expectEqual(null, try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "carol"));
+    try std.testing.expectEqual(null, try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "dave"));
+    try std.testing.expectEqual(null, try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "nobody"));
+    try std.testing.expectEqual(null, try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "bob\xffby"));
+
+    // promoted, then revoked
+    try evt.changeRole(io, allocator, users_dir, &alice_id, &tools.repo_id, &alice_id, &bob_id, .write, .owner, alice, null);
+    try std.testing.expectEqual(.owner, (try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "bobby")).?);
+    try evt.changeRole(io, allocator, users_dir, &alice_id, &tools.repo_id, &alice_id, &bob_id, .owner, null, alice, null);
+    try std.testing.expectEqual(null, try roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "bobby"));
+
+    // renamed meanwhile, and another repo takes its name: not found, never the other's members
+    try evt.changeRole(io, allocator, users_dir, &alice_id, &tools.repo_id, &alice_id, &bob_id, null, .write, alice, null);
+    try evt.updateRepo(io, allocator, users_dir, &alice_id, &alice_id, alice, "tools", "old-tools", "", .private, .read, .read, null, null);
+    _ = try evt.createRepo(io, allocator, users_dir, &alice_id, alice, "tools", "", .private, .sha1, null);
+    try std.testing.expectError(error.NotFound, roleOf(moment, &arena, users_dir, &alice_id, &tools.repo_id, "tools", "bobby"));
+}

@@ -104,6 +104,36 @@ pub fn readWindow(
     return .{ .rows = rows.items, .next_start = next_start };
 }
 
+// `name`'s role in the repo `repo_id` names, as the members list holds it
+// (readWindow): their grant's role for a listed member, owner for the creator,
+// who owns the repo without a grant, and null for anyone else (no such user,
+// a removed one, a reader, or no grant). the repo and its grant are read from
+// one moment of the owner's user repo, and NotFound once the repo no longer
+// has the name `repo_name` (deleted, or renamed meanwhile).
+pub fn readRole(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: evt.AdminDB.HashMap(.read_only),
+    users_dir: []const u8,
+    owner_id: *const [evt.event_id_size]u8,
+    repo_id: *const [evt.event_id_size]u8,
+    repo_name: []const u8,
+    name: []const u8,
+) !?evt.Repo.Role {
+    var user_repo = (try evt.openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+    defer user_repo.deinit(io, allocator);
+    const moment = (try evt.userMoment(&user_repo)) orelse return error.NotFound;
+    _ = (try readRepo(moment, arena, repo_name, repo_id)) orelse return error.NotFound;
+
+    const user_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, admin_moment, name)) orelse return null;
+    const user = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, admin_moment, arena, &user_id)) orelse return null;
+    if (user.removed) return null;
+    if (std.mem.eql(u8, &user_id, owner_id)) return .owner;
+    const role = (try evt.Grant.readRole(evt.UserDB, evt.user_repo_opts.hash, moment, arena, repo_id, &user_id)) orelse return null;
+    return if (role == .read) null else role;
+}
+
 // the confirmation of taking `name`'s role away
 fn confirmRoute(identity: []const u8, start: usize, name: []const u8, action: Action) !ui.RoutablePage {
     var route = ui.RoutablePage.repoMembersRoute(identity, start) orelse return error.RouteTooLong;

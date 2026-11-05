@@ -37,7 +37,7 @@ pub const Resource = union(enum) {
     settings,
     // GET a page of the members; POST adds one
     members,
-    // PUT changes this member's role; DELETE revokes it. still encoded.
+    // GET reads this member's role; PUT changes it; DELETE revokes it. still encoded.
     member: []const u8,
     // GET the default and protected branches
     branches,
@@ -51,7 +51,7 @@ pub const Resource = union(enum) {
             .repo => "DELETE",
             .settings => "GET, HEAD, PUT",
             .members => "GET, HEAD, POST",
-            .member => "PUT, DELETE",
+            .member => "GET, HEAD, PUT, DELETE",
             .branches => "GET, HEAD",
             .default_branch => "PUT",
             .protected => "POST, DELETE",
@@ -63,7 +63,7 @@ pub const Resource = union(enum) {
             .repo => method == .DELETE,
             .settings => method == .GET or method == .HEAD or method == .PUT,
             .members => method == .GET or method == .HEAD or method == .POST,
-            .member => method == .PUT or method == .DELETE,
+            .member => method == .GET or method == .HEAD or method == .PUT or method == .DELETE,
             .branches => method == .GET or method == .HEAD,
             .default_branch => method == .PUT,
             .protected => method == .POST or method == .DELETE,
@@ -322,7 +322,10 @@ pub fn handle(
         .repo => try ctx.deleteRepo(actor),
         .settings => if (method == .PUT) try ctx.changeSettings(actor) else try ctx.respondSettings(actor, .ok),
         .members => if (method == .POST) try ctx.addMember(actor) else try ctx.listMembers(actor, query),
-        .member => |encoded| try ctx.changeMember(actor, std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded)), method == .DELETE),
+        .member => |encoded| {
+            const name = std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded));
+            if (method == .GET or method == .HEAD) try ctx.readMember(actor, name) else try ctx.changeMember(actor, name, method == .DELETE);
+        },
         .branches => try ctx.respondBranches(actor, .ok),
         .default_branch => try ctx.changeBranch(actor, .default, null),
         .protected => try ctx.changeBranch(actor, if (method == .POST) .protect else .unprotect, if (method == .DELETE) query else null),
@@ -506,6 +509,18 @@ const Context = struct {
             // the TUI doesn't count members
             .page = .{ .has_more = next_cursor != null, .next_cursor = next_cursor, .count = api.Count{ .unknown = {} } },
         }, .ok);
+    }
+
+    // one member's role as the list holds it, or null for anyone it doesn't
+    // list (the main owner, who owns the repo without a grant, is an owner),
+    // so a client settles a member write in one read however long the list
+    fn readMember(self: Context, actor: ui.Actor, name: []const u8) !void {
+        const role = Members.readRole(self.io, self.allocator, self.arena, try self.currentMoment(), self.server.users_dir, &(actor.repo_user_id orelse unreachable), &self.repo_id, self.repo.name, name) catch |err| switch (err) {
+            error.NotFound => return self.respond(not_found_repo),
+            else => |e| return e,
+        };
+        // a name is bytes like any path segment: shown with U+FFFD where it isn't UTF-8
+        try self.respondBody(.{ .name = try api_path.display(self.arena.allocator(), name), .role = if (role) |value| memberRoleName(value) else null }, .ok);
     }
 
     fn addMember(self: Context, actor: ui.Actor) !void {

@@ -9,7 +9,10 @@
 //!   repo's owner, with the git config's author (`ui.localAuthor`);
 //! - who may change an existing event is `ui.RepoSource.canModify`: anyone
 //!   with the write role, otherwise only its author;
-//! - what a thread's fields must be is the kind's own `fieldsValid`.
+//! - what a thread's fields must be is the kind's own `fieldsValid`;
+//! - who is assigned is `ui.assigneeEmail` (an email, or an account's name
+//!   on a server), and who may assign or unassign is `canModify` on the
+//!   thread.
 //!
 //! patches have drafts, branches and forks of their own, which their callers
 //! handle before (or instead of) these.
@@ -301,15 +304,176 @@ fn threadLive(
         evt.currentMoment(repo_opts, repo)) catch return false;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
+    return threadLiveAt(repo_opts.hash, &arena, moment, kind, id);
+}
+
+// whether `moment` holds a thread of `kind` under `id` that isn't removed
+fn threadLiveAt(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    kind: evt.EventKind,
+    id: *const [evt.event_id_size]u8,
+) !bool {
+    if (try kindOf(hash_kind, moment, id) != kind) return false;
     const Removed = struct { removed: bool };
-    const DB = evt.EventDB(repo_opts.hash);
+    const DB = evt.EventDB(hash_kind);
     const record = switch (kind) {
-        .issue => try evt.readRecordSubset(evt.Issue, Removed, DB, repo_opts.hash, moment, &arena, id),
-        .discuss => try evt.readRecordSubset(evt.Discussion, Removed, DB, repo_opts.hash, moment, &arena, id),
-        .patch => try evt.readRecordSubset(evt.Patch, Removed, DB, repo_opts.hash, moment, &arena, id),
-        else => unreachable,
+        .issue => try evt.readRecordSubset(evt.Issue, Removed, DB, hash_kind, moment, arena, id),
+        .discuss => try evt.readRecordSubset(evt.Discussion, Removed, DB, hash_kind, moment, arena, id),
+        .patch => try evt.readRecordSubset(evt.Patch, Removed, DB, hash_kind, moment, arena, id),
+        else => return false,
     } orelse return false;
     return !record.removed;
+}
+
+// --- assignees -----------------------------------------------------------------
+
+/// what assigning someone came to: the assignment's event id, or the TUI's
+/// reason for refusing it (a name no account holds, text that is no email,
+/// someone already assigned)
+pub const Assigned = union(enum) {
+    assigned: [evt.event_id_size]u8,
+    refused: ui.Session.FormFeedback.AssignmentFailure,
+};
+
+/// assigns `text` to the thread of `thread_kind` that `thread_id` names, as
+/// `actor`: an email as itself, otherwise the email of the account `text`
+/// names in `admin_moment` (null in local mode, which has no accounts and
+/// so assigns by email only; `ui.assigneeEmail`). error.Forbidden when the
+/// actor may not change the thread (`ui.RepoSource.canModify`: its author or
+/// a writer), error.NotFound when there is no such live thread. the thread
+/// and whether the email is assigned already are checked where the write
+/// lands: in a xit repo's transaction, under the git events lock otherwise.
+pub fn assign(
+    host: evt.Host,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ui.RepoSource,
+    actor: ui.Actor,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    thread_kind: evt.EventKind,
+    thread_id: *const [evt.event_id_size]u8,
+    text: []const u8,
+) !Assigned {
+    const locked = try lockEvents(io, source);
+    defer unlockEvents(io, locked);
+    try catchUp(host, io, allocator, source);
+    if (!try source.canModify(io, allocator, actor, thread_kind, thread_id)) return error.Forbidden;
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const email = switch (try ui.assigneeEmail(admin_moment, &arena, text)) {
+        .email => |email| email,
+        .failure => |failure| return .{ .refused = failure },
+    };
+    if (!evt.Assignment.emailValid(email)) return .{ .refused = .not_an_email };
+
+    const id = evt.Assignment.idOf(thread_id, email);
+    const event = evt.EventWithId{
+        .id = std.fmt.bytesToHex(id, .lower),
+        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
+        .author = actor.author,
+        .event = .{ .assign = .{ .thread_id = std.fmt.bytesToHex(thread_id.*, .lower), .email = email } },
+    };
+    writeAssignment(host, io, allocator, source, event, .{ .thread_kind = thread_kind, .thread_id = thread_id, .id = &id, .want = .unassigned }) catch |err| switch (err) {
+        error.AlreadyAssigned => return .{ .refused = .already_assigned },
+        else => |e| return e,
+    };
+    return .{ .assigned = id };
+}
+
+/// unassigns the assignment `id` names (`evt.Assignment.idOf` the thread and
+/// the email) from the thread of `thread_kind` that `thread_id` names, as
+/// `actor`. error.Forbidden and error.NotFound as for `assign`;
+/// error.NotAssigned when the thread has no such assignment now (never made,
+/// or already undone), which changes nothing.
+pub fn unassign(
+    host: evt.Host,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ui.RepoSource,
+    actor: ui.Actor,
+    thread_kind: evt.EventKind,
+    thread_id: *const [evt.event_id_size]u8,
+    id: *const [evt.event_id_size]u8,
+) !void {
+    const locked = try lockEvents(io, source);
+    defer unlockEvents(io, locked);
+    try catchUp(host, io, allocator, source);
+    if (!try source.canModify(io, allocator, actor, thread_kind, thread_id)) return error.Forbidden;
+
+    const event = evt.EventWithId{
+        .id = std.fmt.bytesToHex(id.*, .lower),
+        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
+        .author = actor.author,
+        .event = .{ .assign = null },
+    };
+    try writeAssignment(host, io, allocator, source, event, .{ .thread_kind = thread_kind, .thread_id = thread_id, .id = id, .want = .assigned });
+}
+
+// what an assignment write requires of the state it lands on: a live thread,
+// and the assignment `id` in the state the write changes
+const AssignmentCheck = struct {
+    thread_kind: evt.EventKind,
+    thread_id: *const [evt.event_id_size]u8,
+    id: *const [evt.event_id_size]u8,
+    want: enum { assigned, unassigned },
+
+    fn run(self: AssignmentCheck, comptime hash_kind: hash.HashKind, allocator: std.mem.Allocator, moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+        const moment = moment_maybe orelse return error.NotFound;
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        if (!try threadLiveAt(hash_kind, &arena, moment, self.thread_kind, self.thread_id)) return error.NotFound;
+        const Stored = struct { removed: bool, event: struct { thread_id: [evt.event_id_size * 2]u8 } };
+        const record = try evt.readRecordSubset(evt.Assignment, Stored, evt.EventDB(hash_kind), hash_kind, moment, &arena, self.id);
+        const active = if (record) |assignment|
+            !assignment.removed and std.mem.eql(u8, &assignment.event.thread_id, &std.fmt.bytesToHex(self.thread_id.*, .lower))
+        else
+            false;
+        switch (self.want) {
+            .assigned => if (!active) return error.NotAssigned,
+            .unassigned => if (active) return error.AlreadyAssigned,
+        }
+    }
+};
+
+// `check`, as consumeGuarded runs it inside a xit repo's transaction
+fn AssignmentGuard(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        allocator: std.mem.Allocator,
+        rules: AssignmentCheck,
+
+        pub fn check(self: @This(), moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+            return self.rules.run(hash_kind, self.allocator, moment_maybe);
+        }
+    };
+}
+
+// writes an assignment `event` once `check` holds where it lands. the caller
+// holds the git events lock, when there is one.
+fn writeAssignment(host: evt.Host, io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource, event: evt.EventWithId, check: AssignmentCheck) !void {
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                inline else => |*repo| {
+                    const repo_opts = repo.self_repo_opts;
+                    if (repo_kind == .xit) {
+                        return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{event}, AssignmentGuard(repo_opts.hash){ .allocator = allocator, .rules = check });
+                    }
+                    {
+                        var event_db_maybe = try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir);
+                        defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
+                        const moment = if (event_db_maybe) |*event_db| evt.currentMomentFromDb(repo_opts.hash, event_db.db) catch null else null;
+                        try check.run(repo_opts.hash, allocator, moment);
+                    }
+                    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{event});
+                },
+            }
+        },
+    }
 }
 
 fn eventKind(comptime Event: type) evt.EventKind {

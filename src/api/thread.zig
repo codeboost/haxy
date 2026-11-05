@@ -173,16 +173,19 @@ pub fn labelLinks(aa: std.mem.Allocator, labels: []const u8, search: []const u8)
 }
 
 /// an assignee: by account name when one holds the email, otherwise by the
-/// email alone (which then is all there is to show)
+/// email alone (which then is all there is to show). `id` is the
+/// assignment's event id, which unassigns them.
 pub const Assignee = struct {
+    id: [evt.event_id_size * 2]u8,
     name: ?[]const u8,
     email: ?[]const u8,
     search: []const u8,
 };
 
-pub fn assigneeLinks(aa: std.mem.Allocator, assignees: []const ui.Assignee, search: []const u8) ![]const Assignee {
+pub fn assigneeLinks(aa: std.mem.Allocator, thread_id: *const [evt.event_id_size]u8, assignees: []const ui.Assignee, search: []const u8) ![]const Assignee {
     const links = try aa.alloc(Assignee, assignees.len);
     for (links, assignees) |*link, assignee| link.* = .{
+        .id = std.fmt.bytesToHex(evt.Assignment.idOf(thread_id, assignee.email), .lower),
         .name = assignee.name,
         .email = if (assignee.name == null) assignee.email else null,
         .search = try srch_thrd.withFilter(aa, search, srch_thrd.assignee_prefix, assignee.display()),
@@ -253,7 +256,7 @@ pub fn summary(aa: std.mem.Allocator, entry: anytype, search: []const u8) !Summa
         .status = entry.record.event.status,
         .labels = try labelLinks(aa, entry.record.event.labels, search),
         .author = .{ .author = entry.author },
-        .assignees = try assigneeLinks(aa, entry.assignees, search),
+        .assignees = try assigneeLinks(aa, &try evt.parseEventId(entry.id), entry.assignees, search),
         .created_at = .{ .seconds = entry.record.created_timestamp },
         .comment_count = entry.comments.count,
         .conflicted = entry.conflicted,
@@ -344,6 +347,8 @@ pub const ThreadActions = struct {
     edit: Availability,
     set_status: Availability,
     remove: Availability,
+    // assign and unassign people
+    assign: Availability,
 };
 
 // a kind's singular noun, as messages name it
@@ -373,8 +378,8 @@ pub fn listActions(comptime kind: evt.EventKind, rights: Rights) ListActions {
     return .{ .create = .{ .unavailable = .{ .code = .forbidden, .message = "Your role in this repository doesn't allow opening " ++ comptime nounPlural(kind) ++ "." } } };
 }
 
-/// what the viewer may do to one thread: change it, when they wrote it or
-/// may write in the repository
+/// what the viewer may do to one thread: change it, or who is assigned to
+/// it, when they wrote it or may write in the repository
 pub fn threadActions(comptime kind: evt.EventKind, rights: Rights) ThreadActions {
     const availability: Availability = if (rights.may_write)
         .available
@@ -382,7 +387,12 @@ pub fn threadActions(comptime kind: evt.EventKind, rights: Rights) ThreadActions
         .{ .unavailable = .{ .code = .unauthenticated, .message = "Log in to change this " ++ comptime noun(kind) ++ "." } }
     else
         .{ .unavailable = .{ .code = .forbidden, .message = "Only the " ++ comptime noun(kind) ++ "'s author and the repository's writers can change it." } };
-    return .{ .edit = availability, .set_status = availability, .remove = availability };
+    // who is assigned is the thread's to change too (`thread_write.assign`)
+    const assign: Availability = if (rights.may_write or !rights.signed_in)
+        availability
+    else
+        .{ .unavailable = .{ .code = .forbidden, .message = "Only the " ++ comptime noun(kind) ++ "'s author and the repository's writers can assign people to it." } };
+    return .{ .edit = availability, .set_status = availability, .remove = availability, .assign = assign };
 }
 
 /// a client's id for a new thread: "" (haxy picks one), else 32 lowercase

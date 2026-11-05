@@ -22,8 +22,7 @@ test "commit routes name a ref's history or one commit, on a server or the local
         "/api/v1/repos/bobby/linux",
         "/api/v1/repos/bobby/linux/files",
         "/api/v1/repos/bobby/linux/commits/",
-        // a commit's diff (#08) will hang off its route; nothing does yet
-        "/api/v1/repos/bobby/linux/commits/abc/diff",
+        "/api/v1/repos/bobby/linux/commits/abc/diff/x",
         "/api/v1/repos/bobby/linux/commitsx",
         "/api/v1/repos//linux/commits",
         "/api/v1/repos/bobby/commits",

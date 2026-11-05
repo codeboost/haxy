@@ -16,12 +16,38 @@ pub const page_size = 10;
 // the most cells a page's content may take: its line count times its widest line
 const max_page_cells = 1_000_000;
 
+/// one entry of a diff window: a hunk of a changed text file, or a whole
+/// file shown only by its path (an added or removed file, a binary one, or a
+/// change too large to diff)
 pub const Hunk = struct {
+    // the file's path, on the first of its entries in a window (a hunk that
+    // continues the file before it has none)
     path: ?[]const u8 = null,
-    text: []const u8,
-    // one byte per line of text: the edit's +/-/space prefix
-    prefixes: []const u8,
     status: Status = .changed,
+    kind: Kind = .hunk,
+    // a hunk's lines, empty for the other kinds
+    lines: []const Line = &.{},
+};
+
+pub const Kind = enum {
+    // lines of a changed text file
+    hunk,
+    // an added or removed text file, which shows only its path
+    file,
+    // a file xit reads as binary: not utf-8, or past its text limits
+    // (`max_text_size`, `max_line_size`, `max_line_count`)
+    binary,
+    // a change past xit's diff limits (`max_edit_count`)
+    too_large,
+};
+
+pub const Line = struct {
+    // the edit: ' ' kept, '+' inserted, '-' deleted
+    prefix: u8,
+    // 1-based line numbers, null on the side the line isn't on
+    old: ?usize,
+    new: ?usize,
+    text: []const u8,
 };
 
 pub const Status = enum {
@@ -51,6 +77,19 @@ pub const Window = struct {
     hunks: []const Hunk = &.{},
     start: usize = 0,
     has_more: bool = false,
+    // the diff past these entries is beyond xit's limit on the lines a diff
+    // reads (`max_total_line_count`), so the window ends early
+    truncated: bool = false,
+};
+
+/// which window of a diff to render
+pub const Options = struct {
+    // the index of the window's first entry, counted across all files
+    start: usize = 0,
+    // a file's path: only its entries ("" for every file)
+    path: []const u8 = "",
+    // the most entries a window holds
+    limit: usize = page_size,
 };
 
 route: Route,
@@ -142,7 +181,7 @@ pub fn init(
     return .{
         .route = diff_route,
         .path = path,
-        .window = try render(repo_kind, repo_opts, io, gpa, aa, repo, if (std.mem.allEqual(u8, &base_oid, '0')) null else &base_oid, head_oid, route.start, path),
+        .window = try render(repo_kind, repo_opts, io, gpa, aa, repo, if (std.mem.allEqual(u8, &base_oid, '0')) null else &base_oid, head_oid, .{ .start = route.start, .path = path }),
     };
 }
 
@@ -156,41 +195,74 @@ pub fn render(
     repo: *rp.Repo(repo_kind, repo_opts),
     base_oid: ?*const [xit.hash.hexLen(repo_opts.hash)]u8,
     head_oid: [xit.hash.hexLen(repo_opts.hash)]u8,
-    start: usize,
-    path: []const u8,
+    options: Options,
 ) !Window {
-    var tree_diff = try repo.treeDiff(io, gpa, base_oid, &head_oid);
-    defer tree_diff.deinit();
+    var moment = try repo.core.latestMoment();
+    const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
+    return renderAt(repo_kind, repo_opts, io, gpa, arena, state, base_oid, head_oid, options);
+}
 
-    var file_iter = try repo.filePairs(io, gpa, .{ .tree = .{ .tree_diff = &tree_diff } });
+/// `render` read in one snapshot of the repo, `state`, so a caller can read
+/// the commits it compares in the same one. this decides every diff window
+/// haxy shows, in the TUI and the JSON API: which entries a window holds,
+/// how many, and which changes are placeholders.
+pub fn renderAt(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    state: rp.Repo(repo_kind, repo_opts).State(.read_only),
+    base_oid: ?*const [xit.hash.hexLen(repo_opts.hash)]u8,
+    head_oid: [xit.hash.hexLen(repo_opts.hash)]u8,
+    options: Options,
+) !Window {
+    const start = options.start;
+    const path = options.path;
+    const limit = @max(options.limit, 1);
+    var tree_diff = xit.tree.TreeDiff(repo_kind, repo_opts).init(gpa);
+    defer tree_diff.deinit();
+    try tree_diff.compare(state, io, base_oid, &head_oid, null);
+
+    var file_iter = try df.FileIterator(repo_kind, repo_opts).init(state, io, gpa, .{ .tree = .{ .tree_diff = &tree_diff } });
 
     var hunks: std.ArrayList(Hunk) = .empty;
-    var index: usize = 0; // running hunk index across all files
+    var index: usize = 0; // running entry index across all files
     var has_more = false;
+    var truncated = false;
     // the page's content grid is its line count times its widest line
     var lines: usize = 0;
     var widest: usize = 0;
 
-    file_loop: while (try file_iter.next()) |pair_val| {
+    file_loop: while (true) {
+        // past xit's limit on the lines a diff reads, the rest can't be read
+        const pair_val = file_iter.next() catch |err| switch (err) {
+            error.DiffTooLarge => {
+                truncated = true;
+                break :file_loop;
+            },
+            else => |e| return e,
+        } orelse break;
         var pair = pair_val;
         defer pair.deinit();
 
         if (path.len != 0 and !std.mem.eql(u8, pair.path, path)) continue;
 
-        // an added or removed file shows only its path
         const status: Status = if (pair.a.source == .nothing) .added else if (pair.b.source == .nothing) .removed else .changed;
-        if (status != .changed) {
+        const binary = pair.a.source == .binary or pair.b.source == .binary;
+
+        // an added, removed or binary file shows only its path
+        if (status != .changed or binary) {
             const i = index;
             index += 1;
             if (i < start) continue;
-            const page_widest = @max(widest, pair.path.len);
-            if (hunks.items.len >= page_size or (hunks.items.len > 0 and (lines + 1) * page_widest > max_page_cells)) {
+            if (!fits(hunks.items.len, limit, lines, widest, 1, pair.path.len)) {
                 has_more = true;
                 break :file_loop;
             }
             lines += 1;
-            widest = page_widest;
-            try hunks.append(arena, .{ .path = try arena.dupe(u8, pair.path), .text = "", .prefixes = "", .status = status });
+            widest = @max(widest, pair.path.len);
+            try hunks.append(arena, .{ .path = try arena.dupe(u8, pair.path), .status = status, .kind = if (binary) .binary else .file });
             continue;
         }
 
@@ -199,86 +271,110 @@ pub fn render(
 
         // the path label rides on the first of this file's hunks we actually show.
         var path_attached = false;
-        while (try hunk_iter.next(gpa)) |hunk_val| {
+        while (true) {
+            // past xit's limit on a file's edits, the rest of the file is one
+            // placeholder, at the same index in every window
+            const hunk_val = hunk_iter.next(gpa) catch |err| switch (err) {
+                error.DiffTooLarge => {
+                    const i = index;
+                    index += 1;
+                    if (i < start) break;
+                    if (!fits(hunks.items.len, limit, lines, widest, 1, pair.path.len)) {
+                        has_more = true;
+                        break :file_loop;
+                    }
+                    lines += 1;
+                    widest = @max(widest, pair.path.len);
+                    try hunks.append(arena, .{ .path = try arena.dupe(u8, pair.path), .kind = .too_large });
+                    break;
+                },
+                else => |e| return e,
+            } orelse break;
             var hunk = hunk_val;
             defer hunk.deinit(gpa);
 
             const i = index;
             index += 1;
             if (i < start) continue; // before this window
-            if (hunks.items.len >= page_size) {
+            if (hunks.items.len >= limit) {
                 has_more = true;
                 break :file_loop;
             }
-            const rendered = try renderHunk(repo_kind, repo_opts, arena, &hunk_iter, &hunk);
+            const read = try readHunk(repo_kind, repo_opts, arena, &hunk_iter, &hunk);
             // the first hunk always goes in, xit's max_hunk_edits bounds it
-            const page_widest = @max(widest, rendered.widest);
-            if (hunks.items.len > 0 and (lines + rendered.prefixes.len) * page_widest > max_page_cells) {
+            if (!fits(hunks.items.len, limit, lines, widest, read.lines.len, read.widest)) {
                 has_more = true;
                 break :file_loop;
             }
-            lines += rendered.prefixes.len;
-            widest = page_widest;
+            lines += read.lines.len;
+            widest = @max(widest, read.widest);
             try hunks.append(arena, .{
                 .path = if (path_attached) null else try arena.dupe(u8, pair.path),
-                .text = rendered.text,
-                .prefixes = rendered.prefixes,
+                .lines = read.lines,
             });
             path_attached = true;
         }
     }
 
-    return .{ .hunks = try hunks.toOwnedSlice(arena), .start = start, .has_more = has_more };
+    return .{ .hunks = try hunks.toOwnedSlice(arena), .start = start, .has_more = has_more, .truncated = truncated };
 }
 
-// render edits with right-aligned line numbers, alongside each line's prefix
-fn renderHunk(
+// whether an entry of `entry_lines` lines, `entry_widest` wide, fits a window
+// holding `count` entries in `lines` lines at most `widest` wide. the first
+// entry always does.
+fn fits(count: usize, limit: usize, lines: usize, widest: usize, entry_lines: usize, entry_widest: usize) bool {
+    if (count == 0) return true;
+    return count < limit and (lines + entry_lines) * @max(widest, entry_widest) <= max_page_cells;
+}
+
+// a hunk's lines, and its width as the TUI shows it: each line's number,
+// right-aligned, then a space and its prefix before its text
+fn readHunk(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: std.mem.Allocator,
     hunk_iter: *df.HunkIterator(repo_kind, repo_opts),
     hunk: *df.Hunk(repo_kind, repo_opts),
-) !struct { text: []const u8, prefixes: []const u8, widest: usize } {
-    var out: std.Io.Writer.Allocating = .init(arena);
-    defer out.deinit();
-    var prefixes: std.ArrayList(u8) = .empty;
+) !struct { lines: []const Line, widest: usize } {
+    const lines = try arena.alloc(Line, hunk.edits.items.len);
     var widest_text: usize = 0;
-    var max_num: usize = 1;
-    for (hunk.edits.items) |edit| {
-        const n = editLineNum(edit) + 1;
-        if (n > max_num) max_num = n;
-    }
-    const width = std.fmt.count("{d}", .{max_num});
-    for (hunk.edits.items, 0..) |edit, i| {
-        const text = switch (edit) {
-            .eql => |e| try hunk_iter.line_iter_b.get(e.new_line.num),
-            .ins => |e| try hunk_iter.line_iter_b.get(e.new_line.num),
-            .del => |e| try hunk_iter.line_iter_a.get(e.old_line.num),
+    for (hunk.edits.items, lines) |edit, *line| {
+        line.* = switch (edit) {
+            .eql => |e| .{ .prefix = ' ', .old = e.old_line.num + 1, .new = e.new_line.num + 1, .text = try arena.dupe(u8, try hunk_iter.line_iter_b.get(e.new_line.num)) },
+            .ins => |e| .{ .prefix = '+', .old = null, .new = e.new_line.num + 1, .text = try arena.dupe(u8, try hunk_iter.line_iter_b.get(e.new_line.num)) },
+            .del => |e| .{ .prefix = '-', .old = e.old_line.num + 1, .new = null, .text = try arena.dupe(u8, try hunk_iter.line_iter_a.get(e.old_line.num)) },
         };
-        const prefix: u8 = switch (edit) {
-            .eql => ' ',
-            .ins => '+',
-            .del => '-',
-        };
-        if (i != 0) try out.writer.writeByte('\n');
-        const num = editLineNum(edit) + 1;
-        try out.writer.splatByteAll(' ', width - std.fmt.count("{d}", .{num}));
-        try out.writer.print("{d} {c}{s}", .{ num, prefix, text });
-        try prefixes.append(arena, prefix);
-        widest_text = @max(widest_text, text.len);
+        widest_text = @max(widest_text, line.text.len);
     }
-    // each line's number, space and prefix come before its text
-    return .{ .text = try out.toOwnedSlice(), .prefixes = try prefixes.toOwnedSlice(arena), .widest = width + 2 + widest_text };
+    return .{ .lines = lines, .widest = numberWidth(lines) + 2 + widest_text };
 }
 
-// the line number to show for an edit: the new-side number for kept and inserted
-// lines, the old-side number for deletions (0-based in the diff machinery).
-fn editLineNum(edit: df.Edit) usize {
-    return switch (edit) {
-        .eql => |e| e.new_line.num,
-        .ins => |e| e.new_line.num,
-        .del => |e| e.old_line.num,
-    };
+// the line number the TUI shows for a line: the new side's for kept and
+// inserted lines, the old side's for deleted ones
+fn shownNumber(line: Line) usize {
+    return line.new orelse line.old orelse 0;
+}
+
+// the digits of a hunk's widest shown line number
+fn numberWidth(lines: []const Line) usize {
+    var max_num: usize = 1;
+    for (lines) |line| max_num = @max(max_num, shownNumber(line));
+    return std.fmt.count("{d}", .{max_num});
+}
+
+// a hunk as the TUI shows it: right-aligned line numbers, each line's prefix
+// and its text
+fn hunkText(arena: std.mem.Allocator, lines: []const Line) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    defer out.deinit();
+    const width = numberWidth(lines);
+    for (lines, 0..) |line, i| {
+        if (i != 0) try out.writer.writeByte('\n');
+        const num = shownNumber(line);
+        try out.writer.splatByteAll(' ', width - std.fmt.count("{d}", .{num}));
+        try out.writer.print("{d} {c}{s}", .{ num, line.prefix, line.text });
+    }
+    return out.toOwnedSlice();
 }
 
 fn appendWindow(data: @This(), allocator: std.mem.Allocator, session: *ui.Session, box: *wgt.Box(ui.Widget)) !void {
@@ -289,14 +385,25 @@ fn appendWindow(data: @This(), allocator: std.mem.Allocator, session: *ui.Sessio
     }
     if (data.window.start > 0) try addLink(allocator, box, "← previous", try data.route.link(session.page_arena, data.window.start -| page_size, data.path));
     for (data.window.hunks) |hunk| {
-        if (data.path.len == 0) if (hunk.path) |path| {
-            // a changed file's path narrows the diff to it, the others open the file
-            const link = if (hunk.status == .changed) try data.route.link(session.page_arena, 0, path) else try data.route.fileLink(session.page_arena, path, hunk.status);
-            try addSpans(allocator, box, &.{.{ .text = path }}, link, hunk.status.label(), hunk.status.border());
+        if (data.path.len == 0 or hunk.kind != .hunk) if (hunk.path) |path| {
+            // a changed text file's path narrows the diff to it, the others open the file
+            const link = if (data.path.len == 0 and hunk.kind == .hunk) try data.route.link(session.page_arena, 0, path) else try data.route.fileLink(session.page_arena, path, hunk.status);
+            try addSpans(allocator, box, &.{.{ .text = path }}, link, entryLabel(hunk), hunk.status.border());
         };
-        if (hunk.text.len != 0) try addHunk(allocator, box, hunk);
+        if (hunk.lines.len != 0) try addHunk(allocator, session.page_arena.allocator(), box, hunk);
     }
+    // the rest of the diff couldn't be read, so this isn't the whole of it
+    if (data.window.truncated) try addSpans(allocator, box, &.{.{ .text = "the rest of this diff is too large to show" }}, "", " incomplete ", .{ .kind = .single, .style = .{ .fg = .ansi(.yellow) } });
     if (data.window.has_more) try addLink(allocator, box, "next →", try data.route.link(session.page_arena, data.window.start + data.window.hunks.len, data.path));
+}
+
+// an entry's label: its status, or why it shows no lines
+fn entryLabel(hunk: Hunk) []const u8 {
+    return switch (hunk.kind) {
+        .too_large => " too large to diff ",
+        .binary => if (hunk.status == .changed) " binary " else hunk.status.label(),
+        .hunk, .file => hunk.status.label(),
+    };
 }
 
 fn addLink(allocator: std.mem.Allocator, box: *wgt.Box(ui.Widget), text: []const u8, link: []const u8) !void {
@@ -305,19 +412,20 @@ fn addLink(allocator: std.mem.Allocator, box: *wgt.Box(ui.Widget), text: []const
 
 // one span per line, inserted lines green and deleted lines red. the text
 // box copies the text, so the spans only live until init.
-fn addHunk(allocator: std.mem.Allocator, box: *wgt.Box(ui.Widget), hunk: Hunk) !void {
+fn addHunk(allocator: std.mem.Allocator, page_arena: std.mem.Allocator, box: *wgt.Box(ui.Widget), hunk: Hunk) !void {
+    const text = try hunkText(page_arena, hunk.lines);
     var spans: std.ArrayList(wgt.Span) = .empty;
     defer spans.deinit(allocator);
     var start: usize = 0;
-    for (hunk.prefixes) |prefix| {
+    for (hunk.lines) |line| {
         // each span keeps its trailing newline so the text box still breaks there
-        const end = if (std.mem.indexOfScalarPos(u8, hunk.text, start, '\n')) |nl| nl + 1 else hunk.text.len;
-        const style: wgt.Style = switch (prefix) {
+        const end = if (std.mem.indexOfScalarPos(u8, text, start, '\n')) |nl| nl + 1 else text.len;
+        const style: wgt.Style = switch (line.prefix) {
             '+' => .{ .fg = .ansi(.green) },
             '-' => .{ .fg = .ansi(.red) },
             else => .{},
         };
-        try spans.append(allocator, .{ .text = hunk.text[start..end], .style = style });
+        try spans.append(allocator, .{ .text = text[start..end], .style = style });
         start = end;
     }
     try addSpans(allocator, box, spans.items, "", "", .single);

@@ -13,6 +13,7 @@ const xit = @import("xit");
 const rp = xit.repo;
 const obj = xit.object;
 const api = @import("../api.zig");
+const api_diff = @import("./diff.zig");
 const api_path = @import("./path.zig");
 const api_refs = @import("./refs.zig");
 const api_repo = @import("./repo.zig");
@@ -35,6 +36,8 @@ pub const Route = struct {
         list,
         // one commit by its object id, still encoded
         commit: []const u8,
+        // a commit's diff, `?path=&cursor=&page_size=` (api/diff.zig)
+        diff: []const u8,
     };
 };
 
@@ -59,13 +62,16 @@ pub fn route(path: []const u8) ?Route {
     };
 }
 
-// what follows "commits": nothing, or "/<oid>"
+// what follows "commits": nothing, "/<oid>" or "/<oid>/diff"
 fn resourceOf(tail: []const u8) ?Route.Resource {
     if (tail.len == 0) return .list;
     if (tail[0] != '/') return null;
-    const segment = tail[1..];
+    var segment = tail[1..];
+    const diff_suffix = "/diff";
+    const diff = std.mem.endsWith(u8, segment, diff_suffix);
+    if (diff) segment = segment[0 .. segment.len - diff_suffix.len];
     if (segment.len == 0 or std.mem.indexOfScalar(u8, segment, '/') != null) return null;
-    return .{ .commit = segment };
+    return if (diff) .{ .diff = segment } else .{ .commit = segment };
 }
 
 pub fn handle(
@@ -108,6 +114,7 @@ pub fn handle(
                     const failure = switch (matched.resource) {
                         .list => try writeList(repo_kind, repo.self_repo_opts, &arena, repo, io, allocator, context, query, &body.writer),
                         .commit => |oid| try writeCommit(repo_kind, repo.self_repo_opts, &arena, repo, io, allocator, context, oid, &body.writer),
+                        .diff => |oid| try api_diff.writeDiff(repo_kind, repo.self_repo_opts, &arena, repo, io, allocator, oid, query, &body.writer),
                     };
                     if (failure) |err| return api.respondError(request, allocator, err, .{});
                 },

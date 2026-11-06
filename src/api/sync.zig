@@ -155,7 +155,7 @@ fn readConflicts(
 
     const resolved = opened.resolved;
     const issues = try ui.Repo.Issues.init(repo_kind, repo_opts, arena, repo, io, null, resolved.identity, "", "", "", 0, "", .conflicts, ui.Repo.tabViewer(opened.handle, resolved.repo, .issue), .{ .shown = conflicts_shown, .others = 0 });
-    const patches = try ui.Repo.Patches.init(repo_kind, repo_opts, arena, repo, io, null, &opened.session, resolved.repo_id, resolved.identity, "", "", "", "", 0, "", .conflicts, ui.Repo.tabViewer(opened.handle, resolved.repo, .patch));
+    const patches = try ui.Repo.Patches.init(repo_kind, repo_opts, arena, repo, io, null, &opened.session, resolved.repo_id, resolved.identity, "", "", "", "", 0, "", .conflicts, ui.Repo.tabViewer(opened.handle, resolved.repo, .patch), .{ .others = 0 });
     const items = try aa.alloc(api_thread.Summary(evt.Issue.Status), issues.conflicts.items.len);
     for (items, issues.conflicts.items) |*item, *entry| item.* = try api_thread.summary(aa, entry, "");
     return .{

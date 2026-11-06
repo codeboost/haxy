@@ -182,22 +182,7 @@ pub fn resolveAt(
 
 /// the patch revision `id_hex` names, as `Files.readPatchRev` reads it, but
 /// in an xit repo's snapshot `moment` (a git repo's events have no snapshots)
-pub fn readPatchRevAt(
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    arena: *std.heap.ArenaAllocator,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    moment: anytype,
-    id_hex: []const u8,
-) !?evt.PatchRev.Record {
-    if (comptime repo_kind == .git) return Files.readPatchRev(repo_kind, repo_opts, arena, repo, io, gpa, id_hex);
-    const id = evt.parseEventId(id_hex) catch return null;
-    const events = evt.currentMomentFromRepoMoment(repo_opts.hash, moment.*) catch return null;
-    const record = (try evt.PatchRev.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, events, arena, &id)) orelse return null;
-    return if (record.removed) null else record;
-}
+pub const readPatchRevAt = Files.readPatchRevAt;
 
 // a full object id in lowercase hex, as haxy writes them
 fn isOid(text: []const u8, hex_len: usize) bool {

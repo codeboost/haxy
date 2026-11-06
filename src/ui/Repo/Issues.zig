@@ -62,6 +62,8 @@ pub const FieldConflict = struct {
 // the selected issue's conflict, read for the resolve view. ours is the live
 // record; the chunks split the description against the merge base.
 pub const Conflict = struct {
+    // what a resolution names to resolve this conflict and no later one
+    conflict_revision: evt.ConflictRevision = @splat(0),
     title: ?FieldConflict = null,
     labels: ?FieldConflict = null,
     description: ?struct {

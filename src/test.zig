@@ -4,6 +4,7 @@ comptime {
     _ = @import("test/api_assignees.zig");
     _ = @import("test/api_attachments.zig");
     _ = @import("test/api_commits.zig");
+    _ = @import("test/api_conflicts.zig");
     _ = @import("test/api_diff.zig");
     _ = @import("test/api_discovery.zig");
     _ = @import("test/api_events.zig");
@@ -28,6 +29,7 @@ comptime {
     _ = @import("test/ssh.zig");
     _ = @import("test/sync.zig");
     _ = @import("test/thread_write.zig");
+    _ = @import("test/conflicts.zig");
     _ = @import("test/ui.zig");
     _ = @import("test/undo.zig");
 }

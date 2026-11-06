@@ -7,6 +7,7 @@ const evt = @import("./event.zig");
 const api = @import("./api.zig");
 const api_account = @import("./api/account.zig");
 const api_assignees = @import("./api/assignees.zig");
+const api_conflicts = @import("./api/conflicts.zig");
 const api_commits = @import("./api/commits.zig");
 const api_discovery = @import("./api/discovery.zig");
 const api_events = @import("./api/events.zig");
@@ -258,6 +259,7 @@ fn routeApiRequest(
     if (api_notifications.threadRoute(path, "issues")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_issues.comment_kind);
     if (api_notifications.threadRoute(path, "discussions")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_discussions.comment_kind);
     if (api_notifications.threadRoute(path, "patches")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_patches.comment_kind);
+    if (api_conflicts.route(path)) |route| return api_conflicts.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_assignees.route(path)) |route| return api_assignees.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route);
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
@@ -1889,30 +1891,6 @@ fn handleCommentEdit(
     });
 }
 
-fn updateThread(
-    comptime Event: type,
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    host: Host,
-    repo_base: []const u8,
-    id: *const [evt.event_id_size]u8,
-    update: Event.Update,
-    author: evt.CommitAuthor,
-) !void {
-    const request_repo = (try requestRepoSource(io, allocator, host, repo_base)) orelse return error.NotFound;
-    defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try Event.update(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, id, update, author),
-            }
-        },
-    }
-}
-
 const RemoveParts = struct {
     repo_base: []const u8,
     kind: evt.EventKind,
@@ -2232,7 +2210,7 @@ fn handleThreadResolve(
 
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
-    const author = ((try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .write, parts.thread_kind)) orelse return).author;
+    const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .write, parts.thread_kind)) orelse return;
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
@@ -2274,18 +2252,20 @@ fn handleThreadResolve(
     };
     const not_found = if (parts.thread_kind == .patch) "patch not found" else "issue not found";
 
+    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRepoNotFound(request);
+    defer request_repo.deinit(allocator);
     (switch (parts.thread_kind) {
-        .issue => updateThread(evt.Issue, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .resolve = .{
+        .issue => thread_write.resolve(evt.Issue, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .hunks = hunks.items,
-        } }, author),
-        .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .resolve = .{
+        }),
+        .patch => thread_write.resolve(evt.Patch, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .hunks = hunks.items,
             .theirs = theirs,
-        } }, author),
+        }),
         else => unreachable,
     }) catch |err| switch (err) {
         error.NotFound => {
@@ -2295,8 +2275,10 @@ fn handleThreadResolve(
             });
             return;
         },
-        // invalid fields send the user back to the resolve form
-        error.InvalidFields => {
+        error.Forbidden => return respondForbidden(request),
+        // invalid fields, or a patch that changed meanwhile, send the user
+        // back to the resolve form
+        error.InvalidFields, error.Stale => {
             const form_location = try allocator.print("{s}/resolve", .{base});
             defer allocator.free(form_location);
             try request.respond("", .{

@@ -80,7 +80,8 @@ pub fn readConflict(
             our_field_oids = try DB.SortedMap(.read_only).init(cursor);
     }
 
-    var conflict = Data.Conflict{};
+    var conflict = Data.Conflict{ .conflict_revision = try evt.conflictRevision(Event, repo_opts.hash, arena, ours.event, conflict_entry) };
+    if (comptime @hasField(Data.Conflict, "events")) conflict.events = .{ .ours = ours.event, .theirs = theirs.event };
     var field_iter = std.mem.splitScalar(u8, conflicted_fields, ' ');
     while (field_iter.next()) |field| {
         const our_author = try oidAuthor(repo_kind, repo_opts, arena, repo, io, admin_moment, try readFieldOid(repo_opts.hash, our_field_oids, field));
@@ -2918,7 +2919,7 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const src = self.data.repo_source orelse return;
             const entry = self.data.selectedThread() orelse return;
-            const author = ((try self.session.authorize(self.data.identity, .write, kind)) orelse return).author;
+            const actor = (try self.session.authorize(self.data.identity, .write, kind)) orelse return;
             const form = self.formBox() orelse return;
 
             // gather the inputs by name; the d<n> hunk inputs appear in chunk order
@@ -2947,29 +2948,17 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             };
 
             const id_bytes = try evt.parseEventId(entry.id);
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| {
-                            var resolution: Event.Resolve = .{
-                                .title = title,
-                                .labels = labels,
-                                .hunks = hunks.items,
-                            };
-                            if (comptime @hasField(Event.Resolve, "theirs")) resolution.theirs = self.data.theirs_picks;
-                            const change = Event.Update{ .resolve = resolution };
-                            Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, change, author) catch |err| switch (err) {
-                                // leave the form up for correction
-                                error.InvalidFields => return,
-                                else => |e| return e,
-                            };
-                        },
-                    }
-                },
-            }
+            var resolution: Event.Resolve = .{
+                .title = title,
+                .labels = labels,
+                .hunks = hunks.items,
+            };
+            if (comptime @hasField(Event.Resolve, "theirs")) resolution.theirs = self.data.theirs_picks;
+            thread_write.resolve(Event, self.session.eventHost(), io, allocator, src, actor, &id_bytes, resolution) catch |err| switch (err) {
+                // leave the form up for correction
+                error.InvalidFields => return,
+                else => |e| return e,
+            };
 
             const route = listRoute(self.data.identity, entryStatus(entry.*), entry.id) orelse return;
             try self.session.navigate(route);

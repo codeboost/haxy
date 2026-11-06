@@ -42,11 +42,32 @@ pub fn writeBranchPatch(
     expected_patch: ?evt.Patch,
     author: evt.CommitAuthor,
 ) !void {
+    return writeBranchPatchGuarded(host, repo_kind, repo_opts, io, allocator, repo, id, patch, expected_patch, author, null);
+}
+
+/// `writeBranchPatch`, with `guard.check(events moment)` run first where the
+/// write reads the patch it replaces: inside a xit repo's transaction, or
+/// against a git repo's event db (whose writers serialize through
+/// thread_write's lock). an error from the check writes nothing.
+pub fn writeBranchPatchGuarded(
+    host: evt.Host,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: [evt.event_id_size * 2]u8,
+    patch: evt.Patch,
+    expected_patch: ?evt.Patch,
+    author: evt.CommitAuthor,
+    guard: anytype,
+) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     // write git events through the local event database
     if (repo_kind == .git) {
+        try checkGitGuard(repo_opts, io, allocator, repo, guard);
         // reject edits based on an outdated patch
         if (expected_patch) |expected| {
             const current = (try evt.readFromRepo(evt.Patch, repo_kind, repo_opts, io, allocator, &arena, repo, &try evt.parseEventId(&id))) orelse return error.PatchOutOfDate;
@@ -57,45 +78,75 @@ pub fn writeBranchPatch(
         const events = try branchEvents(repo_kind, repo_opts, .{ .core = &repo.core, .extra = .{} }, io, &arena, id, patch, author);
         try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
     } else {
-        const DB = evt.EventDB(repo_opts.hash);
-
-        const first_parent = try eventsFirstParent(repo_kind, repo_opts, io, allocator, repo);
-
-        // commit the patch, mergeability, and undo record together
-        {
-            const Ctx = struct {
-                repo: *rp.Repo(repo_kind, repo_opts),
-                io: std.Io,
-                arena: *std.heap.ArenaAllocator,
-                id: [evt.event_id_size * 2]u8,
-                patch: evt.Patch,
-                expected_patch: ?evt.Patch,
-                author: evt.CommitAuthor,
-                host: evt.Host,
-                first_parent: ?[1][hash.hexLen(repo_opts.hash)]u8,
-
-                pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
-                    var moment = try DB.HashMap(.read_write).init(cursor.*);
-                    const state = rp.Repo(repo_kind, repo_opts).State(.read_write){ .core = &ctx.repo.core, .extra = .{ .moment = &moment } };
-
-                    try writeBranchPatchInTransaction(ctx.host, repo_opts, state, &moment, ctx.io, ctx.arena, ctx.id, ctx.patch, ctx.expected_patch, ctx.author, ctx.first_parent);
-
-                    // record the user action for undo
-                    try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = evt.undo_action } });
-                }
-            };
-
-            try repo.core.db_file.lock(io, .exclusive);
-            defer repo.core.db_file.unlock(io);
-
-            const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
-            try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{ .repo = repo, .io = io, .arena = &arena, .id = id, .patch = patch, .expected_patch = expected_patch, .author = author, .host = host, .first_parent = first_parent });
-        }
+        try writeXitBranchPatch(host, repo_opts, io, allocator, &arena, repo, id, patch, expected_patch, author, guard);
         if (host == .server) {
             notify.subscribeParticipants(io, allocator, host.server, repo.core.work_path, &.{.{ .id = id, .author = author, .event = .{ .patch = patch } }});
             evt.bumpRepoActivityAt(io, allocator, host.server, repo.core.work_path);
         }
     }
+}
+
+// `guard.check` on a git repo's consumed events as they are now (null
+// before any), unless there is no guard
+fn checkGitGuard(
+    comptime repo_opts: rp.RepoOpts(.git),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(.git, repo_opts),
+    guard: anytype,
+) !void {
+    if (@TypeOf(guard) == @TypeOf(null)) return;
+    var event_db = (try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir)) orelse return guard.check(null);
+    defer event_db.deinit(io, allocator);
+    return guard.check(evt.currentMomentFromDb(repo_opts.hash, event_db.db) catch null);
+}
+
+// commits the patch, its mergeability and the undo record in one transaction
+fn writeXitBranchPatch(
+    host: evt.Host,
+    comptime repo_opts: rp.RepoOpts(.xit),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(.xit, repo_opts),
+    id: [evt.event_id_size * 2]u8,
+    patch: evt.Patch,
+    expected_patch: ?evt.Patch,
+    author: evt.CommitAuthor,
+    guard: anytype,
+) !void {
+    const DB = evt.EventDB(repo_opts.hash);
+    const Guard = if (@TypeOf(guard) == @TypeOf(null)) void else @TypeOf(guard);
+    const Ctx = struct {
+        repo: *rp.Repo(.xit, repo_opts),
+        io: std.Io,
+        arena: *std.heap.ArenaAllocator,
+        id: [evt.event_id_size * 2]u8,
+        patch: evt.Patch,
+        expected_patch: ?evt.Patch,
+        author: evt.CommitAuthor,
+        host: evt.Host,
+        first_parent: ?[1][hash.hexLen(repo_opts.hash)]u8,
+        guard: Guard,
+
+        pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
+            var moment = try DB.HashMap(.read_write).init(cursor.*);
+            const state = rp.Repo(.xit, repo_opts).State(.read_write){ .core = &ctx.repo.core, .extra = .{ .moment = &moment } };
+            if (Guard != void) try ctx.guard.check(evt.currentMomentFromRepoMoment(repo_opts.hash, moment.readOnly()) catch null);
+
+            try writeBranchPatchInTransaction(ctx.host, repo_opts, state, &moment, ctx.io, ctx.arena, ctx.id, ctx.patch, ctx.expected_patch, ctx.author, ctx.first_parent);
+
+            // record the user action for undo
+            try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = evt.undo_action } });
+        }
+    };
+    const first_parent = try eventsFirstParent(.xit, repo_opts, io, allocator, repo);
+
+    try repo.core.db_file.lock(io, .exclusive);
+    defer repo.core.db_file.unlock(io);
+
+    const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+    try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{ .repo = repo, .io = io, .arena = arena, .id = id, .patch = patch, .expected_patch = expected_patch, .author = author, .host = host, .first_parent = first_parent, .guard = if (Guard == void) {} else guard });
 }
 
 // write one branch patch's revision into a transaction the caller owns. the

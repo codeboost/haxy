@@ -207,6 +207,10 @@ pub const FieldConflict = struct {
 // the selected patch's conflict, read for the resolve view. ours is the live
 // record; the chunks split the description against the merge base.
 pub const Conflict = struct {
+    // what a resolution names to resolve this conflict and no later one
+    conflict_revision: evt.ConflictRevision = @splat(0),
+    // both sides' whole patches, whose atomic fields the API names exactly
+    events: ?struct { ours: evt.Patch, theirs: evt.Patch } = null,
     title: ?FieldConflict = null,
     labels: ?FieldConflict = null,
     status: ?FieldConflict = null,

@@ -180,11 +180,13 @@ fn statusSet(
 
 // the resolve form's inputs: null fields keep the live values, `hunks` holds
 // the description conflict hunks' resolutions in chunk order (absent
-// trailing ones keep our side)
+// trailing ones keep our side). with a `revision` (`evt.conflictRevision`),
+// only the conflict still at it is resolved, else error.Stale.
 pub const Resolve = struct {
     title: ?[]const u8 = null,
     labels: ?[]const u8 = null,
     hunks: []const []const u8 = &.{},
+    revision: ?evt.ConflictRevision = null,
 };
 
 // what an update replaces on an issue: its status, its content, or — for a
@@ -295,16 +297,23 @@ pub fn updateAt(
     // and the revision is checked against it. a git repo's events have no
     // transaction; its writers serialize the read and the write instead
     // (thread_write). a resolution's fields come from the conflict entry read
-    // above, so it is written as built.
-    if (repo_kind == .xit and change != .resolve) {
-        return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, Rebase(repo_opts.hash){
+    // above, so it is written as built, while its conflict stays as read.
+    if (repo_kind == .xit) switch (change) {
+        .resolve => |resolve| if (resolve.revision) |expected| {
+            return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, evt.ConflictCheck(Self, repo_opts.hash){
+                .arena = &arena,
+                .id = id_bytes,
+                .revision = expected,
+            });
+        },
+        else => return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, Rebase(repo_opts.hash){
             .arena = &arena,
             .id = id_bytes,
             .change = change,
             .revision = revision,
             .event = &events[0],
-        });
-    }
+        }),
+    };
     try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
 }
 
@@ -350,7 +359,8 @@ fn Rebase(comptime hash_kind: hash.HashKind) type {
 // resolutions against the conflict entry. the chunking is deterministic: the
 // entry holds immutable slots and any event since would have removed it, so
 // the hunks match what the resolve form was built from. a settled or
-// unreadable entry keeps the live description.
+// unreadable entry keeps the live description, unless the resolution names
+// the conflict's revision, which must still be the entry's (error.Stale).
 fn resolveFields(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
@@ -374,15 +384,18 @@ fn resolveFields(
     const moment = (if (event_db_maybe) |*event_db|
         evt.currentMomentFromDb(repo_opts.hash, event_db.db)
     else if (repo_kind == .git)
-        return updated
+        return settled(resolve, updated)
     else
-        evt.currentMoment(repo_opts, repo)) catch return updated;
+        evt.currentMoment(repo_opts, repo)) catch return settled(resolve, updated);
 
-    const conflicts_cursor = (try moment.getCursor(hash.hashInt(repo_opts.hash, conflicts_key))) orelse return updated;
+    const conflicts_cursor = (try moment.getCursor(hash.hashInt(repo_opts.hash, conflicts_key))) orelse return settled(resolve, updated);
     const conflicts = try DB.SortedMap(.read_only).init(conflicts_cursor);
     const order_key = evt.orderKeyDesc(live.created_order, id_bytes);
-    const conflict_cursor = (try conflicts.getCursor(&order_key)) orelse return updated;
+    const conflict_cursor = (try conflicts.getCursor(&order_key)) orelse return settled(resolve, updated);
     const entry = try DB.HashMap(.read_only).init(conflict_cursor);
+    if (resolve.revision) |expected| {
+        if (!std.mem.eql(u8, &try evt.conflictRevision(Self, repo_opts.hash, arena, live.event, entry), &expected)) return error.Stale;
+    }
 
     const fields_cursor = (try entry.getCursor(hash.hashInt(repo_opts.hash, evt.conflicted_fields_key))) orelse return updated;
     const conflicted_fields = try fields_cursor.readBytesAlloc(aa, null);
@@ -407,6 +420,13 @@ fn resolveFields(
         hunk_index += 1;
     }
     updated.description = try diff3.assemble(aa, chunks, resolutions.items);
+    return updated;
+}
+
+// a resolution of a conflict there is none of: refused when it names the
+// conflict's revision, else the live fields with the submitted ones applied
+fn settled(resolve: Resolve, updated: Self) !Self {
+    if (resolve.revision != null) return error.Stale;
     return updated;
 }
 

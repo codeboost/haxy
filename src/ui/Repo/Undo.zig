@@ -167,7 +167,13 @@ fn eventDetail(
         const button = try undoneButton(opts, arena, core, haxy_moment, identity, parsed.value);
         return .{ .action = undo_action_kind, .description = button.text, .buttons = try aa.dupe(DetailButton, &.{button}) };
     }
-    if (std.mem.eql(u8, record.action_kind, evt.merge_undo_action)) return .{ .action = "merge events", .description = "merged the events ref from a remote" };
+    if (std.mem.eql(u8, record.action_kind, evt.merge_undo_action)) {
+        // a sync's merge consumes the events it brought in its own transaction
+        const count = try momentEventCount(opts, core, moment, history_index) orelse 0;
+        const buttons: []const DetailButton = if (count > 0) try aa.dupe(DetailButton, &.{try eventsButton(arena, identity, history_index, count)}) else &.{};
+        return .{ .action = "merge events", .description = "merged the events ref from a remote", .buttons = buttons };
+    }
+    if (std.mem.eql(u8, record.action_kind, evt.restore_fetch_undo_action)) return .{ .action = "restore fetch", .description = "put the remote's events ref back after a sync couldn't merge what it fetched" };
     if (std.mem.eql(u8, record.action_kind, pch.merge_undo_action)) return .{ .action = "merge patch", .description = "merged a patch into its target branch" };
     if (std.mem.eql(u8, record.action_kind, fork.undo_action)) return .{ .action = "fork", .description = "created a fork to draft a patch in" };
     if (std.mem.eql(u8, record.action_kind, copy.undo_action)) return .{ .action = "copy", .description = "created the repo as a copy of another" };

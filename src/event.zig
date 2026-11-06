@@ -662,6 +662,9 @@ pub fn remove(
 
 pub const undo_action = "haxy/events";
 pub const merge_undo_action = "haxy/merge-events";
+// a sync put the remote-tracking events ref back after what it fetched
+// couldn't be merged
+pub const restore_fetch_undo_action = "haxy/restore-fetched-events";
 
 // index that tracks the events consumed in a given haxy moment
 pub const moment_index_to_event_id_set_key = "moment-index->event-id-set";
@@ -883,6 +886,136 @@ pub fn mergeEvents(
                 error.CancelTransaction => {},
                 else => |e| return e,
             };
+        },
+    }
+}
+
+// `mergeEvents`, then consume the merged events branch into the db the
+// repo's views read, as one step: when the merged history can't be consumed
+// (a fetched commit that isn't an event Haxy can read), the events branch
+// stays where it was and the event db as it was, so later reads keep working
+// and nothing unreadable is pushed from here. a xit repo merges and consumes
+// in one transaction. a git repo's branch is a file beside its standalone
+// event db: the db's exclusive lock, which every read of it waits on, is held
+// from before the branch moves until it is consumed or moved back.
+pub fn mergeAndConsumeEvents(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    remote_ref: rf.Ref,
+) !void {
+    switch (repo_kind) {
+        .git => {
+            var event_db = try LocalEventDB(repo_opts.hash).open(io, allocator, repo.core.repo_dir);
+            defer event_db.deinit(io, allocator);
+
+            const state: rp.Repo(.git, repo_opts).State(.read_write) = .{ .core = &repo.core, .extra = .{} };
+            const before = try rf.readRecur(.git, repo_opts, state.readOnly(), io, .{ .ref = events_ref });
+            const moved = try mergeEventsInTransaction(.git, repo_opts, state, io, allocator, remote_ref);
+            event_db.consume(.git, repo_opts, io, allocator, repo, events_ref) catch |err| {
+                if (moved) try setRef(.git, repo_opts, state, io, events_ref, if (before) |*oid| oid else null);
+                return err;
+            };
+        },
+        .xit => {
+            const DB = rp.Repo(.xit, repo_opts).DB;
+            const State = rp.Repo(.xit, repo_opts).State;
+
+            const Ctx = struct {
+                core: *rp.Repo(.xit, repo_opts).Core,
+                io: std.Io,
+                allocator: std.mem.Allocator,
+                remote_ref: rf.Ref,
+
+                pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
+                    var moment = try DB.HashMap(.read_write).init(cursor.*);
+                    const state = State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    const moved = try mergeEventsInTransaction(.xit, repo_opts, state, ctx.io, ctx.allocator, ctx.remote_ref);
+                    // a tip consumed before cancels the consume; the merge
+                    // that moved the branch there still stands
+                    _ = consumeInTransaction(.repo, .xit, repo_opts, state, &moment, ctx.io, ctx.allocator, events_ref) catch |err| switch (err) {
+                        error.CancelTransaction => if (!moved) return err,
+                        else => |e| return e,
+                    };
+                    // the merge record covers the events it consumed (the
+                    // undo view counts them)
+                    try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = merge_undo_action } });
+                }
+            };
+
+            try repo.core.db_file.lock(io, .exclusive);
+            defer repo.core.db_file.unlock(io);
+
+            const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+            history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{
+                .core = &repo.core,
+                .io = io,
+                .allocator = allocator,
+                .remote_ref = remote_ref,
+            }) catch |err| switch (err) {
+                error.CancelTransaction => {},
+                else => |e| return e,
+            };
+        },
+    }
+}
+
+// points `ref` at `oid`, or removes it when `oid` is null (and it exists)
+fn setRef(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    state: rp.Repo(repo_kind, repo_opts).State(.read_write),
+    io: std.Io,
+    ref: rf.Ref,
+    oid: ?*const [hash.hexLen(repo_opts.hash)]u8,
+) !void {
+    var ref_path_buffer: [rf.MAX_REF_CONTENT_SIZE]u8 = undefined;
+    const ref_path = try ref.toPath(&ref_path_buffer);
+    if (oid) |value| return rf.write(repo_kind, repo_opts, state, io, ref_path, .{ .oid = value });
+    rf.remove(repo_kind, repo_opts, state, io, ref_path) catch |err| switch (err) {
+        error.RefNotFound => {},
+        else => |e| return e,
+    };
+}
+
+/// points the remote-tracking events ref `ref` back at `oid` (or removes it
+/// when null), in a transaction of its own for a xit repo: a sync puts it back
+/// where it was when what it fetched couldn't be merged
+pub fn restoreFetchedRef(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    ref: rf.Ref,
+    oid: ?*const [hash.hexLen(repo_opts.hash)]u8,
+) !void {
+    switch (repo_kind) {
+        .git => try setRef(.git, repo_opts, .{ .core = &repo.core, .extra = .{} }, io, ref, oid),
+        .xit => {
+            const DB = rp.Repo(.xit, repo_opts).DB;
+            const State = rp.Repo(.xit, repo_opts).State;
+
+            const Ctx = struct {
+                core: *rp.Repo(.xit, repo_opts).Core,
+                io: std.Io,
+                ref: rf.Ref,
+                oid: ?*const [hash.hexLen(repo_opts.hash)]u8,
+
+                pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
+                    var moment = try DB.HashMap(.read_write).init(cursor.*);
+                    const state = State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    try setRef(.xit, repo_opts, state, ctx.io, ctx.ref, ctx.oid);
+                    try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = restore_fetch_undo_action } });
+                }
+            };
+
+            try repo.core.db_file.lock(io, .exclusive);
+            defer repo.core.db_file.unlock(io);
+
+            const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+            try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{ .core = &repo.core, .io = io, .ref = ref, .oid = oid });
         },
     }
 }

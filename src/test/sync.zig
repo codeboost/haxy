@@ -86,6 +86,35 @@ const Fixture = struct {
         return try local.readRef(io, evt.events_ref);
     }
 
+    // commits something that is no event on top of the remote's events branch
+    fn addUnreadableRemoteCommit(self: *const Fixture) !void {
+        const io = std.testing.io;
+        const allocator = std.testing.allocator;
+        var remote = try Repo.open(io, allocator, .{ .path = self.remote_path });
+        defer remote.deinit(io, allocator);
+        _ = try remote.commitAtRef(io, allocator, .{ .message = "not an event", .author = "someone <someone@haxy> 1700000000 +0000", .committer = "someone <someone@haxy> 1700000000 +0000" }, null, evt.events_ref);
+    }
+
+    fn remoteTip(self: *const Fixture) !?[40]u8 {
+        const io = std.testing.io;
+        const allocator = std.testing.allocator;
+        var remote = try Repo.open(io, allocator, .{ .path = self.remote_path });
+        defer remote.deinit(io, allocator);
+        return try remote.readRef(io, evt.events_ref);
+    }
+
+    // how many issues are open, as the TUI's issues tab reads them after
+    // bringing the event db up to date with the events branch
+    fn openIssueCount(self: *const Fixture, arena: *std.heap.ArenaAllocator) !usize {
+        const io = std.testing.io;
+        const allocator = std.testing.allocator;
+        var local = try Repo.open(io, allocator, .{ .path = self.local_path });
+        defer local.deinit(io, allocator);
+        try evt.consume(.local, .repo, .git, .{}, io, allocator, &local, evt.events_ref, &.{});
+        const issues = try ui.Repo.Issues.init(.git, .{}, arena, &local, io, null, "", "", "", "", 0, "", .open, null, .{});
+        return issues.open.count;
+    }
+
     fn status(self: *const Fixture, arena: std.mem.Allocator) !Events.SyncStatus {
         const io = std.testing.io;
         var local = try Repo.open(io, std.testing.allocator, .{ .path = self.local_path });
@@ -247,29 +276,46 @@ fn statusJson(arena: *std.heap.ArenaAllocator, source: ui.RepoSource, record: ?*
     return try std.json.parseFromSliceLeaky(std.json.Value, aa, body.written(), .{});
 }
 
-test "a sync whose fetched events can't be read reports its merge failure, and the status still answers" {
+test "a first sync whose fetched events can't be read reports its merge failure and leaves no events here" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
     var fixture = try Fixture.init(true);
     defer fixture.deinit();
-    {
-        // the remote's events branch holds a commit that is no event
-        var remote = try Repo.open(io, allocator, .{ .path = fixture.remote_path });
-        defer remote.deinit(io, allocator);
-        _ = try remote.commitAtRef(io, allocator, .{ .message = "not an event", .author = "someone <someone@haxy> 1700000000 +0000", .committer = "someone <someone@haxy> 1700000000 +0000" }, null, evt.events_ref);
-    }
+    // the remote's events branch holds a commit that is no event
+    try fixture.addUnreadableRemoteCommit();
 
     var record: Events.LastSync = undefined;
     var result = try Events.runSync(io, allocator, fixture.source(), &record);
     defer result.deinit(allocator);
     try std.testing.expectEqual(Events.SyncStage.merge, result.failed.stage);
+    try std.testing.expectEqual(null, try fixture.localTip());
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const status = try statusJson(&arena, fixture.source(), &record);
     try std.testing.expectEqualStrings("merge", status.object.get("last").?.object.get("failure").?.object.get("stage").?.string);
-    // the conflicts can't be read from events that can't be consumed
+    // what was fetched isn't read in place of events this repo lacks: the
+    // remote's ref is back where it was (never fetched), and the conflicts read
+    try std.testing.expectEqualStrings("not_fetched", status.object.get("state").?.string);
+    try std.testing.expect(status.object.get("conflicts").? != .null);
+    try std.testing.expectEqual(0, try fixture.openIssueCount(&arena));
+}
+
+test "the status still answers, with null conflicts, for an events branch that was already unreadable" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var fixture = try Fixture.init(false);
+    defer fixture.deinit();
+    {
+        var local = try Repo.open(io, allocator, .{ .path = fixture.local_path });
+        defer local.deinit(io, allocator);
+        _ = try local.commitAtRef(io, allocator, .{ .message = "not an event", .author = "someone <someone@haxy> 1700000000 +0000", .committer = "someone <someone@haxy> 1700000000 +0000" }, null, evt.events_ref);
+    }
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const status = try statusJson(&arena, fixture.source(), null);
     try std.testing.expectEqual(std.json.Value.null, status.object.get("conflicts").?);
+    try std.testing.expectEqualStrings("not_fetched", status.object.get("state").?.string);
 }
 
 test "the status of a xit repo answers while a sync holds its database" {
@@ -325,4 +371,114 @@ test "a remote whose name isn't utf-8 is named for display, with U+FFFD" {
     try std.testing.expectEqualStrings("caf\u{FFFD}", (try api_sync.remoteDisplay(arena.allocator(), "caf\xe9")).?);
     try std.testing.expectEqualStrings("origin", (try api_sync.remoteDisplay(arena.allocator(), "origin")).?);
     try std.testing.expectEqual(null, try api_sync.remoteDisplay(arena.allocator(), null));
+}
+
+test "a sync whose fetched events can't be read leaves the events branch, keeps local changes and pushes nothing" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var fixture = try Fixture.init(true);
+    defer fixture.deinit();
+    try fixture.addIssue(1, "synced");
+    {
+        var first = try Events.runSync(io, allocator, fixture.source(), null);
+        defer first.deinit(allocator);
+        try std.testing.expectEqual(.synced, std.meta.activeTag(first));
+    }
+    try fixture.addUnreadableRemoteCommit();
+    try fixture.addIssue(2, "local since");
+    const local_before = (try fixture.localTip()) orelse return error.TestExpectedEqual;
+    const remote_before = (try fixture.remoteTip()) orelse return error.TestExpectedEqual;
+
+    var record: Events.LastSync = undefined;
+    var result = try Events.runSync(io, allocator, fixture.source(), &record);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(Events.SyncStage.merge, result.failed.stage);
+
+    // the events branch stayed where it was, and reads of it still work
+    try std.testing.expectEqualStrings(&local_before, &((try fixture.localTip()) orelse return error.TestExpectedEqual));
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    try std.testing.expectEqual(2, try fixture.openIssueCount(&arena));
+    // nothing was pushed
+    try std.testing.expectEqualStrings(&remote_before, &((try fixture.remoteTip()) orelse return error.TestExpectedEqual));
+
+    // the status still answers, conflicts included, and the local change still
+    // needs a sync
+    const status = try statusJson(&arena, fixture.source(), &record);
+    try std.testing.expectEqualStrings("merge", status.object.get("last").?.object.get("failure").?.object.get("stage").?.string);
+    try std.testing.expect(status.object.get("conflicts").? != .null);
+    try std.testing.expectEqualStrings("sync_needed", status.object.get("state").?.string);
+
+    // a second sync fails the same way, and still pushes nothing
+    var again = try Events.runSync(io, allocator, fixture.source(), null);
+    defer again.deinit(allocator);
+    try std.testing.expectEqual(Events.SyncStage.merge, again.failed.stage);
+    try std.testing.expectEqualStrings(&local_before, &((try fixture.localTip()) orelse return error.TestExpectedEqual));
+    try std.testing.expectEqualStrings(&remote_before, &((try fixture.remoteTip()) orelse return error.TestExpectedEqual));
+    try std.testing.expectEqual(2, try fixture.openIssueCount(&arena));
+}
+
+test "a xit repo's sync leaves its events branch and event db alone when the fetched events can't be read" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var fixture = try Fixture.init(true);
+    defer fixture.deinit();
+    const XitRepo = xit.repo.Repo(.xit, .{});
+    const path = try std.Io.Dir.path.join(allocator, &.{ fixture.temp_path, "xit" });
+    defer allocator.free(path);
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    {
+        var repo = try XitRepo.init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+        try repo.addConfig(io, allocator, .{ .name = "user.name", .value = "user" });
+        try repo.addConfig(io, allocator, .{ .name = "user.email", .value = "user@haxy" });
+        try repo.addRemote(io, allocator, .{ .name = "origin", .value = fixture.remote_path });
+    }
+    const addIssue = struct {
+        fn run(repo_path: []const u8, byte: u8) !void {
+            var repo = try XitRepo.open(std.testing.io, std.testing.allocator, .{ .path = repo_path });
+            defer repo.deinit(std.testing.io, std.testing.allocator);
+            const id: [evt.event_id_size]u8 = @splat(byte);
+            try evt.consume(.local, .repo, .xit, .{}, std.testing.io, std.testing.allocator, &repo, evt.events_ref, &.{.{
+                .id = std.fmt.bytesToHex(id, .lower),
+                .author = .{ .name = "haxy", .email = "user@haxy" },
+                .event = .{ .issue = .{ .title = "issue", .description = "", .labels = "" } },
+            }});
+        }
+    }.run;
+    const tip = struct {
+        fn run(repo_path: []const u8) !?[40]u8 {
+            var repo = try XitRepo.open(std.testing.io, std.testing.allocator, .{ .path = repo_path });
+            defer repo.deinit(std.testing.io, std.testing.allocator);
+            return try repo.readRef(std.testing.io, evt.events_ref);
+        }
+    }.run;
+    const openIssues = struct {
+        fn run(arena: *std.heap.ArenaAllocator, repo_path: []const u8) !usize {
+            var repo = try XitRepo.open(std.testing.io, std.testing.allocator, .{ .path = repo_path });
+            defer repo.deinit(std.testing.io, std.testing.allocator);
+            try evt.consume(.local, .repo, .xit, .{}, std.testing.io, std.testing.allocator, &repo, evt.events_ref, &.{});
+            return (try ui.Repo.Issues.init(.xit, .{}, arena, &repo, std.testing.io, null, "", "", "", "", 0, "", .open, null, .{})).open.count;
+        }
+    }.run;
+
+    try addIssue(path, 1);
+    {
+        var first = try Events.runSync(io, allocator, source, null);
+        defer first.deinit(allocator);
+        try std.testing.expectEqual(.synced, std.meta.activeTag(first));
+    }
+    try fixture.addUnreadableRemoteCommit();
+    try addIssue(path, 2);
+    const local_before = (try tip(path)) orelse return error.TestExpectedEqual;
+    const remote_before = (try fixture.remoteTip()) orelse return error.TestExpectedEqual;
+
+    var result = try Events.runSync(io, allocator, source, null);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(Events.SyncStage.merge, result.failed.stage);
+    try std.testing.expectEqualStrings(&local_before, &((try tip(path)) orelse return error.TestExpectedEqual));
+    try std.testing.expectEqualStrings(&remote_before, &((try fixture.remoteTip()) orelse return error.TestExpectedEqual));
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    try std.testing.expectEqual(2, try openIssues(&arena, path));
 }

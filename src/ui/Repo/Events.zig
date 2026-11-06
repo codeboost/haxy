@@ -975,15 +975,17 @@ pub fn syncStatus(
 }
 
 /// the step a sync failed at. what it leaves behind follows from the step:
-/// before the merge nothing changed; a failed push has merged the remote's
-/// events here without sending ours; a failed confirmation has sent them
-/// but couldn't re-read the remote. local events are never discarded.
+/// up to and including the merge nothing changed (a merge that fails, e.g.
+/// on fetched events Haxy can't read, moves neither the events branch nor the
+/// remote's ref); a failed push has merged the remote's events here without
+/// sending ours; a failed confirmation has sent them but couldn't re-read the
+/// remote. local events are never discarded.
 pub const SyncStage = enum {
     // finding the remote to reach
     remote,
     // fetching the remote's events
     fetch,
-    // merging them into the events branch
+    // merging them into the events branch, and reading the result
     merge,
     // pushing the merged events branch
     push,
@@ -1136,6 +1138,8 @@ fn recordSync(io: std.Io, result: SyncResult, copy_into: ?*LastSync) void {
 /// fetch the remote's events, merge them with the shared event merge rules,
 /// push the result, then fetch again so the remote's ref records it. only the
 /// events branch moves, so the code HEAD and work tree stay as they are.
+/// fetched events are merged only if the merged history can be read, so
+/// events Haxy can't read never reach the events branch or the remote.
 /// failures say which step failed; nothing here discards local events.
 /// error.SyncInProgress when another sync is running in this process.
 /// `record`, when given, gets this sync's record as `lastSync` keeps it.
@@ -1188,11 +1192,15 @@ fn runSyncLocked(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource
                     defer allocator.free(fetch_refspec);
                     var fetch_opts = fetch_transport_opts;
                     fetch_opts.refspecs = &.{fetch_refspec};
+                    const remote_ref: rf.Ref = .{ .kind = .{ .remote = remote_name }, .name = evt.events_ref.name };
+                    // where the remote's events stood as last fetched, which
+                    // a merge failure puts back
+                    const fetched_before = repo.readRef(io, remote_ref) catch |err|
+                        return .{ .failed = .{ .stage = .fetch, .err = err } };
                     message.clearRetainingCapacity();
                     repo.fetch(io, allocator, remote_name, fetch_opts) catch |err|
                         return try transportFailure(allocator, .fetch, err, &message);
 
-                    const remote_ref: rf.Ref = .{ .kind = .{ .remote = remote_name }, .name = evt.events_ref.name };
                     merge: {
                         // a local git repo's events have no transaction, so the
                         // merge holds the lock every shared event write takes
@@ -1208,10 +1216,21 @@ fn runSyncLocked(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource
                                 return .{ .failed = .{ .stage = .merge, .err = err } };
                             return .synced;
                         }
-                        if (remote_oid != null) evt.mergeEvents(repo_kind, repo_opts, io, allocator, repo, remote_ref) catch |err|
+                        if (remote_oid == null) {
+                            evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{}) catch |err|
+                                return .{ .failed = .{ .stage = .merge, .err = err } };
+                            break :merge;
+                        }
+                        // merged only if the result can be read: otherwise the
+                        // events branch and event db stay as they were, and the
+                        // remote's ref goes back to what was last merged, so a
+                        // repo with no events of its own doesn't read the
+                        // fetched ones instead. nothing is pushed.
+                        evt.mergeAndConsumeEvents(repo_kind, repo_opts, io, allocator, repo, remote_ref) catch |err| {
+                            evt.restoreFetchedRef(repo_kind, repo_opts, io, repo, remote_ref, if (fetched_before) |*oid| oid else null) catch |restore_err|
+                                std.log.warn("sync: couldn't restore the remote's events ref after a failed merge: {s}", .{@errorName(restore_err)});
                             return .{ .failed = .{ .stage = .merge, .err = err } };
-                        evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{}) catch |err|
-                            return .{ .failed = .{ .stage = .merge, .err = err } };
+                        };
                         break :merge;
                     }
 

@@ -186,7 +186,7 @@ const Last = struct {
             try json.objectField("stage");
             try json.write(@tagName(failure.stage));
             try json.objectField("message");
-            var message_buffer: [256]u8 = undefined;
+            var message_buffer: [512]u8 = undefined;
             try json.write(failureMessage(&message_buffer, failure.stage, failure.err));
             try json.objectField("remote_message");
             try json.write(failure.remote_message);
@@ -207,7 +207,7 @@ pub fn failureMessage(buffer: []u8, stage: Events.SyncStage, err: []const u8) []
         else
             std.fmt.bufPrint(buffer, "This repository has no remote to sync with, so nothing was synced.", .{}),
         .fetch => std.fmt.bufPrint(buffer, "Couldn't fetch the remote's events ({s}). Nothing changed here, and your local changes are kept.", .{err}),
-        .merge => std.fmt.bufPrint(buffer, "Fetched the remote's events but couldn't merge them ({s}). Your local changes are kept, and nothing was pushed.", .{err}),
+        .merge => std.fmt.bufPrint(buffer, "Fetched the remote's events but couldn't merge them ({s}). Nothing changed here and nothing was pushed; your local changes are kept. Haxy may be unable to read a commit on the remote's haxy/events branch (one not written by Haxy, or by a newer Haxy): fix the branch there, then sync again.", .{err}),
         .push => std.fmt.bufPrint(buffer, "Merged the remote's events here, but couldn't push yours ({s}). Your local changes are kept; sync again to send them.", .{err}),
         .confirm => std.fmt.bufPrint(buffer, "Pushed your events, but couldn't fetch the remote again to confirm ({s}), so the sync status may be out of date.", .{err}),
     };

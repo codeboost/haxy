@@ -101,8 +101,8 @@ pub fn handle(
 pub const issues_off: api.Error = .{ .code = .not_found, .message = "This repository doesn't use issues." };
 pub const no_such_issue: api.Error = .{ .code = .not_found, .message = "There is no issue with this id." };
 
-// an issue's comments, as the shared comment routes serve them
-const comment_kind: api_comments.Kind = .{ .kind = .issue, .section = .issues, .noun = "issue", .plural = "issues", .off = issues_off, .no_such_thread = no_such_issue };
+// an issue's comments (and its notifications), as the shared thread routes serve them
+pub const comment_kind: api_comments.Kind = .{ .kind = .issue, .section = .issues, .noun = "issue", .plural = "issues", .off = issues_off, .no_such_thread = no_such_issue };
 
 const stale_cursor: api.Error = .{
     .code = .validation,

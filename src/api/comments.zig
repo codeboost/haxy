@@ -20,6 +20,7 @@ const api_thread = @import("./thread.zig");
 const api_account = @import("./account.zig");
 const evt = @import("../event.zig");
 const md = @import("../markdown.zig");
+const notify = @import("../notify.zig");
 const query_params = @import("./query.zig");
 const thread_write = @import("../thread_write.zig");
 const ui = @import("../ui.zig");
@@ -320,19 +321,9 @@ fn writeAnswer(
     return null;
 }
 
-// whether `id` names a thread of `kind` that isn't removed
-fn threadLive(comptime hash_kind: hash.HashKind, arena: *std.heap.ArenaAllocator, moment: evt.EventDB(hash_kind).HashMap(.read_only), kind: evt.EventKind, id: *const [evt.event_id_size]u8) !bool {
-    const DB = evt.EventDB(hash_kind);
-    const kinds_cursor = try moment.getCursor(hash.hashInt(hash_kind, evt.event_index_key)) orelse return false;
-    if (try evt.readEventKind(hash_kind, try DB.HashMap(.read_only).init(kinds_cursor), id) != kind) return false;
-    const Removed = struct { removed: bool };
-    const record = switch (kind) {
-        .issue => try evt.readRecordSubset(evt.Issue, Removed, DB, hash_kind, moment, arena, id),
-        .discuss => try evt.readRecordSubset(evt.Discussion, Removed, DB, hash_kind, moment, arena, id),
-        .patch => try evt.readRecordSubset(evt.Patch, Removed, DB, hash_kind, moment, arena, id),
-        else => return false,
-    } orelse return false;
-    return !record.removed;
+// whether `id` names a thread of `kind` that isn't removed (notify's rule, which the inbox shares)
+pub fn threadLive(comptime hash_kind: hash.HashKind, arena: *std.heap.ArenaAllocator, moment: evt.EventDB(hash_kind).HashMap(.read_only), kind: evt.EventKind, id: *const [evt.event_id_size]u8) !bool {
+    return notify.threadLive(hash_kind, arena, moment, kind, id);
 }
 
 // --- writes ----------------------------------------------------------------------

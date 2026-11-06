@@ -13,6 +13,7 @@ const api_events = @import("./api/events.zig");
 const api_undo = @import("./api/undo.zig");
 const api_sync = @import("./api/sync.zig");
 const api_issues = @import("./api/issues.zig");
+const api_notifications = @import("./api/notifications.zig");
 const api_repo = @import("./api/repo.zig");
 const api_repo_admin = @import("./api/repo_admin.zig");
 const api_repo_create = @import("./api/repo_create.zig");
@@ -244,6 +245,14 @@ fn routeApiRequest(
         };
         return api_repo_admin.handle(io, request, allocator, server, route, query);
     }
+    if (api_notifications.route(path)) |route| {
+        const server: ?api_notifications.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir },
+            .local => null,
+        };
+        return api_notifications.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
+    if (api_notifications.threadRoute(path, "issues")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_issues.comment_kind);
     if (api_assignees.route(path)) |route| return api_assignees.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route);
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
@@ -1864,7 +1873,8 @@ fn handleNotify(
     };
 
     switch (mode) {
-        .subscribe => try notify.subscribe(io, allocator, users_dir, &user_id, location, &parts.thread_id, actor.author),
+        // a full subscribed tier leaves the page as it was; only the JSON API reports it
+        .subscribe => _ = try notify.subscribe(io, allocator, users_dir, &user_id, location, &parts.thread_id, actor.author),
         .mute => try notify.mute(io, allocator, users_dir, &user_id, location, &parts.thread_id, actor.author),
     }
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = base }} });

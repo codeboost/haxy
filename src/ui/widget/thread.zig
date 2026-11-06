@@ -1691,7 +1691,8 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             };
             const thread_id = try evt.parseEventId(entry.id);
             switch (mode) {
-                .subscribe => try notify.subscribe(io, allocator, users_dir, &user_id, location, &thread_id, actor.author),
+                // a full subscribed tier leaves the button as it was
+                .subscribe => _ = try notify.subscribe(io, allocator, users_dir, &user_id, location, &thread_id, actor.author),
                 .mute => try notify.mute(io, allocator, users_dir, &user_id, location, &thread_id, actor.author),
             }
             try self.session.navigate(ui.RoutablePage.repoThreadCommentsRoute(kind, self.data.identity, entry.id, 0) orelse return error.RouteTooLong);

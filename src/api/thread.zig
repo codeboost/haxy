@@ -149,6 +149,9 @@ pub fn openRepo(
             // the session drops a viewer whose account is gone, as page loads do
             var session = try ui.Session.init(arena, &admin_repo.*.?, .{ .user_id = if (viewer) |*id| try aa.dupe(u8, id) else null });
             session.users_dir = server.users_dir;
+            // the host's ssh url, which a fork's git commands name
+            session.data.git_ssh_url = server.ssh_url;
+            session.data.git_ssh_prefix = server.git_ssh_prefix;
             const owner = try decodeSegment(aa, names.owner);
             const name = try decodeSegment(aa, names.name);
             break :blk .{ session, .{ .identity = try std.fmt.allocPrint(aa, "{s}:{s}", .{ owner, name }), .owner = owner, .name = name } };

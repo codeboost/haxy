@@ -13,6 +13,7 @@ const api_events = @import("./api/events.zig");
 const api_undo = @import("./api/undo.zig");
 const api_sync = @import("./api/sync.zig");
 const api_issues = @import("./api/issues.zig");
+const api_patch_drafts = @import("./api/patch_drafts.zig");
 const api_patches = @import("./api/patches.zig");
 const api_discussions = @import("./api/discussions.zig");
 const api_notifications = @import("./api/notifications.zig");
@@ -23,7 +24,7 @@ const api_session = @import("./api/session.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
 const ui = @import("./ui.zig");
-const fork = @import("./fork.zig");
+const draft = @import("./draft.zig");
 const pch = @import("./patch.zig");
 const notify = @import("./notify.zig");
 const thread_write = @import("./thread_write.zig");
@@ -261,6 +262,7 @@ fn routeApiRequest(
     if (api_assignees.route(path)) |route| return api_assignees.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route);
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_patch_drafts.route(path)) |route| return api_patch_drafts.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_patches.route(path)) |route| return api_patches.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_discussions.route(path)) |route| return api_discussions.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_undo.route(path)) |route| return api_undo.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
@@ -1353,29 +1355,20 @@ fn handleThreadNew(
             .server => |server| server,
             .local => return respondRemoveNotFound(request),
         };
-        const user_id = actor.user_id orelse return respondLoginRequired(request);
-        if (!evt.Patch.branchValid(target_branch) or !try request_repo.source.hasBranch(io, allocator, target_branch)) {
+        if (actor.user_id == null) return respondLoginRequired(request);
+        const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
+        const identity = ui.RoutablePage.RepoIdentity.parse(repoBaseIdentity(base) orelse return respondRemoveNotFound(request)) orelse return respondRemoveNotFound(request);
+        draft.start(server.users_dir, io, allocator, .{ .source = source, .repo_id = repo_id }, identity.name, actor, &id_bytes, .{
+            .title = title,
+            .labels = labels,
+            .description = description,
+            .target_branch = target_branch,
+        }) catch |err| {
+            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
             const form_location = try allocator.print("{s}/patches/new", .{base});
             defer allocator.free(form_location);
-            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(.invalid_target_branch, title, labels, description, target_branch, null));
-        }
-        const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
-        const repo_user_id = actor.repo_user_id orelse unreachable;
-        const identity = ui.RoutablePage.RepoIdentity.parse(repoBaseIdentity(base) orelse return respondRemoveNotFound(request)) orelse return respondRemoveNotFound(request);
-        const fork_path = try fork.create(.{}, io, allocator, server.users_dir, .{
-            .id = event_id_hex,
-            .user_id = user_id,
-            .repo_id = repo_id,
-            .repo_user_id = repo_user_id,
-            .repo_name = identity.name,
-            .title = title,
-            .description = description,
-            .labels = labels,
-            .target_branch = target_branch,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        });
-        defer allocator.free(fork_path);
+            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, null));
+        };
     } else if (kind == .patch) {
         thread_write.createBranchPatch(host.event(), io, allocator, source, &id_bytes, .{ .title = title, .labels = labels, .description = description, .target_branch = target_branch }, source_branch.?, author) catch |err| {
             const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
@@ -1433,26 +1426,17 @@ fn handlePatchPublish(
     defer author_arena.deinit();
     // only the draft's author may publish it, which publish checks
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, .patch)) orelse return;
-    const user_id = actor.user_id orelse return respondLoginRequired(request);
-    const author = actor.author;
+    if (actor.user_id == null) return respondLoginRequired(request);
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
     const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
-    var target_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, request_repo.source.localInitOpts());
-    defer target_repo.deinit(io, allocator);
     var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
     defer admin_repo.deinit(io, allocator);
-    const id = std.fmt.bytesToHex(parts.thread_id, .lower);
-    switch (target_repo) {
-        inline else => |*repo| try pch.publish(repo.self_repo_opts, io, allocator, host.event().server, &admin_repo, repo, .{
-            .id = id,
-            .user_id = user_id,
-            .repo_id = repo_id,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        }),
-    }
+    draft.publish(host.event().server, io, allocator, &admin_repo, .{ .source = request_repo.source, .repo_id = repo_id }, actor, &parts.thread_id) catch |err| switch (err) {
+        error.NotFound => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
     try request.respond("", .{
         .status = .see_other,
         .extra_headers = &.{.{ .name = "location", .value = base }},
@@ -1957,7 +1941,6 @@ fn handleRemove(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
@@ -1965,25 +1948,19 @@ fn handleRemove(
 
     if (parts.kind == .patch) switch (host) {
         .server => |server| {
-            const user_id = actor.user_id orelse return respondLoginRequired(request);
-
-            // a draft lives in its author's user repo
-            if (try evt.readForkById(io, allocator, &author_arena, server.users_dir, &user_id, &parts.id)) |fork_record| {
-                const repo_id = evt.parseEventId(std.Io.Dir.path.basename(source.path)) catch return respondRemoveNotFound(request);
-                if (!fork_record.removed and fork_record.event.stage == .draft and std.mem.eql(u8, &fork_record.event.repo_id, &std.fmt.bytesToHex(repo_id, .lower))) {
-                    const id = std.fmt.bytesToHex(parts.id, .lower);
-                    try fork.remove(io, allocator, server.users_dir, &user_id, &id, author);
-
-                    const location = try allocator.print("{s}/patches/drafts", .{parts.repo_base});
-                    defer allocator.free(location);
-                    try request.respond("", .{
-                        .status = .see_other,
-                        .keep_alive = false,
-                        .extra_headers = &.{.{ .name = "location", .value = location }},
-                    });
-                    return;
-                }
-            }
+            if (actor.user_id == null) return respondLoginRequired(request);
+            const repo_id = evt.parseEventId(std.Io.Dir.path.basename(source.path)) catch return respondRemoveNotFound(request);
+            // the actor's own draft, or else a published patch
+            if (draft.remove(server.users_dir, io, allocator, &repo_id, actor, &parts.id)) {
+                const location = try allocator.print("{s}/patches/drafts", .{parts.repo_base});
+                defer allocator.free(location);
+                try request.respond("", .{
+                    .status = .see_other,
+                    .keep_alive = false,
+                    .extra_headers = &.{.{ .name = "location", .value = location }},
+                });
+                return;
+            } else |err| if (err != error.NotFound) return err;
         },
         .local => {},
     };
@@ -2088,7 +2065,6 @@ fn handleThreadEdit(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
@@ -2129,37 +2105,31 @@ fn handleThreadEdit(
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
 
-    const draft_user_id = if (parts.thread_kind == .patch) actor.user_id else null;
-    if (draft_user_id) |user_id| {
+    if (parts.thread_kind == .patch and actor.user_id != null) {
         const server = switch (host) {
             .server => |server| server,
             .local => unreachable,
         };
-        if (!evt.Patch.branchValid(target_branch) or !try request_repo.source.hasBranch(io, allocator, target_branch)) {
-            const form_location = try allocator.print("{s}/edit", .{base});
-            defer allocator.free(form_location);
-            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(.invalid_target_branch, title, labels, description, target_branch, null));
-        }
         const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
         var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
         defer admin_repo.deinit(io, allocator);
-        const id = std.fmt.bytesToHex(parts.thread_id, .lower);
-        if (try pch.editDraft(.{}, io, allocator, server.users_dir, &admin_repo, .{
-            .id = id,
-            .user_id = user_id,
-            .repo_id = repo_id,
+        // the actor's own draft, or else a published patch
+        if (draft.edit(server.users_dir, io, allocator, &admin_repo, .{ .source = request_repo.source, .repo_id = repo_id }, actor, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .description = description,
             .target_branch = target_branch,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        })) {
+        }, null)) {
             try request.respond("", .{
                 .status = .see_other,
                 .extra_headers = &.{.{ .name = "location", .value = base }},
             });
             return;
+        } else |err| if (err != error.NotFound) {
+            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
+            const form_location = try allocator.print("{s}/edit", .{base});
+            defer allocator.free(form_location);
+            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, null));
         }
     }
 

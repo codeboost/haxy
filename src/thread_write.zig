@@ -197,8 +197,9 @@ fn catchUp(host: evt.Host, io: std.Io, allocator: std.mem.Allocator, source: ui.
     }
 }
 
-// fails with error.IdTaken when the moment already holds an event with the id
-fn IdFree(comptime hash_kind: hash.HashKind) type {
+/// a `evt.consumeGuarded` check: error.IdTaken when the moment already holds
+/// an event with the id
+pub fn IdFree(comptime hash_kind: hash.HashKind) type {
     return struct {
         id: *const [evt.event_id_size]u8,
 
@@ -213,6 +214,19 @@ pub fn kindOf(comptime hash_kind: hash.HashKind, moment: evt.EventDB(hash_kind).
     const DB = evt.EventDB(hash_kind);
     const kinds_cursor = try moment.getCursor(hash.hashInt(hash_kind, evt.event_index_key)) orelse return null;
     return evt.readEventKind(hash_kind, try DB.HashMap(.read_only).init(kinds_cursor), id);
+}
+
+/// whether any event in `source`'s consumed events has `id`
+pub fn idUsedIn(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource, id: *const [evt.event_id_size]u8) !bool {
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            return switch (any_repo) {
+                inline else => |*repo| idUsed(repo_kind, repo.self_repo_opts, io, allocator, repo, id),
+            };
+        },
+    }
 }
 
 // whether any event in the repo's consumed events has `id`

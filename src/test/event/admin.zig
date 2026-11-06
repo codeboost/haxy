@@ -422,3 +422,62 @@ fn activeForkCount(moment: evt.UserDB.HashMap(.read_only)) !u64 {
     const ids = try evt.UserDB.SortedSet(.read_only).init(ids_cursor);
     return try ids.count();
 }
+
+// a user repo holding a repo event, and that repo with one commit, under `users_dir`
+fn forkerWithRepo(io: std.Io, allocator: std.mem.Allocator, users_dir: []const u8, user_id: *const [evt.event_id_size]u8, repo_id: *const [evt.event_id_size]u8) !void {
+    const user_repo_path = try evt.userRepoPath(allocator, users_dir, user_id);
+    defer allocator.free(user_repo_path);
+    var user_repo = try evt.initUserRepo(io, allocator, user_repo_path);
+    defer user_repo.deinit(io, allocator);
+    try evt.consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, evt.user_repo_opts, io, allocator, &user_repo, evt.events_ref, &.{.{
+        .id = std.fmt.bytesToHex(repo_id.*, .lower),
+        .timestamp = 1,
+        .author = author,
+        .event = .{ .repo = .{ .user_id = std.fmt.bytesToHex(user_id.*, .lower), .name = "repo", .description = "" } },
+    }});
+    const target_path = try evt.repoPath(allocator, users_dir, user_id, repo_id);
+    defer allocator.free(target_path);
+    var target = try rp.Repo(.xit, fork_repo_opts).init(io, allocator, .{ .path = target_path });
+    defer target.deinit(io, allocator);
+    {
+        const file = try target.core.work_dir.createFile(io, "README", .{});
+        defer file.close(io);
+        try file.writeStreamingAll(io, "repo\n");
+    }
+    try target.add(io, allocator, &.{"README"});
+    _ = try target.commit(io, allocator, .{ .message = "initial" });
+}
+
+test "a fork can't take the id of any event its forker's user repo holds" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const temp_path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(temp_path);
+    const users_dir = try std.Io.Dir.path.join(allocator, &.{ temp_path, "users" });
+    defer allocator.free(users_dir);
+
+    var prng = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const user_id = evt.EventWithId.randomId(prng.random());
+    const repo_id = evt.EventWithId.randomId(prng.random());
+    try forkerWithRepo(io, allocator, users_dir, &user_id, &repo_id);
+
+    // the repo's own event id, which lives in its owner's user repo
+    try std.testing.expectError(error.IdTaken, fork.create(.{ .is_test = true }, io, allocator, users_dir, .{
+        .target_branch = "master",
+        .id = std.fmt.bytesToHex(repo_id, .lower),
+        .user_id = user_id,
+        .repo_id = repo_id,
+        .repo_user_id = user_id,
+        .repo_name = "repo",
+        .title = "taken",
+        .description = "",
+        .labels = "",
+        .author = author,
+        .timestamp = 2,
+    }));
+    const fork_path = try fork.forkPath(allocator, users_dir, &user_id, &repo_id);
+    defer allocator.free(fork_path);
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(io, fork_path, .{}));
+}

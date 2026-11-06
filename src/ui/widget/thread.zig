@@ -1609,12 +1609,11 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
         fn removeEvent(self: *This, allocator: std.mem.Allocator, event_kind: evt.EventKind, id: [evt.event_id_size]u8) !void {
             if (comptime wasm) return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
 
             if (comptime supports_drafts) {
                 const entry = self.entry orelse return;
                 if (event_kind == kind and entryDraft(entry)) {
-                    try Data.removeDraft(self.session, allocator, author, &id);
+                    try self.data.removeDraft(self.session, allocator, actor, &id);
                     const route = draftsRoute(self.data.identity) orelse return;
                     try self.session.navigate(route);
                     return;
@@ -3091,7 +3090,6 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const entry = self.data.selectedThread() orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
 
             const form = self.threadForm() orelse return;
             const title_input = try formField(form, "title");
@@ -3115,7 +3113,7 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
 
             if (comptime supports_drafts) {
                 if (entryDraft(entry.*)) {
-                    self.data.editDraft(self.session, allocator, author, entry.id, title, labels, description, target_branch) catch |err| {
+                    self.data.editDraft(self.session, allocator, actor, entry.id, .{ .title = title, .labels = labels, .description = description, .target_branch = target_branch }) catch |err| {
                         const failure = FeedbackFailure.fromError(err) orelse return err;
                         try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
                         return;
@@ -3169,8 +3167,8 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                     if (comptime wasm) return;
                     const entry = self.data.selectedThread() orelse return;
                     if (!entryDraft(entry.*)) return;
-                    const author = ((try self.session.authorize(self.data.identity, .read, kind)) orelse return).author;
-                    try self.data.publishDraft(self.session, allocator, author, entry.id);
+                    const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
+                    try self.data.publishDraft(self.session, allocator, actor, entry.id);
                     const route = listRoute(self.data.identity, @fromBackingInt(@intCast(0)), entry.id) orelse return;
                     try self.session.navigate(route);
                 } else unreachable,
@@ -3208,12 +3206,11 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
         fn removeEvent(self: *This, allocator: std.mem.Allocator, event_kind: evt.EventKind, id: [evt.event_id_size]u8) !void {
             if (comptime wasm) return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
 
             if (comptime supports_drafts) {
                 const selected = self.data.selectedThread() orelse return;
                 if (event_kind == kind and entryDraft(selected.*)) {
-                    try Data.removeDraft(self.session, allocator, author, &id);
+                    try self.data.removeDraft(self.session, allocator, actor, &id);
                     const route = draftsRoute(self.data.identity) orelse return;
                     try self.session.navigate(route);
                     return;

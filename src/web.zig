@@ -256,6 +256,8 @@ fn routeApiRequest(
         return api_notifications.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
     }
     if (api_notifications.threadRoute(path, "issues")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_issues.comment_kind);
+    if (api_notifications.threadRoute(path, "discussions")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_discussions.comment_kind);
+    if (api_notifications.threadRoute(path, "patches")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_patches.comment_kind);
     if (api_assignees.route(path)) |route| return api_assignees.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route);
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);

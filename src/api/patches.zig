@@ -8,8 +8,11 @@
 //! api/thread.zig for the shapes threads share.
 //!
 //! reads only: writing patches is not in the API yet, so the list says
-//! opening one is unavailable and the writes answer `unsupported`.
-//! comments are the shared comment routes (api/comments.zig).
+//! opening one is unavailable and the writes answer `unsupported`. what
+//! the TUI lets anyone write on a patch's page goes through the shared
+//! thread routes: its comments (api/comments.zig), its attachments
+//! (api/attachments.zig) and the viewer's notification state
+//! (api/notifications.zig).
 //!
 //! a server names repos by owner and name; a local host serves only the repo
 //! it opened, under /api/v1/repo/patches and /api/v1/repo/revisions.
@@ -18,6 +21,7 @@ const std = @import("std");
 const xit = @import("xit");
 const rp = xit.repo;
 const api = @import("../api.zig");
+const api_attachments = @import("./attachments.zig");
 const api_comments = @import("./comments.zig");
 const api_diff = @import("./diff.zig");
 const api_md = @import("./markdown.zig");
@@ -85,8 +89,9 @@ pub fn handle(
     };
     switch (thread_route.resource) {
         .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, thread_route, query, comment_kind),
+        .attachments, .attachment => return api_attachments.handle(io, request, allocator, host, viewer, thread_route, query, attachment_kind),
         // a patch's status is not written through the API yet
-        .status, .attachments, .attachment => return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{ .keep_alive = request.head.method == .GET or request.head.method == .HEAD }),
+        .status => return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{ .keep_alive = request.head.method == .GET or request.head.method == .HEAD }),
         .list, .labels, .thread => {},
     }
     const method = request.head.method;
@@ -149,8 +154,34 @@ fn catchUp(
 pub const patches_off: api.Error = .{ .code = .not_found, .message = "This repository doesn't use patches." };
 pub const no_such_patch: api.Error = .{ .code = .not_found, .message = "There is no patch with this id." };
 
-// a patch's comments, as the shared comment routes serve them
-const comment_kind: api_comments.Kind = .{ .kind = .patch, .section = .patches, .noun = "patch", .plural = "patches", .off = patches_off, .no_such_thread = no_such_patch };
+// a patch's comments (and its notifications), as the shared thread routes serve them
+pub const comment_kind: api_comments.Kind = .{ .kind = .patch, .section = .patches, .noun = "patch", .plural = "patches", .off = patches_off, .no_such_thread = no_such_patch };
+
+// a patch's attachments, as the shared attachment routes serve them
+const attachment_kind: api_attachments.Kind = .{ .thread = comment_kind, .readDetail = readDetail };
+
+// the patch `id` names as its own route answers it, or null when there is none
+// (unknown, removed, or a draft)
+fn readDetail(arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8) !?[]const u8 {
+    const aa = arena.allocator();
+    var body: std.Io.Writer.Allocating = .init(aa);
+    const hex = try aa.dupe(u8, &std.fmt.bytesToHex(id.*, .lower));
+    const source = opened.source;
+    const gpa = arena.child_allocator;
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, gpa, source.localInitOpts());
+            defer any_repo.deinit(io, gpa);
+            switch (any_repo) {
+                inline else => |*repo| {
+                    if (opened.session.local != null) try catchUp(repo_kind, repo.self_repo_opts, io, gpa, source, repo);
+                    if (try write(repo_kind, repo.self_repo_opts, arena, repo, io, opened, .{ .patch = hex }, &body.writer)) |_| return null;
+                },
+            }
+        },
+    }
+    return body.written();
+}
 
 const stale_cursor: api.Error = .{
     .code = .validation,
@@ -297,7 +328,7 @@ fn write(
                 else => |e| return e,
             };
             const entry = data.selectedThread() orelse return no_such_patch;
-            try std.json.Stringify.value(try detail(aa, entry, session.data.host_kind), .{}, writer);
+            try std.json.Stringify.value(try detail(aa, entry, session.data.host_kind, .{ .signed_in = opened.handle.viewer != null, .tab = viewer }), .{}, writer);
         },
     }
     return null;
@@ -444,8 +475,13 @@ const Review = union(enum) {
     }
 };
 
+/// what the viewer may do to one patch through the API: attach a file
+/// (`thread_write.attach`); its other writes come with #18-#20
+const Actions = struct { attach: Availability };
+
 /// one patch: its summary, its whole description (parsed by haxy's markdown
-/// reader, as the TUI renders it), and what it proposes
+/// reader, as the TUI renders it), what it proposes, its attachments, and what
+/// the viewer may do
 const Detail = struct {
     summary: api_thread.Summary(evt.Patch.StatusKind),
     description: []const md.Block,
@@ -458,6 +494,9 @@ const Detail = struct {
     no_changes: bool,
     mergeability: Mergeability,
     review: Review,
+    // every live attachment, oldest first, as the TUI lists them
+    attachments: []const api_attachments.Item,
+    actions: Actions,
 
     pub fn jsonStringify(self: Detail, json: *std.json.Stringify) std.Io.Writer.Error!void {
         try json.beginObject();
@@ -467,15 +506,19 @@ const Detail = struct {
         }
         try json.objectField("description");
         try json.write(api_md.Blocks{ .blocks = self.description });
-        inline for (.{ "description_text", "source", "target", "revision", "merged", "no_changes", "mergeability", "review" }) |name| {
+        inline for (.{ "description_text", "source", "target", "revision", "merged", "no_changes", "mergeability", "review", "attachments" }) |name| {
             try json.objectField(name);
             try json.write(@field(self, name));
         }
+        try json.objectField("attachment_limits");
+        try json.write(api_attachments.limits);
+        try json.objectField("actions");
+        try json.write(self.actions);
         try json.endObject();
     }
 };
 
-pub fn detail(aa: std.mem.Allocator, entry: *const Patches.Entry, host_kind: evt.HostKind) !Detail {
+pub fn detail(aa: std.mem.Allocator, entry: *const Patches.Entry, host_kind: evt.HostKind, viewer: api_thread.ViewerRights) !Detail {
     const patch = &entry.record.event;
     const source: Source = if (patch.source_branch) |branch|
         .{ .branch = try .init(aa, branch) }
@@ -512,6 +555,8 @@ pub fn detail(aa: std.mem.Allocator, entry: *const Patches.Entry, host_kind: evt
             else
                 "This patch's fork is gone, so its commits can't be shown." } },
         },
+        .attachments = try api_attachments.items(aa, entry.attachments, .{ .viewer = viewer.tab, .signed_in = viewer.signed_in }),
+        .actions = .{ .attach = api_thread.threadActions(.patch, .{ .may_write = entry.can_modify, .signed_in = viewer.signed_in }).attach },
     };
 }
 

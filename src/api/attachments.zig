@@ -1,5 +1,5 @@
-//! the attachment routes every thread kind shares (issues now; discussions
-//! and patches hook the same module in with their own `Kind`): uploading a
+//! the attachment routes every thread kind shares (issues, discussions and
+//! patches each hook this module in with their own `Kind`): uploading a
 //! file to a thread, downloading one, and removing one. a thread's answer
 //! lists its attachments (`item`) and the upload limits (`limits`).
 //!
@@ -27,16 +27,13 @@ const thread_write = @import("../thread_write.zig");
 const ui = @import("../ui.zig");
 
 /// what a thread kind's attachment routes need to know about it: what its
-/// comment routes know, and how to read one thread as its own route answers it
+/// comment routes know, and how to read one thread as its own route answers it.
+/// who may write in the kind's tab is `api_thread.authorize` with the kind.
 pub const Kind = struct {
     thread: api_comments.Kind,
     // the thread `id` names as its own route answers it, or null when there is none
     readDetail: *const fn (arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8) anyerror!?[]const u8,
-    // who may write in the kind's tab, checked against the admin db as it is now
-    authorize: *const fn (io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, host: api_repo.Host, viewer: ?[evt.event_id_size]u8, opened: *api_thread.Opened) anyerror!Authorized,
 };
-
-pub const Authorized = union(enum) { actor: ui.Actor, refused: api.Error };
 
 /// what a thread's answer says about uploads, so a client can refuse a file
 /// before sending it. Haxy checks again when the upload arrives.
@@ -255,7 +252,7 @@ fn upload(
     var admin_repo_maybe: ?rp.Repo(.xit, evt.admin_repo_opts) = null;
     defer if (admin_repo_maybe) |*admin_repo| admin_repo.deinit(io, allocator);
     var found = (try openThread(io, request, allocator, &arena, host, viewer, target, encoded_thread, &admin_repo_maybe, kind, refuseUnread)) orelse return;
-    const actor = switch (try kind.authorize(io, allocator, &arena, host, viewer, &found.opened)) {
+    const actor = switch (try api_thread.authorize(kind.thread.kind, io, allocator, &arena, host, viewer, &found.opened)) {
         .actor => |actor| actor,
         .refused => |err| return refuseUpload(request, allocator, null, err, .{}),
     };
@@ -333,7 +330,7 @@ fn remove(
     var found = (try openThread(io, request, allocator, &arena, host, viewer, target, encoded_thread, &admin_repo_maybe, kind, refusePlain)) orelse return;
     const id = evt.parseEventId(std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, encoded_attachment))) catch
         return api.respondError(request, allocator, noSuchAttachment(kind), .{});
-    const actor = switch (try kind.authorize(io, allocator, &arena, host, viewer, &found.opened)) {
+    const actor = switch (try api_thread.authorize(kind.thread.kind, io, allocator, &arena, host, viewer, &found.opened)) {
         .actor => |actor| actor,
         .refused => |err| return api.respondError(request, allocator, err, .{}),
     };

@@ -1,9 +1,11 @@
 //! the discussion routes of the JSON API: the recent discussions (the TUI's
 //! only list of them), the labels they use, one discussion, and the writes
-//! that open, edit and remove one; their comments are the shared comment
-//! routes (api/comments.zig). every read goes through the TUI's discussions
-//! tab (`ui.Repo.Discussions.init`), so the list, its order (most recently
-//! active first), counts, windows, search filters and labels are the TUI's;
+//! that open, edit and remove one; their comments, attachments and
+//! notification state are the shared thread routes (api/comments.zig,
+//! api/attachments.zig, api/notifications.zig). every read goes through the
+//! TUI's discussions tab (`ui.Repo.Discussions.init`), so the list, its order
+//! (most recently active first), counts, windows, search filters and labels
+//! are the TUI's;
 //! every write goes through thread_write, as the TUI's and the HTML forms do.
 //!
 //! a discussion has what the TUI shows of it: a title, labels, a
@@ -21,6 +23,7 @@ const api_repo = @import("./repo.zig");
 const api_thread = @import("./thread.zig");
 const api_account = @import("./account.zig");
 const api_comments = @import("./comments.zig");
+const api_attachments = @import("./attachments.zig");
 const evt = @import("../event.zig");
 const md = @import("../markdown.zig");
 const query_params = @import("./query.zig");
@@ -48,8 +51,11 @@ const stale_revision: api.Error = .{
     .field_errors = &.{.{ .field = "revision", .message = "Someone else changed this discussion meanwhile. Load it again, then make your change." }},
 };
 
-// a discussion's comments, as the shared comment routes serve them
-const comment_kind: api_comments.Kind = .{ .kind = .discuss, .section = .discussions, .noun = "discussion", .plural = "discussions", .off = discussions_off, .no_such_thread = no_such_discussion };
+// a discussion's comments (and its notifications), as the shared thread routes serve them
+pub const comment_kind: api_comments.Kind = .{ .kind = .discuss, .section = .discussions, .noun = "discussion", .plural = "discussions", .off = discussions_off, .no_such_thread = no_such_discussion };
+
+// a discussion's attachments, as the shared attachment routes serve them
+const attachment_kind: api_attachments.Kind = .{ .thread = comment_kind, .readDetail = readDetail };
 
 pub fn handle(
     io: std.Io,
@@ -66,8 +72,9 @@ pub fn handle(
     const read_methods = method == .GET or method == .HEAD;
     const change: ?Change = switch (matched.resource) {
         .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, matched, query, comment_kind),
-        // a discussion has no status; its attachments are wired after the merge
-        .status, .attachments, .attachment => return api.respondError(request, allocator, no_route, .{ .keep_alive = read_methods }),
+        .attachments, .attachment => return api_attachments.handle(io, request, allocator, host, viewer, matched, query, attachment_kind),
+        // a discussion has no status
+        .status => return api.respondError(request, allocator, no_route, .{ .keep_alive = read_methods }),
         .list => if (read_methods) null else if (method == .POST) .create else return api_thread.unsupported(request, allocator, "GET, HEAD, POST"),
         .labels => if (read_methods) null else return api_thread.unsupported(request, allocator, "GET, HEAD"),
         .thread => if (read_methods) null else if (method == .PATCH) .edit else if (method == .DELETE) .remove else return api_thread.unsupported(request, allocator, "GET, HEAD, PATCH, DELETE"),
@@ -127,15 +134,20 @@ fn summary(aa: std.mem.Allocator, entry: *const Discussions.Entry, search: []con
 pub const Actions = struct {
     edit: api_thread.Availability,
     remove: api_thread.Availability,
+    // attach a file (`thread_write.attach`)
+    attach: api_thread.Availability,
 };
 
 /// a discussion's page: its summary and whole description, parsed by haxy's
-/// markdown reader, with what an edit starts from and what the viewer may do
+/// markdown reader, with what an edit starts from, its attachments and what
+/// the viewer may do
 const Detail = struct {
     summary: Summary,
     description: []const md.Block,
     description_text: []const u8,
     revision: evt.Discussion.Revision,
+    // every live attachment, oldest first, as the TUI lists them
+    attachments: []const api_attachments.Item,
     actions: Actions,
 
     pub fn jsonStringify(self: Detail, json: *std.json.Stringify) std.Io.Writer.Error!void {
@@ -150,21 +162,26 @@ const Detail = struct {
         try json.write(self.description_text);
         try json.objectField("revision");
         try json.write(&std.fmt.bytesToHex(self.revision, .lower));
+        try json.objectField("attachments");
+        try json.write(self.attachments);
+        try json.objectField("attachment_limits");
+        try json.write(api_attachments.limits);
         try json.objectField("actions");
         try json.write(self.actions);
         try json.endObject();
     }
 };
 
-fn detail(aa: std.mem.Allocator, entry: *const Discussions.Entry, signed_in: bool) !Detail {
-    const actions = api_thread.threadActions(.discuss, .{ .may_write = entry.can_modify, .signed_in = signed_in });
+fn detail(aa: std.mem.Allocator, entry: *const Discussions.Entry, viewer: api_thread.ViewerRights) !Detail {
+    const actions = api_thread.threadActions(.discuss, .{ .may_write = entry.can_modify, .signed_in = viewer.signed_in });
     return .{
         // a discussion's own page extends no list's search
         .summary = try summary(aa, entry, ""),
         .description = (try md.parseText(aa, entry.record.event.description)).blocks,
         .description_text = entry.record.event.description,
         .revision = evt.Discussion.contentRevision(entry.record.event),
-        .actions = .{ .edit = actions.edit, .remove = actions.remove },
+        .attachments = try api_attachments.items(aa, entry.attachments, .{ .viewer = viewer.tab, .signed_in = viewer.signed_in }),
+        .actions = .{ .edit = actions.edit, .remove = actions.remove, .attach = actions.attach },
     };
 }
 
@@ -302,7 +319,7 @@ fn write(
                 else => |e| return e,
             };
             const entry = data.selectedThread() orelse return no_such_discussion;
-            try std.json.Stringify.value(try detail(aa, entry, opened.handle.viewer != null), .{}, writer);
+            try std.json.Stringify.value(try detail(aa, entry, .{ .signed_in = opened.handle.viewer != null, .tab = viewer }), .{}, writer);
         },
     }
     return null;

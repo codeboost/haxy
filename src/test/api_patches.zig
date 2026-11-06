@@ -291,7 +291,7 @@ fn TestRepo(comptime kind: rp.RepoKind) type {
             const data = try Patches.init(kind, opts, &self.arena, &self.repo, std.testing.io, null, &session, null, "", "", "", id, "", 0, "", .description, null, .{ .shown = 1, .others = 0, .drafts = false, .snapshot = snapshot });
             const entry = data.selectedThread() orelse return error.NotFound;
             var out: std.Io.Writer.Allocating = .init(self.arena.allocator());
-            try std.json.Stringify.value(try api_patches.detail(self.arena.allocator(), entry, .local), .{}, &out.writer);
+            try std.json.Stringify.value(try api_patches.detail(self.arena.allocator(), entry, .local, .{ .signed_in = true }), .{}, &out.writer);
             return (try std.json.parseFromSliceLeaky(std.json.Value, self.arena.allocator(), out.written(), .{})).object;
         }
 

@@ -107,14 +107,7 @@ pub const no_such_issue: api.Error = .{ .code = .not_found, .message = "There is
 pub const comment_kind: api_comments.Kind = .{ .kind = .issue, .section = .issues, .noun = "issue", .plural = "issues", .off = issues_off, .no_such_thread = no_such_issue };
 
 // an issue's attachments, as the shared attachment routes serve them
-const attachment_kind: api_attachments.Kind = .{ .thread = comment_kind, .readDetail = readDetail, .authorize = authorizeAttachment };
-
-fn authorizeAttachment(io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, host: api_repo.Host, viewer: ?[evt.event_id_size]u8, opened: *api_thread.Opened) !api_attachments.Authorized {
-    return switch (try authorize(io, allocator, arena, host, viewer, opened)) {
-        .actor => |actor| .{ .actor = actor },
-        .refused => |err| .{ .refused = err },
-    };
-}
+const attachment_kind: api_attachments.Kind = .{ .thread = comment_kind, .readDetail = readDetail };
 
 // what one request reads, with its parameters checked
 const Read = union(enum) {

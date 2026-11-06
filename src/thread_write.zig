@@ -330,6 +330,44 @@ pub fn edit(
     }
 }
 
+/// resolves the metadata conflict of the thread `id` names (an issue or a
+/// patch, as `Event` says), as `actor`: one event carrying the resolved
+/// fields, which settles the conflict wherever it is consumed. only the
+/// repository's writers may resolve (error.Forbidden). with a
+/// `resolution.revision`, only the conflict still at it is resolved
+/// (error.Stale otherwise, also once it is settled); without one, whatever
+/// conflict there is now. error.NotFound when there is no such thread,
+/// error.InvalidFields when the resolved title or labels are invalid.
+pub fn resolve(
+    comptime Event: type,
+    host: evt.Host,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ui.RepoSource,
+    actor: ui.Actor,
+    id: *const [evt.event_id_size]u8,
+    resolution: Event.Resolve,
+) !void {
+    if (!actor.role.atLeast(.write)) return error.Forbidden;
+    const locked = try lockEvents(io, source);
+    defer unlockEvents(io, locked);
+    try catchUp(host, io, allocator, source);
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                // taking their target captures a fresh revision of a branch
+                // patch, written only while the patch is as it was read
+                inline else => |*repo| Event.update(host, repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{ .resolve = resolution }, actor.author) catch |err| switch (err) {
+                    error.PatchOutOfDate => return error.Stale,
+                    else => |e| return e,
+                },
+            }
+        },
+    }
+}
+
 /// removes the event `id` names, of `kind`: the thread `thread_id` itself
 /// (when `kind` is `thread_kind`), or a comment, attachment or assignment that
 /// belongs to it, as `actor`. error.Forbidden when the actor may not change

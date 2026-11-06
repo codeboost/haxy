@@ -79,11 +79,15 @@ pub const Status = union(StatusKind) {
     }
 };
 
+/// the resolve form's inputs, as `evt.Issue.Resolve`'s, and `theirs`: the
+/// comma-separated conflicted fields taken whole from their side (status,
+/// revision, target_branch)
 pub const Resolve = struct {
     title: ?[]const u8 = null,
     labels: ?[]const u8 = null,
     hunks: []const []const u8 = &.{},
     theirs: []const u8 = "",
+    revision: ?evt.ConflictRevision = null,
 };
 
 pub const Update = union(enum) {
@@ -314,6 +318,8 @@ pub const ContentRevision = evt.Issue.Revision;
 // a test can make something happen in that window
 pub const testing = struct {
     pub var after_read: ?*const fn (std.Io) void = null;
+    // run once the change is built, just before it is written
+    pub var before_write: ?*const fn (std.Io) void = null;
 };
 
 pub fn contentRevision(patch: Self) ContentRevision {
@@ -401,8 +407,11 @@ pub fn updateAt(
         },
     }
     if (!fieldsValid(updated.title, updated.labels)) return error.InvalidFields;
+    if (builtin.is_test) {
+        if (testing.before_write) |hook| hook(io);
+    }
 
-    if (updated.source_branch != null and updated.revision == null) return @import("../patch.zig").writeBranchPatch(host, repo_kind, repo_opts, io, allocator, repo, std.fmt.bytesToHex(id.*, .lower), updated, record.event, author);
+    if (updated.source_branch != null and updated.revision == null) return captureBranch(host, repo_kind, repo_opts, io, allocator, &arena, repo, id, updated, record.event, change, author);
     var events = [_]evt.EventWithId{.{
         .id = std.fmt.bytesToHex(id.*, .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
@@ -410,17 +419,51 @@ pub fn updateAt(
         .event = .{ .patch = updated },
     }};
     // a resolution's fields come from the conflict entry read above, so it is
-    // written as built
-    if (repo_kind == .xit and change != .resolve) {
-        return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, Rebase(repo_opts.hash){
+    // written as built, while its conflict stays as read
+    if (repo_kind == .xit) switch (change) {
+        .resolve => |resolve| if (resolve.revision) |expected| {
+            return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, evt.ConflictCheck(Self, repo_opts.hash){
+                .arena = &arena,
+                .id = id,
+                .revision = expected,
+            });
+        },
+        else => return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, Rebase(repo_opts.hash){
             .arena = &arena,
             .id = id,
             .change = change,
             .revision = revision,
             .event = &events[0],
-        });
-    }
+        }),
+    };
     try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
+}
+
+// writes `updated`, a branch patch's change that captures its source's
+// revision, only while the patch is still `live`, and a resolution only while
+// its conflict is still the one it names
+fn captureBranch(
+    host: evt.Host,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: *const [evt.event_id_size]u8,
+    updated: Self,
+    live: Self,
+    change: Update,
+    author: evt.CommitAuthor,
+) !void {
+    const pch = @import("../patch.zig");
+    const hex = std.fmt.bytesToHex(id.*, .lower);
+    const conflict_revision = switch (change) {
+        .resolve => |resolve| resolve.revision,
+        else => null,
+    };
+    const expected = conflict_revision orelse return pch.writeBranchPatch(host, repo_kind, repo_opts, io, allocator, repo, hex, updated, live, author);
+    return pch.writeBranchPatchGuarded(host, repo_kind, repo_opts, io, allocator, repo, hex, updated, live, author, evt.ConflictCheck(Self, repo_opts.hash){ .arena = arena, .id = id, .revision = expected });
 }
 
 // `patch`'s status set to `status` (open or closed): a merged patch stays merged
@@ -505,13 +548,16 @@ fn resolveFields(
     const moment = (if (event_db_maybe) |*event_db|
         evt.currentMomentFromDb(repo_opts.hash, event_db.db)
     else if (repo_kind == .git)
-        return updated
+        return settled(resolve, updated)
     else
-        evt.currentMoment(repo_opts, repo)) catch return updated;
-    const conflicts_cursor = (try moment.getCursor(hash.hashInt(repo_opts.hash, conflicts_key))) orelse return updated;
+        evt.currentMoment(repo_opts, repo)) catch return settled(resolve, updated);
+    const conflicts_cursor = (try moment.getCursor(hash.hashInt(repo_opts.hash, conflicts_key))) orelse return settled(resolve, updated);
     const conflicts = try DB.SortedMap(.read_only).init(conflicts_cursor);
-    const conflict_cursor = (try conflicts.getCursor(&evt.orderKeyDesc(live.created_order, id))) orelse return updated;
+    const conflict_cursor = (try conflicts.getCursor(&evt.orderKeyDesc(live.created_order, id))) orelse return settled(resolve, updated);
     const entry = try DB.HashMap(.read_only).init(conflict_cursor);
+    if (resolve.revision) |expected| {
+        if (!std.mem.eql(u8, &try evt.conflictRevision(Self, repo_opts.hash, arena, live.event, entry), &expected)) return error.Stale;
+    }
     const fields_cursor = (try entry.getCursor(hash.hashInt(repo_opts.hash, evt.conflicted_fields_key))) orelse return updated;
     const fields = try fields_cursor.readBytesAlloc(arena.allocator(), null);
     const their_cursor = (try entry.getCursor(hash.hashInt(repo_opts.hash, evt.their_record_key))) orelse return updated;
@@ -541,6 +587,13 @@ fn resolveFields(
         hunk_index += 1;
     }
     updated.description = try diff3.assemble(arena.allocator(), chunks, resolutions.items);
+    return updated;
+}
+
+// a resolution of a conflict there is none of: refused when it names the
+// conflict's revision, else the live fields with the submitted ones applied
+fn settled(resolve: Resolve, updated: Self) !Self {
+    if (resolve.revision != null) return error.Stale;
     return updated;
 }
 

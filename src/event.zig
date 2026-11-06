@@ -1723,6 +1723,107 @@ pub const base_record_key = "base-record";
 pub const their_record_key = "their-record";
 pub const their_field_to_oid_key = "their-field->oid";
 
+/// a version of a thread's unresolved conflict: a digest of everything its
+/// resolution is built from (the conflicting fields, the live record, the
+/// merged-in side and the merge base), so it moves whenever a later event
+/// or merge changes any of them
+pub const ConflictRevision = [16]u8;
+
+/// the revision of the conflict `entry` holds against the live `ours`
+pub fn conflictRevision(
+    comptime T: type,
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    ours: T,
+    entry: EventDB(hash_kind).HashMap(.read_only),
+) !ConflictRevision {
+    const DB = EventDB(hash_kind);
+    const aa = arena.allocator();
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    const fields_cursor = (try entry.getCursor(hash.hashInt(hash_kind, conflicted_fields_key))) orelse return error.NotFound;
+    hashPart(&hasher, try fields_cursor.readBytesAlloc(aa, null));
+    hashPart(&hasher, try jsonText(aa, ours));
+    for ([_][]const u8{ their_record_key, base_record_key }) |key| {
+        const side: ?T = if (try entry.getCursor(hash.hashInt(hash_kind, key))) |cursor|
+            (try read(T.Record, DB, hash_kind, arena, try DB.HashMap(.read_only).init(cursor))).event
+        else
+            null;
+        hashPart(&hasher, try jsonText(aa, side));
+    }
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return digest[0..@sizeOf(ConflictRevision)].*;
+}
+
+fn hashPart(hasher: *std.crypto.hash.sha2.Sha256, part: []const u8) void {
+    var len: [8]u8 = undefined;
+    std.mem.writeInt(u64, &len, part.len, .little);
+    hasher.update(&len);
+    hasher.update(part);
+}
+
+fn jsonText(aa: std.mem.Allocator, value: anytype) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(aa);
+    try std.json.Stringify.value(value, .{}, &out.writer);
+    return out.written();
+}
+
+/// the revision of the unresolved conflict of the thread of kind `T` that
+/// `id` names in `moment`, or null when it has none
+pub fn conflictRevisionAt(
+    comptime T: type,
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    moment: EventDB(hash_kind).HashMap(.read_only),
+    id: *const [event_id_size]u8,
+) !?ConflictRevision {
+    const DB = EventDB(hash_kind);
+    const record = (try readRecordSubset(T, T.Record, DB, hash_kind, moment, arena, id)) orelse return null;
+    if (record.removed) return null;
+    const conflicts_cursor = (try moment.getCursor(hash.hashInt(hash_kind, T.conflicts_key))) orelse return null;
+    const conflicts = try DB.SortedMap(.read_only).init(conflicts_cursor);
+    const entry_cursor = (try conflicts.getCursor(&orderKeyDesc(record.created_order, id))) orelse return null;
+    return try conflictRevision(T, hash_kind, arena, record.event, try DB.HashMap(.read_only).init(entry_cursor));
+}
+
+/// `conflictRevisionAt` in the repo's consumed events as they are now
+pub fn readConflictRevision(
+    comptime T: type,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: *const [event_id_size]u8,
+) !?ConflictRevision {
+    var event_db_maybe: ?LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir) else null;
+    defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
+    const moment = (if (event_db_maybe) |*event_db|
+        currentMomentFromDb(repo_opts.hash, event_db.db)
+    else if (repo_kind == .git)
+        return null
+    else
+        currentMoment(repo_opts, repo)) catch return null;
+    return conflictRevisionAt(T, repo_opts.hash, arena, moment, id);
+}
+
+/// a resolution's check inside a xit repo's write transaction: the thread's
+/// conflict must still be at `revision` there (error.Stale otherwise), so a
+/// resolution built from it is still the one the client chose
+pub fn ConflictCheck(comptime T: type, comptime hash_kind: hash.HashKind) type {
+    return struct {
+        arena: *std.heap.ArenaAllocator,
+        id: *const [event_id_size]u8,
+        revision: ConflictRevision,
+
+        pub fn check(self: @This(), moment_maybe: ?EventDB(hash_kind).HashMap(.read_only)) !void {
+            const current = (try conflictRevisionAt(T, hash_kind, self.arena, moment_maybe orelse return error.Stale, self.id)) orelse return error.Stale;
+            if (!std.mem.eql(u8, &current, &self.revision)) return error.Stale;
+        }
+    };
+}
+
 // record the commit against every field this event changes. a merge passes no
 // oid, since each field's winner may come from a different side.
 pub fn writeOid(

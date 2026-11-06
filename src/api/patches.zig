@@ -147,7 +147,7 @@ pub fn handle(
 // local mode: bring the event db up to date with the events branch, and the
 // branch patches with their branches, as each TUI page build does. both
 // write events, so a git repo takes the events lock the API's writes take.
-fn catchUp(
+pub fn catchUp(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     io: std.Io,
@@ -172,7 +172,7 @@ const attachment_kind: api_attachments.Kind = .{ .thread = comment_kind, .readDe
 
 // the patch `id` names as its own route answers it, or null when there is none
 // (unknown, removed, or a draft)
-fn readDetail(arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8) !?[]const u8 {
+pub fn readDetail(arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8) !?[]const u8 {
     const aa = arena.allocator();
     var body: std.Io.Writer.Allocating = .init(aa);
     const hex = try aa.dupe(u8, &std.fmt.bytesToHex(id.*, .lower));

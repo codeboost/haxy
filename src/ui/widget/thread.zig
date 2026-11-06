@@ -3127,34 +3127,14 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             }
 
             const id_bytes = try evt.parseEventId(entry.id);
-            if (comptime kind == .issue or kind == .discuss) {
-                thread_write.edit(self.session.eventHost(), io, allocator, src, actor, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description }, null) catch |err| switch (err) {
-                    error.Forbidden => return,
-                    else => |e| return e,
-                };
-            } else {
-                if (!try src.canModify(io, allocator, actor, kind, &id_bytes)) return;
-                switch (src.repo_kind) {
-                    inline else => |repo_kind| {
-                        var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                        defer any_repo.deinit(io, allocator);
-                        switch (any_repo) {
-                            inline else => |*repo| if (supports_drafts) {
-                                Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, .{ .fields = .{
-                                    .title = title,
-                                    .labels = labels,
-                                    .description = description,
-                                    .target_branch = target_branch,
-                                } }, author) catch |err| {
-                                    const failure = FeedbackFailure.fromError(err) orelse return err;
-                                    try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
-                                    return;
-                                };
-                            } else unreachable,
-                        }
-                    },
-                }
-            }
+            thread_write.edit(self.session.eventHost(), io, allocator, src, actor, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description, .target_branch = target_branch }, null) catch |err| switch (err) {
+                error.Forbidden => return,
+                else => |e| if (comptime supports_drafts) {
+                    const failure = FeedbackFailure.fromError(e) orelse return e;
+                    try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
+                    return;
+                } else return e,
+            };
 
             const route = listRoute(self.data.identity, entryStatus(entry.*), entry.id) orelse return;
             try self.session.navigate(route);

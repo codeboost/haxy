@@ -324,3 +324,62 @@ const Answer = union(enum) {
         };
     }
 };
+
+test "a patch's branches are sent as the ref ids answers name them, percent-encoded byte for byte" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+    try std.testing.expectEqualStrings("main", (try api_patches.branchName(aa, "branch:main")).?);
+    try std.testing.expectEqualStrings("feature/caf\xe9 x", (try api_patches.branchName(aa, "branch:feature/caf%E9%20x")).?);
+    try std.testing.expectEqualStrings("a%2Fb", (try api_patches.branchName(aa, "branch:a%252Fb")).?);
+    // a plus is itself, not a space
+    try std.testing.expectEqualStrings("a+b", (try api_patches.branchName(aa, "branch:a+b")).?);
+    for ([_][]const u8{ "", "main", "branch:", "tag:v1", "commit:abc", "revision:0123", "branch:a%2", "branch:a%zz", "Branch:main" }) |id| {
+        try std.testing.expectEqual(null, try api_patches.branchName(aa, id));
+    }
+}
+
+test "a patch's answer carries the revision an edit replaces, and what the viewer may do to it" {
+    var t: TestRepo(.xit) = undefined;
+    try t.init();
+    defer t.deinit();
+    _ = try t.commit(&.{.{ "shared.txt", "shared\n" }});
+    try t.repo.addBranch(std.testing.io, .{ .name = "feature" });
+    _ = try t.commitOn("feature", &.{.{ "a.txt", "a\n" }});
+    const id = try t.branchPatch(3, "feature");
+
+    const patch = try t.detail(&id, null);
+    const record = (try evt.readFromRepo(evt.Patch, .xit, @TypeOf(t).opts, std.testing.io, std.testing.allocator, &t.arena, &t.repo, &try evt.parseEventId(&id))).?;
+    try std.testing.expectEqualStrings(&std.fmt.bytesToHex(evt.Patch.contentRevision(record.event), .lower), field(patch, "edit_revision").string);
+    // `revision` stays the patch revision it proposes
+    try std.testing.expectEqualStrings(&record.event.revision.?.id, field(field(patch, "revision").object, "id").string);
+    const actions = field(patch, "actions").object;
+    for ([_][]const u8{ "edit", "set_status", "remove", "attach" }) |name| try std.testing.expect(actions.contains(name));
+}
+
+test "a merged patch stays merged: its status isn't the viewer's to change, whoever they are" {
+    var entry: Patches.Entry = .{
+        .id = "",
+        .record = .{ .event = .{ .title = "t", .description = "", .labels = "", .target_branch = "master", .status = .{ .merged = .{ .revision = .source, .patchrev_id = @splat('0') } } } },
+        .can_modify = true,
+    };
+    const merged = api_patches.actions(&entry, true);
+    try std.testing.expect(merged.edit == .available);
+    try std.testing.expect(merged.remove == .available);
+    try std.testing.expectEqual(.unsupported, merged.set_status.unavailable.code);
+    entry.record.event.status = .closed;
+    try std.testing.expect(api_patches.actions(&entry, true).set_status == .available);
+    entry.can_modify = false;
+    try std.testing.expectEqual(.forbidden, api_patches.actions(&entry, true).set_status.unavailable.code);
+    try std.testing.expectEqual(.unauthenticated, api_patches.actions(&entry, false).edit.unavailable.code);
+}
+
+test "a status change that raced another change answers conflict, never internal" {
+    const raced = try api_patches.statusWriteError(error.Stale);
+    try std.testing.expectEqual(.conflict, raced.code);
+    // a status change sends no revision to name
+    try std.testing.expectEqual(0, raced.field_errors.len);
+    try std.testing.expectEqual(.conflict, (try api_patches.statusWriteError(error.PatchAlreadyMerged)).code);
+    try std.testing.expectEqualStrings("source", (try api_patches.statusWriteError(error.InvalidSourceBranch)).field_errors[0].field);
+    try std.testing.expectEqual(.forbidden, (try api_patches.statusWriteError(error.Forbidden)).code);
+}

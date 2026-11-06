@@ -15,6 +15,7 @@ const thread = ui.widget.thread;
 const srch_thrd = @import("../../search_thread.zig");
 const fork = @import("../../fork.zig");
 const pch = @import("../../patch.zig");
+const thread_write = @import("../../thread_write.zig");
 
 const wasm = builtin.target.cpu.arch == .wasm32;
 
@@ -404,21 +405,12 @@ pub fn create(
     io.random(&id_bytes);
     const id = std.fmt.bytesToHex(id_bytes, .lower);
     if (source_branch) |branch| {
-        switch (repo_source.repo_kind) {
-            inline else => |repo_kind| {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, repo_source.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                switch (any_repo) {
-                    inline else => |*repo| try pch.writeBranchPatch(session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{
-                        .title = title,
-                        .labels = labels,
-                        .description = description,
-                        .target_branch = target_branch,
-                        .source_branch = branch,
-                    }, null, actor.author),
-                }
-            },
-        }
+        try thread_write.createBranchPatch(session.eventHost(), io, allocator, repo_source, &id_bytes, .{
+            .title = title,
+            .labels = labels,
+            .description = description,
+            .target_branch = target_branch,
+        }, branch, actor.author);
         return id;
     }
     if (session.data.host_kind == .local) return error.InvalidSourceBranch;

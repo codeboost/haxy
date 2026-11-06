@@ -679,3 +679,239 @@ test "removing an attachment that isn't live on the thread named is not found, w
     // a live one on its own thread is theirs to be refused
     try std.testing.expectError(error.Forbidden, thread_write.remove(.local, io, allocator, source, reader, .issue, &first, .attach, &file));
 }
+
+// --- branch patches ----------------------------------------------------------------
+
+// a repo of `kind` whose master and feature branches share a base commit, with
+// feature one commit ahead, and an `unrelated` branch sharing no history
+fn PatchRepo(comptime kind: rp.RepoKind) type {
+    return struct {
+        const Self = @This();
+        const opts: rp.RepoOpts(kind) = .{};
+
+        temp: std.testing.TmpDir,
+        path: [:0]const u8,
+        repo: rp.Repo(kind, opts),
+        arena: std.heap.ArenaAllocator,
+
+        fn init(self: *Self) !void {
+            const io = std.testing.io;
+            const allocator = std.testing.allocator;
+            self.temp = std.testing.tmpDir(.{});
+            self.path = try self.temp.dir.realPathFileAlloc(io, ".", allocator);
+            self.repo = try rp.Repo(kind, opts).init(io, allocator, .{ .path = self.path });
+            self.arena = std.heap.ArenaAllocator.init(allocator);
+            errdefer self.deinit();
+            // the fixture's own commits' author
+            try self.repo.addConfig(io, allocator, .{ .name = "user.name", .value = "fixture" });
+            try self.repo.addConfig(io, allocator, .{ .name = "user.email", .value = "fixture@example.test" });
+            {
+                const file = try self.repo.core.work_dir.createFile(io, "base.txt", .{});
+                defer file.close(io);
+                try file.writeStreamingAll(io, "base\n");
+            }
+            try self.repo.add(io, allocator, &.{"base.txt"});
+            _ = try self.repo.commit(io, allocator, .{ .message = "base" });
+            try self.repo.addBranch(io, .{ .name = "feature" });
+            try self.repo.addBranch(io, .{ .name = "other" });
+            _ = try self.repo.commitAtRef(io, allocator, .{ .message = "feature" }, null, .{ .kind = .head, .name = "feature" });
+            _ = try self.repo.commitAtRef(io, allocator, .{ .message = "unrelated", .parent_oids = &.{} }, null, .{ .kind = .head, .name = "unrelated" });
+        }
+
+        fn deinit(self: *Self) void {
+            self.arena.deinit();
+            self.repo.deinit(std.testing.io, std.testing.allocator);
+            std.testing.allocator.free(self.path);
+            self.temp.cleanup();
+        }
+
+        fn source(self: *const Self) ui.RepoSource {
+            return .{ .path = self.path, .repo_kind = kind };
+        }
+
+        fn patch(self: *Self, id: *const [evt.event_id_size]u8) !?evt.Patch.Record {
+            return evt.readFromRepo(evt.Patch, kind, opts, std.testing.io, std.testing.allocator, &self.arena, &self.repo, id);
+        }
+
+        fn create(self: *Self, id: *const [evt.event_id_size]u8, source_branch: []const u8, target_branch: []const u8, author: evt.CommitAuthor) !void {
+            return thread_write.createBranchPatch(.local, std.testing.io, std.testing.allocator, self.source(), id, .{
+                .title = "Proposal",
+                .labels = "feature",
+                .description = "Adds a feature.",
+                .target_branch = target_branch,
+            }, source_branch, author);
+        }
+    };
+}
+
+test "a branch patch is opened from an existing branch into another, related one, under a chosen id only once" {
+    try testBranchPatchCreate(.git);
+    try testBranchPatchCreate(.xit);
+}
+
+fn testBranchPatchCreate(comptime kind: rp.RepoKind) !void {
+    var t: PatchRepo(kind) = undefined;
+    try t.init();
+    defer t.deinit();
+    const id: [evt.event_id_size]u8 = @splat(40);
+
+    // the branches are checked before anything is written
+    try std.testing.expectError(error.InvalidSourceBranch, t.create(&id, "missing", "master", writer.author));
+    try std.testing.expectError(error.InvalidTargetBranch, t.create(&id, "feature", "missing", writer.author));
+    try std.testing.expectError(error.SameBranch, t.create(&id, "feature", "feature", writer.author));
+    try std.testing.expectError(error.UnrelatedBranches, t.create(&id, "feature", "unrelated", writer.author));
+    try std.testing.expectEqual(null, try t.repo.readRef(std.testing.io, evt.events_ref));
+
+    try t.create(&id, "feature", "master", writer.author);
+    const opened = (try t.patch(&id)).?;
+    try std.testing.expectEqualStrings("Proposal", opened.event.title);
+    try std.testing.expectEqualStrings("feature", opened.event.source_branch.?);
+    try std.testing.expectEqualStrings("master", opened.event.target_branch);
+    try std.testing.expect(opened.event.revision != null);
+    try std.testing.expectEqual(.open, opened.event.status.kind());
+
+    // a retry of the same creation, or anything else under the id, is refused
+    try std.testing.expectError(error.IdTaken, t.create(&id, "feature", "other", writer.author));
+    try std.testing.expectError(error.IdTaken, thread_write.create(.local, std.testing.io, std.testing.allocator, t.source(), .issue, &id, .{ .title = "Issue", .labels = "", .description = "" }, writer.author));
+    const issue_id: [evt.event_id_size]u8 = @splat(41);
+    try thread_write.create(.local, std.testing.io, std.testing.allocator, t.source(), .issue, &issue_id, .{ .title = "Issue", .labels = "", .description = "" }, writer.author);
+    try std.testing.expectError(error.IdTaken, t.create(&issue_id, "feature", "master", writer.author));
+    try std.testing.expectEqualStrings("master", (try t.patch(&id)).?.event.target_branch);
+}
+
+test "a branch patch is edited, closed, reopened and removed by an issue's rules; a retarget captures a fresh revision" {
+    try testBranchPatchWrites(.git);
+    try testBranchPatchWrites(.xit);
+}
+
+fn testBranchPatchWrites(comptime kind: rp.RepoKind) !void {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var t: PatchRepo(kind) = undefined;
+    try t.init();
+    defer t.deinit();
+    const source = t.source();
+    const id: [evt.event_id_size]u8 = @splat(42);
+    try t.create(&id, "feature", "master", writer.author);
+    const opened = (try t.patch(&id)).?;
+    const loaded = evt.Patch.contentRevision(opened.event);
+
+    // an edit against the revision it was loaded at lands; one against a
+    // revision someone else's edit moved is refused, and theirs stands
+    try thread_write.edit(.local, io, allocator, source, writer, .patch, &id, .{ .title = "Retitled", .labels = "feature", .description = "Adds a feature.", .target_branch = "master" }, loaded);
+    try std.testing.expectError(error.Stale, thread_write.edit(.local, io, allocator, source, writer, .patch, &id, .{ .title = "Overwritten", .labels = "", .description = "", .target_branch = "master" }, loaded));
+    const retitled = (try t.patch(&id)).?;
+    try std.testing.expectEqualStrings("Retitled", retitled.event.title);
+    // an edit that keeps the target keeps the revision it proposes
+    try std.testing.expectEqualStrings(&opened.event.revision.?.id, &retitled.event.revision.?.id);
+
+    // a status change isn't an edit's to overwrite: the content revision
+    // stays, and the edit keeps the status
+    const current = evt.Patch.contentRevision(retitled.event);
+    try thread_write.setStatus(evt.Patch, .local, io, allocator, source, writer, &id, .closed);
+    try std.testing.expectEqualSlices(u8, &current, &evt.Patch.contentRevision((try t.patch(&id)).?.event));
+    try thread_write.edit(.local, io, allocator, source, writer, .patch, &id, .{ .title = "Edited", .labels = "ui", .description = "Now with text.", .target_branch = "master" }, current);
+    const edited = (try t.patch(&id)).?;
+    try std.testing.expectEqualStrings("Edited", edited.event.title);
+    try std.testing.expectEqual(.closed, edited.event.status.kind());
+
+    // reopening a branch patch captures its source as it is now
+    try thread_write.setStatus(evt.Patch, .local, io, allocator, source, writer, &id, .open);
+    const reopened = (try t.patch(&id)).?;
+    try std.testing.expectEqual(.open, reopened.event.status.kind());
+    try std.testing.expect(reopened.event.revision != null);
+
+    // the target must be another existing branch the source shares history with
+    const fields: thread_write.Fields = .{ .title = "Edited", .labels = "ui", .description = "Now with text.", .target_branch = "missing" };
+    const at = evt.Patch.contentRevision(reopened.event);
+    try std.testing.expectError(error.InvalidTargetBranch, thread_write.edit(.local, io, allocator, source, writer, .patch, &id, fields, at));
+    var same = fields;
+    same.target_branch = "feature";
+    try std.testing.expectError(error.SameBranch, thread_write.edit(.local, io, allocator, source, writer, .patch, &id, same, at));
+    var unrelated = fields;
+    unrelated.target_branch = "unrelated";
+    try std.testing.expectError(error.UnrelatedBranches, thread_write.edit(.local, io, allocator, source, writer, .patch, &id, unrelated, at));
+    // retargeting moves the content revision and captures a fresh patch revision
+    var retarget = fields;
+    retarget.target_branch = "other";
+    try thread_write.edit(.local, io, allocator, source, writer, .patch, &id, retarget, at);
+    const retargeted = (try t.patch(&id)).?;
+    try std.testing.expectEqualStrings("other", retargeted.event.target_branch);
+    try std.testing.expect(!std.mem.eql(u8, &reopened.event.revision.?.id, &retargeted.event.revision.?.id));
+    try std.testing.expectError(error.Stale, thread_write.edit(.local, io, allocator, source, writer, .patch, &id, fields, at));
+
+    // a reader who didn't open it may not change it in any way
+    const now = evt.Patch.contentRevision(retargeted.event);
+    try std.testing.expectError(error.Forbidden, thread_write.edit(.local, io, allocator, source, reader, .patch, &id, retarget, now));
+    try std.testing.expectError(error.Forbidden, thread_write.setStatus(evt.Patch, .local, io, allocator, source, reader, &id, .closed));
+    try std.testing.expectError(error.Forbidden, thread_write.remove(.local, io, allocator, source, reader, .patch, &id, .patch, &id));
+
+    // a reader's own patch is theirs to change
+    const own: [evt.event_id_size]u8 = @splat(43);
+    try t.create(&own, "feature", "master", reader.author);
+    try thread_write.edit(.local, io, allocator, source, reader, .patch, &own, .{ .title = "Mine", .labels = "", .description = "", .target_branch = "master" }, null);
+    try thread_write.setStatus(evt.Patch, .local, io, allocator, source, reader, &own, .closed);
+    try thread_write.remove(.local, io, allocator, source, reader, .patch, &own, .patch, &own);
+    try std.testing.expect((try t.patch(&own)).?.removed);
+
+    // a removed patch is gone for every write, and its branch stays
+    try thread_write.remove(.local, io, allocator, source, writer, .patch, &id, .patch, &id);
+    try std.testing.expectError(error.NotFound, thread_write.edit(.local, io, allocator, source, writer, .patch, &id, retarget, null));
+    try std.testing.expectError(error.NotFound, thread_write.setStatus(evt.Patch, .local, io, allocator, source, writer, &id, .closed));
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, writer, .patch, &id, .patch, &id));
+    try std.testing.expect(try t.repo.readRef(io, .{ .kind = .head, .name = "feature" }) != null);
+}
+
+test "a fork-backed patch is retargeted by the shared edit, with nothing concurrent to refuse it" {
+    try testForkPatchRetarget(.git);
+    try testForkPatchRetarget(.xit);
+}
+
+fn testForkPatchRetarget(comptime kind: rp.RepoKind) !void {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var t: PatchRepo(kind) = undefined;
+    try t.init();
+    defer t.deinit();
+    // a published fork-backed patch: no source branch in this repo
+    const id: [evt.event_id_size]u8 = @splat(44);
+    try evt.consume(.local, .repo, kind, PatchRepo(kind).opts, io, allocator, &t.repo, evt.events_ref, &.{.{
+        .id = std.fmt.bytesToHex(id, .lower),
+        .author = writer.author,
+        .event = .{ .patch = .{ .title = "From a fork", .description = "", .labels = "", .target_branch = "master" } },
+    }});
+    const loaded = evt.Patch.contentRevision((try t.patch(&id)).?.event);
+
+    try thread_write.edit(.local, io, allocator, t.source(), writer, .patch, &id, .{ .title = "From a fork", .labels = "", .description = "", .target_branch = "other" }, loaded);
+    const retargeted = (try t.patch(&id)).?;
+    try std.testing.expectEqualStrings("other", retargeted.event.target_branch);
+    try std.testing.expectEqual(null, retargeted.event.source_branch);
+    try std.testing.expectEqual(null, retargeted.event.revision);
+}
+
+test "reopening a branch patch that changed between its read and its write is refused as stale, in every client" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var t: PatchRepo(.xit) = undefined;
+    try t.init();
+    defer t.deinit();
+    const id: [evt.event_id_size]u8 = @splat(45);
+    try t.create(&id, "feature", "master", writer.author);
+    try thread_write.setStatus(evt.Patch, .local, io, allocator, t.source(), writer, &id, .closed);
+
+    // someone retitles it after the reopen read it, before it captures the source
+    const Interleave = struct {
+        var path_seen: [:0]const u8 = "";
+        fn retitle(_: std.Io) void {
+            evt.Patch.testing.after_read = null;
+            thread_write.edit(.local, std.testing.io, std.testing.allocator, .{ .path = path_seen, .repo_kind = .xit }, writer, .patch, &@as([evt.event_id_size]u8, @splat(45)), .{ .title = "Retitled", .labels = "", .description = "", .target_branch = "master" }, null) catch @panic("retitling failed");
+        }
+    };
+    Interleave.path_seen = t.path;
+    evt.Patch.testing.after_read = Interleave.retitle;
+    defer evt.Patch.testing.after_read = null;
+    try std.testing.expectError(error.Stale, thread_write.setStatus(evt.Patch, .local, io, allocator, t.source(), writer, &id, .open));
+    const patch = (try t.patch(&id)).?;
+    try std.testing.expectEqualStrings("Retitled", patch.event.title);
+    try std.testing.expectEqual(.closed, patch.event.status.kind());
+}

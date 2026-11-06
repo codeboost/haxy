@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const evt = @import("../event.zig");
 const diff3 = @import("../diff3.zig");
 const srch_thrd = @import("../search_thread.zig");
@@ -303,6 +304,31 @@ pub fn resolveMerge(
     }
 }
 
+/// a version of what an edit replaces (as `evt.Issue.contentRevision`): a
+/// digest of the title, labels, description and target branch, so it moves
+/// whenever any of them changes, however the change arrived, and stays when
+/// only the status, or the revision a source branch's push captures, does
+pub const ContentRevision = evt.Issue.Revision;
+
+// for tests only: run between `updateAt`'s read of a patch and its write, so
+// a test can make something happen in that window
+pub const testing = struct {
+    pub var after_read: ?*const fn (std.Io) void = null;
+};
+
+pub fn contentRevision(patch: Self) ContentRevision {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    for ([_][]const u8{ patch.title, patch.labels, patch.description, patch.target_branch }) |field| {
+        var len: [8]u8 = undefined;
+        std.mem.writeInt(u64, &len, field.len, .little);
+        hasher.update(&len);
+        hasher.update(field);
+    }
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return digest[0..@sizeOf(ContentRevision)].*;
+}
+
 pub fn update(
     host: evt.Host,
     comptime repo_kind: rp.RepoKind,
@@ -314,30 +340,60 @@ pub fn update(
     change: Update,
     author: evt.CommitAuthor,
 ) !void {
+    return updateAt(host, repo_kind, repo_opts, io, allocator, repo, id, change, author, null);
+}
+
+/// `update`, only while the patch's fields are still at `revision`
+/// (`contentRevision`), else error.Stale; null applies it to whatever the
+/// patch is now. error.NotFound when the id names no live patch,
+/// error.PatchAlreadyMerged for a merged patch's status. a change that
+/// captures a branch patch's revision (a new target, or reopening it) is
+/// written only while the patch is still exactly as read
+/// (error.PatchOutOfDate); any other is built again inside a xit repo's write
+/// transaction from the patch as it is there, so a change landing meanwhile
+/// stands (a status change under an edit, an edit under a status change). a
+/// git repo's writers serialize the read and the write instead (thread_write).
+pub fn updateAt(
+    host: evt.Host,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: *const [evt.event_id_size]u8,
+    change: Update,
+    author: evt.CommitAuthor,
+    revision: ?ContentRevision,
+) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const record = (try evt.readFromRepo(Self, repo_kind, repo_opts, io, allocator, &arena, repo, id)) orelse return error.NotFound;
     if (record.removed) return error.NotFound;
+    if (revision) |expected| {
+        if (!std.mem.eql(u8, &contentRevision(record.event), &expected)) return error.Stale;
+    }
+    if (builtin.is_test) {
+        if (testing.after_read) |hook| hook(io);
+    }
 
     var updated = record.event;
     switch (change) {
         .status => |status| {
             if (updated.status.kind() == status) return;
-            updated.status = switch (status) {
-                .open => .open,
-                .closed => .closed,
-                .merged => return error.InvalidPatchStatus,
-            };
+            updated.status = try changedStatus(updated, status);
             // a closed patch may have missed source branch updates
             if (status == .open and updated.source_branch != null) updated.revision = null;
         },
         .fields => |fields| {
             if (!branchValid(fields.target_branch)) return error.InvalidTargetBranch;
             if ((try repo.readRef(io, .{ .kind = .head, .name = fields.target_branch })) == null) return error.InvalidTargetBranch;
+            const retargeted = !std.mem.eql(u8, updated.target_branch, fields.target_branch);
+            // what a merged patch landed in stays where it landed
+            if (retargeted and updated.status.kind() == .merged) return error.PatchAlreadyMerged;
             updated.title = fields.title;
             updated.labels = fields.labels;
             updated.description = fields.description;
-            if (!std.mem.eql(u8, updated.target_branch, fields.target_branch)) updated.revision = null;
+            if (retargeted) updated.revision = null;
             updated.target_branch = fields.target_branch;
         },
         .resolve => |resolve| {
@@ -347,12 +403,85 @@ pub fn update(
     if (!fieldsValid(updated.title, updated.labels)) return error.InvalidFields;
 
     if (updated.source_branch != null and updated.revision == null) return @import("../patch.zig").writeBranchPatch(host, repo_kind, repo_opts, io, allocator, repo, std.fmt.bytesToHex(id.*, .lower), updated, record.event, author);
-    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{.{
+    var events = [_]evt.EventWithId{.{
         .id = std.fmt.bytesToHex(id.*, .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         .author = author,
         .event = .{ .patch = updated },
-    }});
+    }};
+    // a resolution's fields come from the conflict entry read above, so it is
+    // written as built
+    if (repo_kind == .xit and change != .resolve) {
+        return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, Rebase(repo_opts.hash){
+            .arena = &arena,
+            .id = id,
+            .change = change,
+            .revision = revision,
+            .event = &events[0],
+        });
+    }
+    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
+}
+
+// `patch`'s status set to `status` (open or closed): a merged patch stays merged
+fn changedStatus(patch: Self, status: StatusKind) !Status {
+    if (patch.status.kind() == .merged) return error.PatchAlreadyMerged;
+    return switch (status) {
+        .open => .open,
+        .closed => .closed,
+        .merged => error.InvalidPatchStatus,
+    };
+}
+
+// the check `updateAt` runs inside a xit repo's write transaction: it
+// rebuilds the event from the patch as the transaction sees it, refusing a
+// removed patch, a stale revision, and a status the patch already has
+// (which cancels the write). a fork-backed patch's new target is applied
+// here, clearing its revision as `updateAt` does; a branch patch's change
+// that would now have to capture a revision (its target moved meanwhile) is
+// refused as out of date.
+fn Rebase(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        // holds the rebuilt event's strings until the write is done
+        arena: *std.heap.ArenaAllocator,
+        id: *const [evt.event_id_size]u8,
+        change: Update,
+        revision: ?ContentRevision,
+        event: *evt.EventWithId,
+
+        pub fn check(self: @This(), moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+            const record = (try readById(evt.EventDB(hash_kind), hash_kind, moment_maybe orelse return error.NotFound, self.arena, self.id)) orelse return error.NotFound;
+            if (record.removed) return error.NotFound;
+            if (self.revision) |expected| {
+                if (!std.mem.eql(u8, &contentRevision(record.event), &expected)) return error.Stale;
+            }
+            var updated = record.event;
+            switch (self.change) {
+                .status => |status| {
+                    if (updated.status.kind() == status) return error.CancelTransaction;
+                    updated.status = try changedStatus(updated, status);
+                    if (status == .open and updated.source_branch != null) return error.PatchOutOfDate;
+                },
+                .fields => |fields| {
+                    if (!std.mem.eql(u8, updated.target_branch, fields.target_branch)) {
+                        // a branch patch's new target captures a revision,
+                        // which `updateAt` does outside this check: here its
+                        // target moved since the read
+                        if (updated.source_branch != null) return error.PatchOutOfDate;
+                        // a fork-backed patch's revision is its fork's to push again
+                        if (updated.status.kind() == .merged) return error.PatchAlreadyMerged;
+                        updated.target_branch = fields.target_branch;
+                        updated.revision = null;
+                    }
+                    updated.title = fields.title;
+                    updated.labels = fields.labels;
+                    updated.description = fields.description;
+                },
+                .resolve => unreachable,
+            }
+            self.event.event = .{ .patch = updated };
+        }
+    };
 }
 
 fn resolveFields(

@@ -7,9 +7,12 @@
 //! labels, revisions and mergeability are exactly the TUI's; see
 //! api/thread.zig for the shapes threads share.
 //!
-//! reads only: writing patches is not in the API yet, so the list says
-//! opening one is unavailable and the writes answer `unsupported`. what
-//! the TUI lets anyone write on a patch's page goes through the shared
+//! writes (#18): opening a branch-backed patch (from one existing branch
+//! into another), editing its fields and target, closing or reopening it,
+//! and removing it, through the operations the TUI and Haxy's forms use
+//! (`thread_write.createBranchPatch`, `edit`, `setStatus`, `remove`). drafts
+//! and fork-backed patches are opened elsewhere, and merging is not here.
+//! what the TUI lets anyone write on a patch's page goes through the shared
 //! thread routes: its comments (api/comments.zig), its attachments
 //! (api/attachments.zig) and the viewer's notification state
 //! (api/notifications.zig).
@@ -21,6 +24,7 @@ const std = @import("std");
 const xit = @import("xit");
 const rp = xit.repo;
 const api = @import("../api.zig");
+const api_account = @import("./account.zig");
 const api_attachments = @import("./attachments.zig");
 const api_comments = @import("./comments.zig");
 const api_diff = @import("./diff.zig");
@@ -90,12 +94,18 @@ pub fn handle(
     switch (thread_route.resource) {
         .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, thread_route, query, comment_kind),
         .attachments, .attachment => return api_attachments.handle(io, request, allocator, host, viewer, thread_route, query, attachment_kind),
-        // a patch's status is not written through the API yet
-        .status => return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{ .keep_alive = request.head.method == .GET or request.head.method == .HEAD }),
-        .list, .labels, .thread => {},
+        .list, .labels, .thread, .status => {},
     }
     const method = request.head.method;
-    if (method != .GET and method != .HEAD) return unsupported(request, allocator);
+    const read_methods = method == .GET or method == .HEAD;
+    const change: ?Change = switch (thread_route.resource) {
+        .list => if (read_methods) null else if (method == .POST) .create else return api_thread.unsupported(request, allocator, "GET, HEAD, POST"),
+        .labels => if (read_methods) null else return api_thread.unsupported(request, allocator, "GET, HEAD"),
+        .thread => if (read_methods) null else if (method == .PATCH) .edit else if (method == .DELETE) .remove else return api_thread.unsupported(request, allocator, "GET, HEAD, PATCH, DELETE"),
+        .status => if (method == .PUT) .set_status else return api_thread.unsupported(request, allocator, "PUT"),
+        .comments, .comment, .attachments, .attachment => unreachable,
+    };
+    if (change) |value| return handleWrite(io, request, allocator, host, viewer, thread_route, value);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -292,7 +302,7 @@ fn write(
             for (items, window.items) |*item, *entry| item.* = try summary(aa, entry, list.search);
             try std.json.Stringify.value(.{
                 .status = list.status,
-                .actions = list_actions,
+                .actions = api_thread.listActions(.patch, .{ .may_write = viewer != null, .signed_in = opened.handle.viewer != null }),
                 // patches have no assignees, so an assignee filter lists nothing
                 .filters = try api_thread.Filters.init(aa, list.search, false),
                 .counts = .{ .open = api_thread.count(data.open), .closed = api_thread.count(data.closed), .merged = api_thread.count(data.merged) },
@@ -342,10 +352,6 @@ fn routeSearch(aa: std.mem.Allocator, search: []const u8) ![]const u8 {
 // --- shapes ------------------------------------------------------------------
 
 const Availability = api_thread.Availability;
-
-// what the viewer may do to the list: patches are opened in the TUI and
-// Haxy's web pages only, for now
-const list_actions: api_thread.ListActions = .{ .create = .{ .unavailable = .{ .code = .unsupported, .message = "Patches can't be opened from Haxy Hub yet." } } };
 
 /// a listed patch, in the shape every thread kind's lists share; its status
 /// is its kind (a merged patch's merge is in its own route)
@@ -475,9 +481,9 @@ const Review = union(enum) {
     }
 };
 
-/// what the viewer may do to one patch through the API: attach a file
-/// (`thread_write.attach`); its other writes come with #18-#20
-const Actions = struct { attach: Availability };
+/// what the viewer may do to one patch through the API: change its fields,
+/// close or reopen it, remove it, attach a file to it; merging is #19's
+const Actions = struct { edit: Availability, set_status: Availability, remove: Availability, attach: Availability };
 
 /// one patch: its summary, its whole description (parsed by haxy's markdown
 /// reader, as the TUI renders it), what it proposes, its attachments, and what
@@ -494,6 +500,9 @@ const Detail = struct {
     no_changes: bool,
     mergeability: Mergeability,
     review: Review,
+    // what an edit replaces (`evt.Patch.contentRevision`), as 32 hex digits;
+    // `revision` is the patch revision it proposes
+    edit_revision: []const u8,
     // every live attachment, oldest first, as the TUI lists them
     attachments: []const api_attachments.Item,
     actions: Actions,
@@ -506,7 +515,7 @@ const Detail = struct {
         }
         try json.objectField("description");
         try json.write(api_md.Blocks{ .blocks = self.description });
-        inline for (.{ "description_text", "source", "target", "revision", "merged", "no_changes", "mergeability", "review", "attachments" }) |name| {
+        inline for (.{ "description_text", "source", "target", "revision", "merged", "no_changes", "mergeability", "review", "edit_revision", "attachments" }) |name| {
             try json.objectField(name);
             try json.write(@field(self, name));
         }
@@ -555,10 +564,27 @@ pub fn detail(aa: std.mem.Allocator, entry: *const Patches.Entry, host_kind: evt
             else
                 "This patch's fork is gone, so its commits can't be shown." } },
         },
+        .edit_revision = try aa.dupe(u8, &std.fmt.bytesToHex(evt.Patch.contentRevision(patch.*), .lower)),
         .attachments = try api_attachments.items(aa, entry.attachments, .{ .viewer = viewer.tab, .signed_in = viewer.signed_in }),
-        .actions = .{ .attach = api_thread.threadActions(.patch, .{ .may_write = entry.can_modify, .signed_in = viewer.signed_in }).attach },
+        .actions = actions(entry, viewer.signed_in),
     };
 }
+
+/// what the viewer may do to a patch: what they may do to any thread they
+/// wrote or may write to (`api_thread.threadActions`), except that a merged
+/// patch stays merged
+pub fn actions(entry: *const Patches.Entry, signed_in: bool) Actions {
+    const shared = api_thread.threadActions(.patch, .{ .may_write = entry.can_modify, .signed_in = signed_in });
+    const merged = entry.record.event.status.kind() == .merged;
+    return .{
+        .edit = shared.edit,
+        .set_status = if (merged and shared.set_status == .available) merged_status else shared.set_status,
+        .remove = shared.remove,
+        .attach = shared.attach,
+    };
+}
+
+const merged_status: Availability = .{ .unavailable = .{ .code = .unsupported, .message = "A merged patch stays merged; it can't be closed or reopened." } };
 
 /// why haxy doesn't offer merging a patch, as the conventions' availability
 /// reasons put it
@@ -571,6 +597,222 @@ pub fn mergeUnavailable(block: Patches.MergeBlock) @FieldType(Mergeability, "una
         .no_revision => .{ .code = .unsupported, .message = "Nothing has been pushed to this patch yet." },
         .conflicted => .{ .code = .conflict, .message = "Concurrent edits to this patch conflict; resolve them before merging." },
     };
+}
+
+// --- writes -------------------------------------------------------------------
+//
+// every write resolves the repo as the viewer (one they can't read is not
+// found), then authorizes them afresh, as the TUI and the web forms do
+// (`ui.authorizeUser`: their role in the repo, then the patches tab's role),
+// and writes through thread_write, which checks who may change an existing
+// patch. local mode has no accounts and writes as its repo's owner.
+
+const Change = enum { create, edit, set_status, remove };
+
+/// `POST …/patches`: a new branch-backed patch from `source` into `target`,
+/// both branch ref ids (`branch:<percent-encoded name>`, as answers name
+/// them). `id` is optional: a client that chooses one (32 lowercase hex
+/// digits) can retry without opening a second patch.
+pub const CreateRequest = struct {
+    id: []const u8,
+    title: []const u8,
+    labels: []const u8,
+    description: []const u8,
+    source: []const u8,
+    target: []const u8,
+};
+
+/// `PATCH …/patches/{id}`: the patch's fields and target, replaced as of
+/// `revision` (its `edit_revision`)
+pub const EditRequest = struct {
+    revision: []const u8,
+    title: []const u8,
+    labels: []const u8,
+    description: []const u8,
+    target: []const u8,
+};
+
+/// `PUT …/patches/{id}/status`
+pub const StatusRequest = struct {
+    status: []const u8,
+};
+
+const Write = union(Change) {
+    create: CreateRequest,
+    edit: EditRequest,
+    set_status: StatusRequest,
+    remove,
+};
+
+pub const change_forbidden: api.Error = .{ .code = .forbidden, .message = "Only the patch's author and the repository's writers can change it." };
+const stale_revision: api.Error = .{
+    .code = .conflict,
+    .message = "This patch changed since you loaded it.",
+    .field_errors = &.{.{ .field = "revision", .message = "Someone else changed this patch meanwhile. Load it again, then make your change." }},
+};
+const already_merged: api.Error = .{ .code = .conflict, .message = "This patch has been merged; it can't be closed or reopened, nor retargeted." };
+
+/// the branch a ref id names (`branch:` and its name percent-encoded byte
+/// for byte, as answers' `id`s are), or null when it isn't one
+pub fn branchName(aa: std.mem.Allocator, id: []const u8) !?[]const u8 {
+    const prefix = "branch:";
+    if (!std.mem.startsWith(u8, id, prefix) or id.len == prefix.len) return null;
+    const encoded = id[prefix.len..];
+    const out = try aa.alloc(u8, encoded.len);
+    var len: usize = 0;
+    var i: usize = 0;
+    while (i < encoded.len) : (i += 1) {
+        out[len] = if (encoded[i] == '%') byte: {
+            if (i + 2 >= encoded.len) return null;
+            const hi = std.fmt.charToDigit(encoded[i + 1], 16) catch return null;
+            const lo = std.fmt.charToDigit(encoded[i + 2], 16) catch return null;
+            i += 2;
+            break :byte hi * 16 + lo;
+        } else encoded[i];
+        len += 1;
+    }
+    return out[0..len];
+}
+
+const choose_branch = "Choose one of the repository's branches.";
+
+// why a branch field is refused
+fn branchError(comptime field: []const u8, comptime message: []const u8) api.Error {
+    return .{ .code = .validation, .message = "Check the highlighted fields.", .field_errors = &.{.{ .field = field, .message = message }} };
+}
+
+/// a refusal of the branches a patch proposes from and into, as the API
+/// answers it, or null when `err` is no such refusal
+pub fn branchesError(err: anyerror) ?api.Error {
+    return switch (err) {
+        error.InvalidSourceBranch => branchError("source", "There is no such branch. " ++ choose_branch),
+        error.InvalidTargetBranch => branchError("target", "There is no such branch. " ++ choose_branch),
+        error.SameBranch => branchError("target", "Choose another branch than the source."),
+        error.UnrelatedBranches => branchError("target", "This branch shares no history with the source, so there is nothing to compare."),
+        else => null,
+    };
+}
+
+fn handleWrite(
+    io: std.Io,
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    host: api_repo.Host,
+    viewer: ?[evt.event_id_size]u8,
+    matched: api_thread.Route,
+    change: Change,
+) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+
+    // the body is read before anything answers, so no answer leaves it unread
+    const body: Write = switch (change) {
+        .create => .{ .create = (try api_account.readBody(CreateRequest, request, allocator, &arena)) orelse return },
+        .edit => .{ .edit = (try api_account.readBody(EditRequest, request, allocator, &arena)) orelse return },
+        .set_status => .{ .set_status = (try api_account.readBody(StatusRequest, request, allocator, &arena)) orelse return },
+        .remove => .remove,
+    };
+
+    var admin_repo_maybe: ?rp.Repo(.xit, evt.admin_repo_opts) = null;
+    defer if (admin_repo_maybe) |*admin_repo| admin_repo.deinit(io, allocator);
+    var opened = (try api_thread.openRepo(io, request, allocator, &arena, host, viewer, matched.target, &admin_repo_maybe)) orelse return;
+    if (!ui.Repo.hasSection(.patches, opened.resolved.repo.event, opened.handle, opened.session.data.host_kind, opened.source.repo_kind))
+        return api.respondError(request, allocator, patches_off, .{});
+
+    // the patch a thread route names: an id that isn't one names none
+    const thread_id: ?[evt.event_id_size]u8 = switch (matched.resource) {
+        .thread, .status => |encoded| evt.parseEventId(std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded))) catch return api.respondError(request, allocator, no_such_patch, .{}),
+        .list, .labels => null,
+        .comments, .comment, .attachments, .attachment => unreachable,
+    };
+    if (thread_id) |*id| {
+        if (try readDetail(&arena, io, &opened, id) == null) return api.respondError(request, allocator, no_such_patch, .{});
+    }
+
+    const actor = switch (try api_thread.authorize(.patch, io, allocator, &arena, host, viewer, &opened)) {
+        .actor => |actor| actor,
+        .refused => |err| return api.respondError(request, allocator, err, .{}),
+    };
+    const event_host: evt.Host = switch (host) {
+        .local => .local,
+        .server => |server| .{ .server = .{ .users_dir = server.users_dir, .admin_repo_path = server.admin_repo_path } },
+    };
+
+    const failure: ?api.Error = switch (body) {
+        .create => |fields| blk: {
+            const chosen = api_thread.parseNewId(fields.id) orelse break :blk api_thread.invalidField("id", "Leave the id out, or send 32 lowercase hex digits.");
+            const source_branch = try branchName(aa, fields.source) orelse break :blk branchError("source", choose_branch);
+            const target_branch = try branchName(aa, fields.target) orelse break :blk branchError("target", choose_branch);
+            var new_fields = try api_thread.bodyFields(aa, fields);
+            new_fields.target_branch = target_branch;
+            if (thread_write.checkFields(.patch, new_fields)) |field_failure| break :blk api_thread.fieldsError(field_failure);
+            const id = chosen orelse random: {
+                var bytes: [evt.event_id_size]u8 = undefined;
+                io.random(&bytes);
+                break :random bytes;
+            };
+            thread_write.createBranchPatch(event_host, io, allocator, opened.source, &id, new_fields, source_branch, actor.author) catch |err| switch (err) {
+                error.IdTaken => break :blk api_thread.id_taken,
+                else => |e| break :blk branchesError(e) orelse return e,
+            };
+            return respondDetail(request, allocator, &arena, io, &opened, &id, .created);
+        },
+        .edit => |fields| blk: {
+            const revision = api_thread.parseRevision(fields.revision) orelse break :blk api_thread.invalidField("revision", "Send the edit_revision of the patch as you loaded it.");
+            const target_branch = try branchName(aa, fields.target) orelse break :blk branchError("target", choose_branch);
+            var new_fields = try api_thread.bodyFields(aa, fields);
+            new_fields.target_branch = target_branch;
+            if (thread_write.checkFields(.patch, new_fields)) |field_failure| break :blk api_thread.fieldsError(field_failure);
+            thread_write.edit(event_host, io, allocator, opened.source, actor, .patch, &thread_id.?, new_fields, revision) catch |err| break :blk try writeError(err);
+            break :blk null;
+        },
+        .set_status => |fields| blk: {
+            const status = std.meta.stringToEnum(enum { open, closed }, fields.status) orelse break :blk invalidField("status", "The status must be open or closed.");
+            thread_write.setStatus(evt.Patch, event_host, io, allocator, opened.source, actor, &thread_id.?, switch (status) {
+                .open => .open,
+                .closed => .closed,
+            }) catch |err| break :blk try statusWriteError(err);
+            break :blk null;
+        },
+        .remove => blk: {
+            thread_write.remove(event_host, io, allocator, opened.source, actor, .patch, &thread_id.?, .patch, &thread_id.?) catch |err| break :blk try writeError(err);
+            var out: std.Io.Writer.Allocating = .init(aa);
+            try std.json.Stringify.value(.{ .id = std.fmt.bytesToHex(thread_id.?, .lower) }, .{}, &out.writer);
+            return api.respondJson(request, out.written(), .{});
+        },
+    };
+    if (failure) |err| return api.respondError(request, allocator, err, .{});
+    return respondDetail(request, allocator, &arena, io, &opened, &thread_id.?, .ok);
+}
+
+// a thread_write refusal, as the API answers it
+fn writeError(err: anyerror) !api.Error {
+    if (branchesError(err)) |refused| return refused;
+    return switch (err) {
+        error.Forbidden => change_forbidden,
+        error.NotFound => no_such_patch,
+        error.Stale => stale_revision,
+        error.PatchAlreadyMerged => already_merged,
+        else => return err,
+    };
+}
+
+const status_raced: api.Error = .{ .code = .conflict, .message = "This patch changed while its status was being set; load it again, then try again." };
+
+/// a status change's refusal, as the API answers it: as any write's, except
+/// that reopening a branch patch that changed meanwhile (which captures its
+/// source only while the patch is as read) names no revision, since a status
+/// change sends none
+pub fn statusWriteError(err: anyerror) !api.Error {
+    if (err == error.Stale) return status_raced;
+    return writeError(err);
+}
+
+fn respondDetail(request: *std.http.Server.Request, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8, status: std.http.Status) !void {
+    // the write landed; only a removal racing it leaves nothing to show
+    const answer = (try readDetail(arena, io, opened, id)) orelse return api.respondError(request, allocator, no_such_patch, .{});
+    return api.respondJson(request, answer, .{ .status = status });
 }
 
 // --- a revision's diff -------------------------------------------------------

@@ -12,6 +12,7 @@ const fork = @import("fork.zig");
 const serve_common = @import("serve_common.zig");
 const progress = @import("./progress.zig");
 const notify = @import("notify.zig");
+const thread_write = @import("thread_write.zig");
 
 // the action a patch merge records
 pub const merge_undo_action = "haxy/merge";
@@ -114,6 +115,17 @@ pub fn writeBranchPatchInTransaction(
     first_parent: ?[1][hash.hexLen(repo_opts.hash)]u8,
 ) !void {
     const DB = evt.EventDB(repo_opts.hash);
+
+    // a new patch takes an id no event has, so a retried creation can't open
+    // a second one; checked under the repository lock
+    if (expected_patch == null) {
+        if (evt.currentMomentFromRepoMoment(repo_opts.hash, moment.readOnly())) |events_moment| {
+            if (try thread_write.kindOf(repo_opts.hash, events_moment, &try evt.parseEventId(&id)) != null) return error.IdTaken;
+        } else |err| switch (err) {
+            error.NotFound => {},
+            else => |e| return e,
+        }
+    }
 
     // recheck the expected patch under the repository lock
     if (expected_patch) |expected| {

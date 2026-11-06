@@ -26,6 +26,7 @@ const rp = xit.repo;
 const hash = xit.hash;
 const evt = @import("./event.zig");
 const ui = @import("./ui.zig");
+const pch = @import("./patch.zig");
 
 // serializes the writes to git repositories' events in this process. a git
 // repo's events have no transaction, so each write here reads what it checks
@@ -54,6 +55,8 @@ pub const Fields = struct {
     // space-separated
     labels: []const u8,
     description: []const u8,
+    // a patch's target branch (patches only)
+    target_branch: []const u8 = "",
 };
 
 /// `text` with the CRLF line breaks a form submission makes turned into plain
@@ -131,6 +134,50 @@ pub fn create(
     }
 }
 
+/// opens a branch-backed patch under `id`, proposing what `source_branch`
+/// has that `fields.target_branch` lacks, written by `author`: both must be
+/// existing, distinct branches with a common ancestor (error.InvalidSourceBranch,
+/// error.InvalidTargetBranch, error.SameBranch, error.UnrelatedBranches),
+/// and the patch captures the source's revision as it is now. the caller
+/// has checked the fields (`checkFields`) and the author's right to write in
+/// the patches tab. error.IdTaken when any event already has the id, so a
+/// retry can't open a second patch. a patch from a new fork is
+/// `ui.Repo.Patches.create`'s.
+pub fn createBranchPatch(
+    host: evt.Host,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ui.RepoSource,
+    id: *const [evt.event_id_size]u8,
+    fields: Fields,
+    source_branch: []const u8,
+    author: evt.CommitAuthor,
+) !void {
+    const locked = try lockEvents(io, source);
+    defer unlockEvents(io, locked);
+    try catchUp(host, io, allocator, source);
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                inline else => |*repo| {
+                    const repo_opts = repo.self_repo_opts;
+                    // a xit repo checks the id in the write's own transaction
+                    if (repo_kind != .xit and try idUsed(repo_kind, repo_opts, io, allocator, repo, id)) return error.IdTaken;
+                    try pch.writeBranchPatch(host, repo_kind, repo_opts, io, allocator, repo, std.fmt.bytesToHex(id.*, .lower), .{
+                        .title = fields.title,
+                        .labels = fields.labels,
+                        .description = fields.description,
+                        .source_branch = source_branch,
+                        .target_branch = fields.target_branch,
+                    }, null, author);
+                },
+            }
+        },
+    }
+}
+
 // brings a local repo's event db up to date with its events branch, as each
 // TUI page build and API read there does: a branch fetched, cloned or synced
 // since anything last read it would otherwise go unseen by the checks a
@@ -191,7 +238,9 @@ fn idUsed(
 /// sets the status of the thread `id` names (an issue or a patch, as
 /// `Event` says), as `actor`. error.Forbidden when the actor may not change
 /// it, error.NotFound when there is no such thread. setting the status it
-/// already has changes nothing.
+/// already has changes nothing. reopening a branch patch captures its source
+/// branch's revision again (its branch errors, as `createBranchPatch`'s),
+/// and is error.Stale when the patch changed meanwhile.
 pub fn setStatus(
     comptime Event: type,
     host: evt.Host,
@@ -211,18 +260,27 @@ pub fn setStatus(
             var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
             defer any_repo.deinit(io, allocator);
             switch (any_repo) {
-                inline else => |*repo| try Event.update(host, repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{ .status = status }, actor.author),
+                // reopening a branch patch captures its source, written only
+                // while the patch is still as read
+                inline else => |*repo| Event.update(host, repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{ .status = status }, actor.author) catch |err| switch (err) {
+                    error.PatchOutOfDate => return error.Stale,
+                    else => |e| return e,
+                },
             }
         },
     }
 }
 
-/// replaces the fields of the thread of `kind` (an issue or a discussion)
-/// that `id` names, keeping an issue's status, as `actor`; with a `revision`
+/// replaces the fields of the thread of `kind` (an issue, a discussion or a
+/// patch) that `id` names, keeping its status, as `actor`; with a `revision`
 /// (the kind's `contentRevision`), only while the thread is still at it
 /// (error.Stale otherwise). error.Forbidden when the actor may not change
 /// it, error.NotFound when there is no such thread of that kind. the caller
-/// has checked the fields (`checkFields`).
+/// has checked the fields (`checkFields`). a patch's fields include its
+/// target branch: another existing branch than its source, sharing history
+/// with it (error.InvalidTargetBranch, error.SameBranch,
+/// error.UnrelatedBranches); a new one captures a fresh revision, and a
+/// merged patch's target stays (error.PatchAlreadyMerged).
 pub fn edit(
     host: evt.Host,
     io: std.Io,
@@ -254,6 +312,17 @@ pub fn edit(
                         .labels = fields.labels,
                         .description = fields.description,
                     }, actor.author, revision),
+                    // a new target captures a fresh revision of a branch
+                    // patch, written only while the patch is as it was read
+                    .patch => evt.Patch.updateAt(host, repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{ .fields = .{
+                        .title = fields.title,
+                        .labels = fields.labels,
+                        .description = fields.description,
+                        .target_branch = fields.target_branch,
+                    } }, actor.author, revision) catch |err| switch (err) {
+                        error.PatchOutOfDate => return error.Stale,
+                        else => |e| return e,
+                    },
                     else => unreachable,
                 },
             }

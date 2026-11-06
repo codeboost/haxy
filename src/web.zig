@@ -1377,21 +1377,12 @@ fn handleThreadNew(
         });
         defer allocator.free(fork_path);
     } else if (kind == .patch) {
-        const patch: evt.Patch = .{ .title = title, .description = description, .labels = labels, .target_branch = target_branch, .source_branch = source_branch };
-        switch (source.repo_kind) {
-            inline else => |repo_kind| {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                switch (any_repo) {
-                    inline else => |*repo| pch.writeBranchPatch(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, event_id_hex, patch, null, author) catch |err| {
-                        const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
-                        const form_location = try allocator.print("{s}/patches/new", .{base});
-                        defer allocator.free(form_location);
-                        return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, source_branch));
-                    },
-                }
-            },
-        }
+        thread_write.createBranchPatch(host.event(), io, allocator, source, &id_bytes, .{ .title = title, .labels = labels, .description = description, .target_branch = target_branch }, source_branch.?, author) catch |err| {
+            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
+            const form_location = try allocator.print("{s}/patches/new", .{base});
+            defer allocator.free(form_location);
+            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, source_branch));
+        };
     } else {
         try thread_write.create(host.event(), io, allocator, source, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description }, author);
     }
@@ -2187,12 +2178,12 @@ fn handleThreadEdit(
             .labels = labels,
             .description = description,
         }, null),
-        .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .fields = .{
+        .patch => thread_write.edit(host.event(), io, allocator, request_repo.source, actor, .patch, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .description = description,
             .target_branch = target_branch,
-        } }, author),
+        }, null),
         .discuss => thread_write.edit(host.event(), io, allocator, request_repo.source, actor, .discuss, &parts.thread_id, .{
             .title = title,
             .labels = labels,

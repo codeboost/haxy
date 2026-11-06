@@ -412,6 +412,40 @@ pub fn remoteCommand(aa: std.mem.Allocator, data: ui.Session.Data, handle: ui.Re
     return .{ .protocol = .ssh, .url = url, .command = try aa.print("git remote add origin {s}", .{url}) };
 }
 
+/// a git command for working with a patch's fork over ssh: `text` as shown,
+/// `command` to copy, with the host's ssh prefix
+pub const ForkCommand = struct {
+    action: Action,
+    url: []const u8,
+    text: []const u8,
+    command: []const u8,
+
+    pub const Action = enum { push, clone, merge };
+};
+
+pub const ForkCommandOptions = struct {
+    // a fork whose target is gone is fetched, never pushed to
+    target_deleted: bool = false,
+};
+
+/// the commands for the fork `fork_identity` ("forker:repo name") holds
+/// patch `id` in, built from the host's ssh url; none without one
+pub fn forkCommands(aa: std.mem.Allocator, data: ui.Session.Data, fork_identity: []const u8, id: []const u8, options: ForkCommandOptions) ![]const ForkCommand {
+    const ssh_url = data.git_ssh_url orelse return &.{};
+    const url = try aa.print("{s}/{s}+{s}", .{ ssh_url, fork_identity, id });
+    const texts = [_][]const u8{
+        try aa.print("git push {s} HEAD:patch", .{url}),
+        try aa.print("git clone {s}", .{url}),
+        try aa.print("git fetch '{s}' refs/heads/patch && git merge FETCH_HEAD", .{url}),
+    };
+    var list: std.ArrayList(ForkCommand) = .empty;
+    for (std.enums.values(ForkCommand.Action), texts) |action, text| {
+        if (action == .push and options.target_deleted) continue;
+        try list.append(aa, .{ .action = action, .url = url, .text = text, .command = try aa.print("{s}{s}", .{ data.git_ssh_prefix, text }) });
+    }
+    return list.items;
+}
+
 pub fn initNoCommits(allocator: std.mem.Allocator, session: *ui.Session, handle: ui.RepoHandle) !Center {
     var box = try wgt.Box(Widget).init(allocator, .{ .border = null, .direction = .vert });
     errdefer box.deinit(allocator);

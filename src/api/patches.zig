@@ -28,6 +28,7 @@ const api_account = @import("./account.zig");
 const api_attachments = @import("./attachments.zig");
 const api_comments = @import("./comments.zig");
 const api_diff = @import("./diff.zig");
+const api_drafts = @import("./patch_drafts.zig");
 const api_md = @import("./markdown.zig");
 const api_path = @import("./path.zig");
 const api_refs = @import("./refs.zig");
@@ -338,7 +339,9 @@ fn write(
                 else => |e| return e,
             };
             const entry = data.selectedThread() orelse return no_such_patch;
-            try std.json.Stringify.value(try detail(aa, entry, session.data.host_kind, .{ .signed_in = opened.handle.viewer != null, .tab = viewer }), .{}, writer);
+            var answer = try detail(aa, entry, session.data.host_kind, .{ .signed_in = opened.handle.viewer != null, .tab = viewer });
+            answer.commands = try api_drafts.commandsOf(aa, session.data, entry);
+            try std.json.Stringify.value(answer, .{}, writer);
         },
     }
     return null;
@@ -506,6 +509,8 @@ const Detail = struct {
     // every live attachment, oldest first, as the TUI lists them
     attachments: []const api_attachments.Item,
     actions: Actions,
+    // the git commands for a fork-backed patch's fork
+    commands: []const api_drafts.Command = &.{},
 
     pub fn jsonStringify(self: Detail, json: *std.json.Stringify) std.Io.Writer.Error!void {
         try json.beginObject();
@@ -515,7 +520,7 @@ const Detail = struct {
         }
         try json.objectField("description");
         try json.write(api_md.Blocks{ .blocks = self.description });
-        inline for (.{ "description_text", "source", "target", "revision", "merged", "no_changes", "mergeability", "review", "edit_revision", "attachments" }) |name| {
+        inline for (.{ "description_text", "source", "target", "revision", "merged", "no_changes", "mergeability", "review", "edit_revision", "attachments", "commands" }) |name| {
             try json.objectField(name);
             try json.write(@field(self, name));
         }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const evt = @import("event.zig");
 const copy = @import("copy.zig");
+const thread_write = @import("thread_write.zig");
 const find = @import("find.zig");
 const srch_cmmt = @import("search_commit.zig");
 const xit = @import("xit");
@@ -97,16 +98,11 @@ pub fn create(
     const fork_path = try forkPath(allocator, users_dir, &input.user_id, &fork_id);
     errdefer allocator.free(fork_path);
 
-    // make sure the fork id doesn't already exist
+    // an id any event of the forker's already has is taken; the fork event's
+    // write checks again
     var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &input.user_id)) orelse return error.InvalidPatchDraft;
     defer user_repo.deinit(io, allocator);
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const existing = if (try evt.userMoment(&user_repo)) |moment|
-        try evt.Fork.readById(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, &fork_id)
-    else
-        null;
-    if (existing != null) return error.InvalidPatchDraft;
+    try (thread_write.IdFree(evt.user_repo_opts.hash){ .id = &fork_id }).check(try evt.userMoment(&user_repo));
 
     // the fork copies the target's db, so it takes the target's hash kind
     const target_path = try evt.repoPath(allocator, users_dir, &input.repo_user_id, &input.repo_id);
@@ -138,7 +134,7 @@ fn copyTarget(
     defer forks_dir.close(io);
     const fork_name = std.Io.Dir.path.basename(fork_path);
     forks_dir.createDir(io, fork_name, .default_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => return error.InvalidPatchDraft,
+        error.PathAlreadyExists => return error.IdTaken,
         else => |other| return other,
     };
     errdefer forks_dir.deleteTree(io, fork_name) catch {};
@@ -223,8 +219,10 @@ fn copyTarget(
         } },
     }});
 
-    // create the fork event
-    try evt.consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, evt.user_repo_opts, io, allocator, user_repo, evt.events_ref, &.{.{
+    // create the fork event, while no event of the forker's has its id
+    const fork_id = try evt.parseEventId(&input.id);
+    const id_free = thread_write.IdFree(evt.user_repo_opts.hash){ .id = &fork_id };
+    try evt.consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, evt.user_repo_opts, io, allocator, user_repo, evt.events_ref, &.{.{
         .id = input.id,
         .timestamp = input.timestamp,
         .author = input.author,
@@ -233,7 +231,7 @@ fn copyTarget(
             .repo_user_id = std.fmt.bytesToHex(input.repo_user_id, .lower),
             .repo_name = input.repo_name,
         } },
-    }});
+    }}, id_free);
 }
 
 // tombstone first so a missing fork never remains visible

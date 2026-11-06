@@ -161,7 +161,8 @@ fn IdFree(comptime hash_kind: hash.HashKind) type {
     };
 }
 
-fn kindOf(comptime hash_kind: hash.HashKind, moment: evt.EventDB(hash_kind).HashMap(.read_only), id: *const [evt.event_id_size]u8) !?evt.EventKind {
+/// the kind of the event `id` names in `moment`, or null when none has it
+pub fn kindOf(comptime hash_kind: hash.HashKind, moment: evt.EventDB(hash_kind).HashMap(.read_only), id: *const [evt.event_id_size]u8) !?evt.EventKind {
     const DB = evt.EventDB(hash_kind);
     const kinds_cursor = try moment.getCursor(hash.hashInt(hash_kind, evt.event_index_key)) orelse return null;
     return evt.readEventKind(hash_kind, try DB.HashMap(.read_only).init(kinds_cursor), id);
@@ -268,6 +269,21 @@ pub fn remove(
     const locked = try lockEvents(io, source);
     defer unlockEvents(io, locked);
     try catchUp(host, io, allocator, source);
+    // an attachment that isn't live on this thread is gone for everyone,
+    // whoever asks, before their rights to it are checked: a removed one
+    // isn't listed anywhere
+    if (kind == .attach) switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                inline else => |*repo| {
+                    if (!try evt.threadHolds(repo_kind, repo.self_repo_opts, io, allocator, repo, thread_kind, thread_id, .{ .attach = id })) return error.NotFound;
+                    if (try attachmentRemoved(repo_kind, repo.self_repo_opts, io, allocator, repo, id)) return error.NotFound;
+                },
+            }
+        },
+    };
     if (!try source.canModify(io, allocator, actor, kind, id)) return error.Forbidden;
     switch (source.repo_kind) {
         inline else => |repo_kind| {
@@ -308,6 +324,21 @@ fn commentRemoved(
     return record.removed;
 }
 
+// whether the attachment `id` names exists and has been removed
+fn attachmentRemoved(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: *const [evt.event_id_size]u8,
+) !bool {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const record = (try evt.readFromRepo(evt.Attachment, repo_kind, repo_opts, io, allocator, &arena, repo, id)) orelse return false;
+    return record.removed;
+}
+
 // whether the thread `id` names exists and isn't removed
 fn threadLive(
     comptime repo_kind: rp.RepoKind,
@@ -332,7 +363,7 @@ fn threadLive(
 }
 
 // whether `moment` holds a thread of `kind` under `id` that isn't removed
-fn threadLiveAt(
+pub fn threadLiveAt(
     comptime hash_kind: hash.HashKind,
     arena: *std.heap.ArenaAllocator,
     moment: evt.EventDB(hash_kind).HashMap(.read_only),
@@ -657,5 +688,93 @@ fn eventKind(comptime Event: type) evt.EventKind {
         evt.Patch => .patch,
         evt.Discussion => .discuss,
         else => @compileError("not a thread's event"),
+    };
+}
+
+// --- attachments -----------------------------------------------------------------
+
+/// attaches `blob` (one file, streamed from its reader into the object store)
+/// to the thread of `thread_kind` that `thread_id` names, under `id`, as
+/// `actor`. the caller has checked the upload (`attachment.checkUpload`) and
+/// the actor's right to write in the kind's tab. error.Forbidden when the
+/// actor may not change the thread (`ui.RepoSource.canModify`: its author or
+/// a writer, as Haxy's upload form has always required), error.NotFound when
+/// there is no such live thread, error.IdTaken when any event already has
+/// the id, so a retried upload can't attach twice. the thread and the id are
+/// checked where the write lands: in a xit repo's transaction, under the git
+/// events lock otherwise.
+pub fn attach(
+    host: evt.Host,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ui.RepoSource,
+    actor: ui.Actor,
+    thread_kind: evt.EventKind,
+    thread_id: *const [evt.event_id_size]u8,
+    id: *const [evt.event_id_size]u8,
+    blob: evt.Blob,
+) !void {
+    if (!evt.Attachment.nameValid(blob.name) or blob.size == 0 or blob.size > evt.Attachment.max_size) return error.InvalidFields;
+    const locked = try lockEvents(io, source);
+    defer unlockEvents(io, locked);
+    try catchUp(host, io, allocator, source);
+    if (!try source.canModify(io, allocator, actor, thread_kind, thread_id)) return error.Forbidden;
+
+    const event = evt.EventWithId{
+        .id = std.fmt.bytesToHex(id.*, .lower),
+        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
+        .author = actor.author,
+        .tree_entries = &.{.{ .blob = blob }},
+        .event = .{ .attach = .{ .target_id = std.fmt.bytesToHex(thread_id.*, .lower) } },
+    };
+    const check: AttachCheck = .{ .thread_kind = thread_kind, .thread_id = thread_id, .id = id };
+    switch (source.repo_kind) {
+        inline else => |repo_kind| {
+            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
+            defer any_repo.deinit(io, allocator);
+            switch (any_repo) {
+                inline else => |*repo| {
+                    const repo_opts = repo.self_repo_opts;
+                    if (repo_kind == .xit) {
+                        return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{event}, AttachGuard(repo_opts.hash){ .allocator = allocator, .rules = check });
+                    }
+                    {
+                        var event_db_maybe = try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir);
+                        defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
+                        const moment = if (event_db_maybe) |*event_db| evt.currentMomentFromDb(repo_opts.hash, event_db.db) catch null else null;
+                        try check.run(repo_opts.hash, allocator, moment);
+                    }
+                    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{event});
+                },
+            }
+        },
+    }
+}
+
+// what an attachment requires of the state it lands on: a live thread, and
+// its id free
+const AttachCheck = struct {
+    thread_kind: evt.EventKind,
+    thread_id: *const [evt.event_id_size]u8,
+    id: *const [evt.event_id_size]u8,
+
+    fn run(self: AttachCheck, comptime hash_kind: hash.HashKind, allocator: std.mem.Allocator, moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+        const moment = moment_maybe orelse return error.NotFound;
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        if (!try threadLiveAt(hash_kind, &arena, moment, self.thread_kind, self.thread_id)) return error.NotFound;
+        if (try kindOf(hash_kind, moment, self.id) != null) return error.IdTaken;
+    }
+};
+
+// `check`, as consumeGuarded runs it inside a xit repo's transaction
+fn AttachGuard(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        allocator: std.mem.Allocator,
+        rules: AttachCheck,
+
+        pub fn check(self: @This(), moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+            return self.rules.run(hash_kind, self.allocator, moment_maybe);
+        }
     };
 }

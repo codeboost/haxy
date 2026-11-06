@@ -10,6 +10,7 @@ const xit = @import("xit");
 const rp = xit.repo;
 const api = @import("../api.zig");
 const api_md = @import("./markdown.zig");
+const api_attachments = @import("./attachments.zig");
 const api_repo = @import("./repo.zig");
 const evt = @import("../event.zig");
 const md = @import("../markdown.zig");
@@ -34,6 +35,10 @@ pub const Route = struct {
         comments: []const u8,
         // one comment in a thread, `<id>/comments/<comment id>`, both still encoded
         comment: struct { thread: []const u8, comment: []const u8 },
+        // one thread's attachments, `<id>/attachments`, its id still encoded
+        attachments: []const u8,
+        // one attachment of a thread, `<id>/attachments/<attachment id>`, both still encoded
+        attachment: struct { thread: []const u8, attachment: []const u8 },
     };
 };
 
@@ -63,19 +68,28 @@ pub fn route(path: []const u8, comptime segment: []const u8) ?Route {
 }
 
 // what follows a kind's segment: nothing, "/labels", "/<id>", "/<id>/status",
-// "/<id>/comments" or "/<id>/comments/<comment id>"
+// "/<id>/comments", "/<id>/comments/<comment id>", "/<id>/attachments" or
+// "/<id>/attachments/<attachment id>"
 fn resourceOf(tail: []const u8) ?Route.Resource {
     if (tail.len == 0) return .list;
     if (tail[0] != '/') return null;
     const rest = tail[1..];
     var segments = std.mem.splitScalar(u8, rest, '/');
     const first = segments.first();
-    if (segments.next()) |second| if (std.mem.eql(u8, second, "comments")) {
-        if (first.len == 0 or std.mem.eql(u8, first, "labels")) return null;
-        const comment = segments.next() orelse return .{ .comments = first };
-        if (comment.len == 0 or segments.next() != null) return null;
-        return .{ .comment = .{ .thread = first, .comment = comment } };
-    };
+    if (segments.next()) |second| {
+        if (std.mem.eql(u8, second, "comments")) {
+            if (first.len == 0 or std.mem.eql(u8, first, "labels")) return null;
+            const comment = segments.next() orelse return .{ .comments = first };
+            if (comment.len == 0 or segments.next() != null) return null;
+            return .{ .comment = .{ .thread = first, .comment = comment } };
+        }
+        if (std.mem.eql(u8, second, "attachments")) {
+            if (first.len == 0 or std.mem.eql(u8, first, "labels")) return null;
+            const attachment = segments.next() orelse return .{ .attachments = first };
+            if (attachment.len == 0 or segments.next() != null) return null;
+            return .{ .attachment = .{ .thread = first, .attachment = attachment } };
+        }
+    }
     const status_suffix = "/status";
     if (std.mem.endsWith(u8, rest, status_suffix)) {
         const id = rest[0 .. rest.len - status_suffix.len];
@@ -288,6 +302,8 @@ pub fn Detail(comptime Status: type) type {
         // what an edit replaces, as `contentRevision` digests it; written as
         // an opaque string
         revision: evt.Issue.Revision,
+        // every live attachment, oldest first, as the TUI lists them
+        attachments: []const api_attachments.Item,
         actions: ThreadActions,
 
         pub fn jsonStringify(self: @This(), json: *std.json.Stringify) std.Io.Writer.Error!void {
@@ -302,6 +318,10 @@ pub fn Detail(comptime Status: type) type {
             try json.write(self.description_text);
             try json.objectField("revision");
             try json.write(&std.fmt.bytesToHex(self.revision, .lower));
+            try json.objectField("attachments");
+            try json.write(self.attachments);
+            try json.objectField("attachment_limits");
+            try json.write(api_attachments.limits);
             try json.objectField("actions");
             try json.write(self.actions);
             try json.endObject();
@@ -316,6 +336,7 @@ pub fn detail(aa: std.mem.Allocator, entry: anytype, comptime kind: evt.EventKin
         .description = (try md.parseText(aa, entry.record.event.description)).blocks,
         .description_text = entry.record.event.description,
         .revision = @TypeOf(entry.record.event).contentRevision(entry.record.event),
+        .attachments = try api_attachments.items(aa, entry.attachments, .{ .viewer = viewer.tab, .signed_in = viewer.signed_in }),
         .actions = threadActions(kind, .{ .may_write = entry.can_modify, .signed_in = viewer.signed_in }),
     };
 }
@@ -351,8 +372,10 @@ pub const Availability = union(enum) {
 /// thread); `signed_in` says whether anyone is (always, in local mode)
 pub const Rights = struct { may_write: bool, signed_in: bool };
 
-/// who views a thread page: whether anyone is signed in
-pub const ViewerRights = struct { signed_in: bool };
+/// who views a thread page: whether anyone is signed in, and the TUI's tab
+/// viewer (null when they may not write in the kind's tab), which decides
+/// who may remove each attachment
+pub const ViewerRights = struct { signed_in: bool, tab: ?ui.Viewer = null };
 
 pub const ListActions = struct { create: Availability };
 
@@ -362,6 +385,8 @@ pub const ThreadActions = struct {
     remove: Availability,
     // assign and unassign people
     assign: Availability,
+    // attach a file (`thread_write.attach`)
+    attach: Availability,
 };
 
 // a kind's singular noun, as messages name it
@@ -405,7 +430,12 @@ pub fn threadActions(comptime kind: evt.EventKind, rights: Rights) ThreadActions
         availability
     else
         .{ .unavailable = .{ .code = .forbidden, .message = "Only the " ++ comptime noun(kind) ++ "'s author and the repository's writers can assign people to it." } };
-    return .{ .edit = availability, .set_status = availability, .remove = availability, .assign = assign };
+    // so are its attachments (`thread_write.attach`, as Haxy's upload form)
+    const attach: Availability = if (rights.may_write or !rights.signed_in)
+        availability
+    else
+        .{ .unavailable = .{ .code = .forbidden, .message = "Only the " ++ comptime noun(kind) ++ "'s author and the repository's writers can attach files to it." } };
+    return .{ .edit = availability, .set_status = availability, .remove = availability, .assign = assign, .attach = attach };
 }
 
 /// a client's id for a new thread: "" (haxy picks one), else 32 lowercase

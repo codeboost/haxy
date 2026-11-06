@@ -24,6 +24,7 @@ pub const Discussions = @import("./Repo/Discussions.zig");
 pub const Issues = @import("./Repo/Issues.zig");
 pub const Patches = @import("./Repo/Patches.zig");
 pub const Comment = @import("./Repo/Comment.zig");
+pub const Attachment = @import("./Repo/Attachment.zig");
 pub const Undo = @import("./Repo/Undo.zig");
 pub const Events = @import("./Repo/Events.zig");
 pub const Settings = @import("./Repo/Settings.zig");

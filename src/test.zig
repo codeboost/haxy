@@ -2,6 +2,7 @@ comptime {
     _ = @import("test/api.zig");
     _ = @import("test/api_account.zig");
     _ = @import("test/api_assignees.zig");
+    _ = @import("test/api_attachments.zig");
     _ = @import("test/api_commits.zig");
     _ = @import("test/api_diff.zig");
     _ = @import("test/api_discovery.zig");
@@ -14,6 +15,7 @@ comptime {
     _ = @import("test/api_repo_admin.zig");
     _ = @import("test/api_session.zig");
     _ = @import("test/api_undo.zig");
+    _ = @import("test/attachment.zig");
     _ = @import("test/event.zig");
     _ = @import("test/event/admin.zig");
     _ = @import("test/event/notify.zig");

@@ -17,6 +17,7 @@ const evt = @import("../event.zig");
 const query_params = @import("./query.zig");
 const api_account = @import("./account.zig");
 const api_comments = @import("./comments.zig");
+const api_attachments = @import("./attachments.zig");
 const thread_write = @import("../thread_write.zig");
 const srch_thrd = @import("../search_thread.zig");
 const ui = @import("../ui.zig");
@@ -44,6 +45,7 @@ pub fn handle(
 ) !void {
     switch (matched.resource) {
         .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, matched, query, comment_kind),
+        .attachments, .attachment => return api_attachments.handle(io, request, allocator, host, viewer, matched, query, attachment_kind),
         else => {},
     }
     const method = request.head.method;
@@ -53,7 +55,7 @@ pub fn handle(
         .labels => if (read_methods) null else return unsupported(request, allocator, "GET, HEAD"),
         .thread => if (read_methods) null else if (method == .PATCH) .edit else if (method == .DELETE) .remove else return unsupported(request, allocator, "GET, HEAD, PATCH, DELETE"),
         .status => if (method == .PUT) .set_status else return unsupported(request, allocator, "PUT"),
-        .comments, .comment => unreachable,
+        .comments, .comment, .attachments, .attachment => unreachable,
     };
     if (change) |value| return handleWrite(io, request, allocator, host, viewer, matched, value);
 
@@ -103,6 +105,16 @@ pub const no_such_issue: api.Error = .{ .code = .not_found, .message = "There is
 
 // an issue's comments, as the shared comment routes serve them
 const comment_kind: api_comments.Kind = .{ .kind = .issue, .section = .issues, .noun = "issue", .plural = "issues", .off = issues_off, .no_such_thread = no_such_issue };
+
+// an issue's attachments, as the shared attachment routes serve them
+const attachment_kind: api_attachments.Kind = .{ .thread = comment_kind, .readDetail = readDetail, .authorize = authorizeAttachment };
+
+fn authorizeAttachment(io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, host: api_repo.Host, viewer: ?[evt.event_id_size]u8, opened: *api_thread.Opened) !api_attachments.Authorized {
+    return switch (try authorize(io, allocator, arena, host, viewer, opened)) {
+        .actor => |actor| .{ .actor = actor },
+        .refused => |err| .{ .refused = err },
+    };
+}
 
 const stale_cursor: api.Error = .{
     .code = .validation,
@@ -161,7 +173,7 @@ fn readRequest(aa: std.mem.Allocator, resource: api_thread.Route.Resource, query
         },
         .thread => |encoded| return .{ .ok = .{ .issue = std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded)) } },
         // a write route, or the comments'; handle sends them elsewhere
-        .status, .comments, .comment => unreachable,
+        .status, .comments, .comment, .attachments, .attachment => unreachable,
     }
 }
 
@@ -244,7 +256,7 @@ fn write(
                 else => |e| return e,
             };
             const entry = data.selectedThread() orelse return no_such_issue;
-            try std.json.Stringify.value(try api_thread.detail(aa, entry, .issue, .{ .signed_in = opened.handle.viewer != null }), .{}, writer);
+            try std.json.Stringify.value(try api_thread.detail(aa, entry, .issue, .{ .signed_in = opened.handle.viewer != null, .tab = viewer }), .{}, writer);
         },
     }
     return null;
@@ -353,7 +365,7 @@ fn handleWrite(
     const thread_id: ?[evt.event_id_size]u8 = switch (matched.resource) {
         .thread, .status => |encoded| evt.parseEventId(std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded))) catch return api.respondError(request, allocator, no_such_issue, .{}),
         .list, .labels => null,
-        .comments, .comment => unreachable,
+        .comments, .comment, .attachments, .attachment => unreachable,
     };
     if (thread_id) |*id| {
         if (try readDetail(&arena, io, &opened, id) == null) return api.respondError(request, allocator, no_such_issue, .{});

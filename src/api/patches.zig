@@ -86,7 +86,7 @@ pub fn handle(
     switch (thread_route.resource) {
         .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, thread_route, query, comment_kind),
         // a patch's status is not written through the API yet
-        .status => return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{ .keep_alive = request.head.method == .GET or request.head.method == .HEAD }),
+        .status, .attachments, .attachment => return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{ .keep_alive = request.head.method == .GET or request.head.method == .HEAD }),
         .list, .labels, .thread => {},
     }
     const method = request.head.method;
@@ -208,7 +208,7 @@ fn readRequest(aa: std.mem.Allocator, resource: api_thread.Route.Resource, query
             return .{ .ok = .{ .labels = .{ .search = search, .page = page } } };
         },
         .thread => |encoded| return .{ .ok = .{ .patch = std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded)) } },
-        .status, .comments, .comment => unreachable,
+        .status, .comments, .comment, .attachments, .attachment => unreachable,
     }
 }
 

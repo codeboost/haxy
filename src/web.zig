@@ -26,6 +26,7 @@ const fork = @import("./fork.zig");
 const pch = @import("./patch.zig");
 const notify = @import("./notify.zig");
 const thread_write = @import("./thread_write.zig");
+const shared_attachment = @import("./attachment.zig");
 const same_origin = @import("./origin.zig");
 const xitui = xit.xitui;
 const wgt = xitui.widget;
@@ -1606,82 +1607,12 @@ fn serveAttachment(
             var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
             defer any_repo.deinit(io, allocator);
             switch (any_repo) {
-                inline else => |*repo| try sendAttachment(repo_kind, repo.self_repo_opts, io, request, allocator, repo, &attachment.id),
+                // the shared read check and headers (`attachment.send`), as
+                // the JSON API serves them
+                inline else => |*repo| if (!try shared_attachment.send(repo_kind, repo.self_repo_opts, io, request, allocator, repo, &attachment.id, null)) return respondAttachmentNotFound(request),
             }
         },
     }
-}
-
-fn sendAttachment(
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    io: std.Io,
-    request: *std.http.Server.Request,
-    allocator: std.mem.Allocator,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    id: *const [evt.event_id_size]u8,
-) !void {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const DB = evt.EventDB(repo_opts.hash);
-    var event_db_maybe: ?evt.LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir) else null;
-    defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
-    const haxy_moment = (if (event_db_maybe) |*event_db|
-        evt.currentMomentFromDb(repo_opts.hash, event_db.db)
-    else if (repo_kind == .git)
-        return respondAttachmentNotFound(request)
-    else
-        evt.currentMoment(repo_opts, repo)) catch return respondAttachmentNotFound(request);
-
-    const record = (try evt.Attachment.readById(DB, repo_opts.hash, haxy_moment, &arena, id)) orelse return respondAttachmentNotFound(request);
-    if (record.removed) return respondAttachmentNotFound(request);
-    if (record.blob_oid.len != hash.hexLen(repo_opts.hash)) return respondAttachmentNotFound(request);
-    const blob_oid: *const [hash.hexLen(repo_opts.hash)]u8 = @ptrCast(record.blob_oid.ptr);
-
-    var moment = repo.core.latestMoment() catch return respondAttachmentNotFound(request);
-    const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
-    var object_reader = obj.ObjectReader(repo_kind, repo_opts).init(state, io, allocator, blob_oid) catch return respondAttachmentNotFound(request);
-    defer object_reader.deinit();
-    if (object_reader.header().kind != .blob) return respondAttachmentNotFound(request);
-
-    const content_type = attachmentContentType(record.name);
-    const encoded_name = try ui.urlEncodeRef(allocator, record.name);
-    defer allocator.free(encoded_name);
-    const disposition = try allocator.print("{s}; filename*=UTF-8''{s}", .{ if (content_type == null) "attachment" else "inline", encoded_name });
-    defer allocator.free(disposition);
-
-    var send_buf: [8192]u8 = undefined;
-    var body = try request.respondStreaming(&send_buf, .{
-        .content_length = object_reader.header().size,
-        .respond_options = .{
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = content_type orelse "application/octet-stream" },
-                .{ .name = "content-disposition", .value = disposition },
-                // uploaded bytes are never sniffed into a type that could run
-                // as script on this origin
-                .{ .name = "x-content-type-options", .value = "nosniff" },
-            },
-        },
-    });
-    _ = try object_reader.interface.streamRemaining(&body.writer);
-    try body.end();
-}
-
-// the images a browser renders safely inline. anything else downloads as
-// opaque bytes, so an uploaded page can't run on this origin.
-fn attachmentContentType(name: []const u8) ?[]const u8 {
-    const types = [_]struct { ext: []const u8, value: []const u8 }{
-        .{ .ext = ".png", .value = "image/png" },
-        .{ .ext = ".jpg", .value = "image/jpeg" },
-        .{ .ext = ".jpeg", .value = "image/jpeg" },
-        .{ .ext = ".gif", .value = "image/gif" },
-        .{ .ext = ".webp", .value = "image/webp" },
-    };
-    for (types) |entry| {
-        if (name.len > entry.ext.len and std.ascii.eqlIgnoreCase(name[name.len - entry.ext.len ..], entry.ext)) return entry.value;
-    }
-    return null;
 }
 
 fn respondAttachmentNotFound(request: *std.http.Server.Request) !void {
@@ -1734,38 +1665,31 @@ fn handleAttach(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.kind)) orelse return;
-    const author = actor.author;
-    // an attachment changes the event it hangs off
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondAttachmentTargetNotFound(request);
     defer request_repo.deinit(allocator);
     const source = request_repo.source;
-    if (!try source.canModify(io, allocator, actor, parts.kind, &parts.id_bytes)) return respondForbidden(request);
 
-    const name = (try attachmentName(allocator, request)) orelse return respondUploadError(request, .bad_request, "attachment needs a name");
-    defer allocator.free(name);
-    if (!evt.Attachment.nameValid(name)) return respondUploadError(request, .bad_request, "invalid attachment name");
+    const name = try attachmentName(allocator, request);
+    defer if (name) |value| allocator.free(value);
+    // the shared upload rules, as the JSON API checks them
+    const length = shared_attachment.declaredLength(request.head.content_length, request.head.transfer_encoding);
+    if (shared_attachment.checkUpload(name, length)) |failure| return switch (failure) {
+        .name_required => respondUploadError(request, .bad_request, "attachment needs a name"),
+        .invalid_name => respondUploadError(request, .bad_request, "invalid attachment name"),
+        .length_required => respondUploadError(request, .length_required, "attachments must declare a content length"),
+        .empty => respondUploadError(request, .bad_request, "attachment is empty"),
+        .too_large => respondUploadError(request, .payload_too_large, "attachment is too large"),
+    };
 
-    const size = request.head.content_length orelse return respondUploadError(request, .length_required, "attachments must declare a content length");
-    if (size == 0) return respondUploadError(request, .bad_request, "attachment is empty");
-    if (size > evt.Attachment.max_size) return respondUploadError(request, .payload_too_large, "attachment is too large");
-
-    const target_id_hex = std.fmt.bytesToHex(parts.id_bytes, .lower);
-
+    var id: [evt.event_id_size]u8 = undefined;
+    io.random(&id);
     var body_buf: [4096]u8 = undefined;
-    const blob: evt.Blob = .{ .name = name, .size = size, .reader = try request.readerExpectContinue(&body_buf) };
-
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| _ = evt.Attachment.create(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.kind, &target_id_hex, blob, author) catch |err| switch (err) {
-                    error.TargetNotFound => return respondAttachmentTargetNotFound(request),
-                    else => return err,
-                },
-            }
-        },
-    }
+    const blob: evt.Blob = .{ .name = name.?, .size = length.?, .reader = try request.readerExpectContinue(&body_buf) };
+    thread_write.attach(host.event(), io, allocator, source, actor, parts.kind, &parts.id_bytes, &id, blob) catch |err| switch (err) {
+        error.NotFound => return respondAttachmentTargetNotFound(request),
+        error.Forbidden => return respondForbidden(request),
+        else => return err,
+    };
 
     // the client reloads the page itself
     try request.respond("", .{ .status = .no_content, .keep_alive = false });

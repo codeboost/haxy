@@ -1,6 +1,7 @@
 const std = @import("std");
 const evt = @import("../event.zig");
 const thread_write = @import("../thread_write.zig");
+const attachment = @import("../attachment.zig");
 const ui = @import("../ui.zig");
 const xit = @import("xit");
 const rp = xit.repo;
@@ -587,4 +588,94 @@ test "in a git repository, two concurrent edits of a discussion from the same re
         if (result) |_| landed += 1 else |err| try std.testing.expectEqual(error.Stale, err);
     }
     try std.testing.expectEqual(1, landed);
+}
+
+// whether the attachment `id` names may be served from the thread `thread`
+fn servable(arena: *std.heap.ArenaAllocator, repo: *rp.Repo(.xit, .{}), thread: *const [evt.event_id_size]u8, id: *const [evt.event_id_size]u8) !bool {
+    const opts: rp.RepoOpts(.xit) = .{};
+    return try attachment.readServable(opts.hash, arena, try evt.currentMoment(opts, repo), id, .{ .kind = .issue, .id = thread }) != null;
+}
+
+// attaches `bytes` as `name` under a chosen id
+fn attachBytes(source: ui.RepoSource, actor: ui.Actor, thread: *const [evt.event_id_size]u8, id: *const [evt.event_id_size]u8, name: []const u8, bytes: []const u8) !void {
+    var body: std.Io.Reader = .fixed(bytes);
+    try thread_write.attach(.local, std.testing.io, std.testing.allocator, source, actor, .issue, thread, id, .{ .name = name, .size = bytes.len, .reader = &body });
+}
+
+test "attaching follows the TUI's rules: to a live thread, by its author or a writer, once per id; removing it once" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var repo = try rp.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const issue: [evt.event_id_size]u8 = @splat(20);
+    try thread_write.create(.local, io, allocator, source, .issue, &issue, .{ .title = "Crash", .labels = "", .description = "" }, writer.author);
+
+    const file: [evt.event_id_size]u8 = @splat(21);
+    try attachBytes(source, writer, &issue, &file, "log.txt", "it crashed");
+    try std.testing.expect(try servable(&arena, &repo, &issue, &file));
+    // a retry under the same id attaches nothing more
+    try std.testing.expectError(error.IdTaken, attachBytes(source, writer, &issue, &file, "log.txt", "it crashed"));
+
+    // only the thread's author or a writer may attach to it
+    const other: [evt.event_id_size]u8 = @splat(22);
+    try std.testing.expectError(error.Forbidden, attachBytes(source, reader, &issue, &other, "mine.txt", "mine"));
+    const own: [evt.event_id_size]u8 = @splat(23);
+    try thread_write.create(.local, io, allocator, source, .issue, &own, .{ .title = "Reader's", .labels = "", .description = "" }, reader.author);
+    try attachBytes(source, reader, &own, &other, "mine.txt", "mine");
+
+    // an attachment hangs off a thread, never a comment or an id naming nothing
+    const unknown: [evt.event_id_size]u8 = @splat(24);
+    try std.testing.expectError(error.NotFound, attachBytes(source, writer, &unknown, &unknown, "x.txt", "x"));
+
+    // only the attachment's author or a writer may remove it, and only once
+    try std.testing.expectError(error.Forbidden, thread_write.remove(.local, io, allocator, source, reader, .issue, &issue, .attach, &file));
+    try thread_write.remove(.local, io, allocator, source, reader, .issue, &own, .attach, &other);
+    try std.testing.expect(!try servable(&arena, &repo, &own, &other));
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, writer, .issue, &own, .attach, &other));
+    // an attachment is removed only through its own thread
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, writer, .issue, &own, .attach, &file));
+
+    // a removed thread takes no attachments, and serves none
+    try thread_write.remove(.local, io, allocator, source, writer, .issue, &issue, .issue, &issue);
+    try std.testing.expect(!try servable(&arena, &repo, &issue, &file));
+    const late: [evt.event_id_size]u8 = @splat(25);
+    try std.testing.expectError(error.NotFound, attachBytes(source, writer, &issue, &late, "late.txt", "late"));
+}
+
+test "removing an attachment that isn't live on the thread named is not found, whoever asks, before any rights are checked" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var repo = try rp.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+
+    const first: [evt.event_id_size]u8 = @splat(30);
+    const second: [evt.event_id_size]u8 = @splat(31);
+    try thread_write.create(.local, io, allocator, source, .issue, &first, .{ .title = "First", .labels = "", .description = "" }, writer.author);
+    try thread_write.create(.local, io, allocator, source, .issue, &second, .{ .title = "Second", .labels = "", .description = "" }, writer.author);
+    const file: [evt.event_id_size]u8 = @splat(32);
+    try attachBytes(source, writer, &first, &file, "log.txt", "log");
+    const removed: [evt.event_id_size]u8 = @splat(33);
+    try attachBytes(source, writer, &first, &removed, "old.txt", "old");
+    try thread_write.remove(.local, io, allocator, source, writer, .issue, &first, .attach, &removed);
+
+    // a reader who may remove none of them learns only that they aren't there
+    const unknown: [evt.event_id_size]u8 = @splat(34);
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, reader, .issue, &first, .attach, &unknown));
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, reader, .issue, &first, .attach, &removed));
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, reader, .issue, &second, .attach, &file));
+    // a live one on its own thread is theirs to be refused
+    try std.testing.expectError(error.Forbidden, thread_write.remove(.local, io, allocator, source, reader, .issue, &first, .attach, &file));
 }

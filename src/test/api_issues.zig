@@ -148,11 +148,12 @@ test "what a viewer may do with a kind's threads follows the TUI's rules, with a
     try expectJson("{\"create\":{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Your role in this repository doesn't allow opening issues.\"}}}", api_thread.listActions(.issue, .{ .may_write = false, .signed_in = true }));
 
     // changing one, or who is assigned to it, takes its author or a writer
-    try expectJson("{\"edit\":{\"available\":true},\"set_status\":{\"available\":true},\"remove\":{\"available\":true},\"assign\":{\"available\":true}}", api_thread.threadActions(.issue, .{ .may_write = true, .signed_in = true }));
+    try expectJson("{\"edit\":{\"available\":true},\"set_status\":{\"available\":true},\"remove\":{\"available\":true},\"assign\":{\"available\":true},\"attach\":{\"available\":true}}", api_thread.threadActions(.issue, .{ .may_write = true, .signed_in = true }));
     const refused = api_thread.threadActions(.issue, .{ .may_write = false, .signed_in = true });
     try expectJson("{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Only the issue's author and the repository's writers can change it.\"}}", refused.edit);
     try expectJson("{\"available\":false,\"reason\":{\"code\":\"unauthenticated\",\"message\":\"Log in to change this issue.\"}}", api_thread.threadActions(.issue, .{ .may_write = false, .signed_in = false }).remove);
     try expectJson("{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Only the issue's author and the repository's writers can assign people to it.\"}}", refused.assign);
+    try expectJson("{\"available\":false,\"reason\":{\"code\":\"forbidden\",\"message\":\"Only the issue's author and the repository's writers can attach files to it.\"}}", refused.attach);
 }
 
 test "a write names a thread's fields; an id or revision it sends must be one haxy could have given out" {

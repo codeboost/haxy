@@ -66,8 +66,8 @@ pub fn handle(
     const read_methods = method == .GET or method == .HEAD;
     const change: ?Change = switch (matched.resource) {
         .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, matched, query, comment_kind),
-        // a discussion has no status
-        .status => return api.respondError(request, allocator, no_route, .{ .keep_alive = read_methods }),
+        // a discussion has no status; its attachments are wired after the merge
+        .status, .attachments, .attachment => return api.respondError(request, allocator, no_route, .{ .keep_alive = read_methods }),
         .list => if (read_methods) null else if (method == .POST) .create else return api_thread.unsupported(request, allocator, "GET, HEAD, POST"),
         .labels => if (read_methods) null else return api_thread.unsupported(request, allocator, "GET, HEAD"),
         .thread => if (read_methods) null else if (method == .PATCH) .edit else if (method == .DELETE) .remove else return api_thread.unsupported(request, allocator, "GET, HEAD, PATCH, DELETE"),
@@ -213,7 +213,7 @@ fn readRequest(aa: std.mem.Allocator, resource: api_thread.Route.Resource, query
             return .{ .ok = .{ .labels = .{ .search = search, .page = page } } };
         },
         .thread => |encoded| return .{ .ok = .{ .discussion = std.Uri.percentDecodeInPlace(try aa.dupe(u8, encoded)) } },
-        .status, .comments, .comment => unreachable,
+        .status, .comments, .comment, .attachments, .attachment => unreachable,
     }
 }
 

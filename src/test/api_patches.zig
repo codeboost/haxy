@@ -363,15 +363,15 @@ test "a merged patch stays merged: its status isn't the viewer's to change, whoe
         .record = .{ .event = .{ .title = "t", .description = "", .labels = "", .target_branch = "master", .status = .{ .merged = .{ .revision = .source, .patchrev_id = @splat('0') } } } },
         .can_modify = true,
     };
-    const merged = api_patches.actions(&entry, true);
+    const merged = api_patches.actions(&entry, .server, .{ .signed_in = true });
     try std.testing.expect(merged.edit == .available);
     try std.testing.expect(merged.remove == .available);
     try std.testing.expectEqual(.unsupported, merged.set_status.unavailable.code);
     entry.record.event.status = .closed;
-    try std.testing.expect(api_patches.actions(&entry, true).set_status == .available);
+    try std.testing.expect(api_patches.actions(&entry, .server, .{ .signed_in = true }).set_status == .available);
     entry.can_modify = false;
-    try std.testing.expectEqual(.forbidden, api_patches.actions(&entry, true).set_status.unavailable.code);
-    try std.testing.expectEqual(.unauthenticated, api_patches.actions(&entry, false).edit.unavailable.code);
+    try std.testing.expectEqual(.forbidden, api_patches.actions(&entry, .server, .{ .signed_in = true }).set_status.unavailable.code);
+    try std.testing.expectEqual(.unauthenticated, api_patches.actions(&entry, .server, .{ .signed_in = false }).edit.unavailable.code);
 }
 
 test "a status change that raced another change answers conflict, never internal" {

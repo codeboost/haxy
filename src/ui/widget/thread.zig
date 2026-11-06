@@ -1925,7 +1925,9 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                         .merge => mergeRoute(data.identity, data.selected_id),
                     } orelse return error.RouteTooLong;
                     const page_url = try route.toUrl(session.page_arena);
-                    const action = try aa.print("form:{s}", .{page_url});
+                    // a merge sends what the page shows, which it is checked against
+                    const query = if (comptime supports_merge) if (confirmation_kind == .merge) try Data.mergeQuery(aa, data.selectedThread()) else "" else "";
+                    const action = try aa.print("form:{s}{s}", .{ page_url, query });
                     const event_name = if (attachment_id.len != 0) "attachment" else if (data.comment_id.len == 0) thread_name else "comment";
                     var label_buf: ["remove ".len + @max(thread_name.len, "attachment".len)]u8 = undefined;
                     var buttons: [2]widget.ConfirmationButton = undefined;
@@ -1946,12 +1948,13 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                             buttons[1] = .{
                                 .label = "squash and merge patch",
                                 .bottom_label = mergeBottomLabel(availability.squash),
-                                .action = if (availability.squash == .clean) try aa.print("{s}{s}/squash", .{ ui.submit_action_prefix, page_url }) else "",
+                                .action = if (availability.squash == .clean) try aa.print("{s}{s}/squash{s}", .{ ui.submit_action_prefix, page_url, query }) else "",
                             };
                             button_count += 1;
                         } else unreachable;
                     }
-                    var center = try widget.initConfirmationForm(allocator, action, buttons[0..button_count]);
+                    const prompt = if (comptime supports_merge) if (confirmation_kind == .merge) Data.mergePrompt(session) else widget.confirmation_prompt else widget.confirmation_prompt;
+                    var center = try widget.initConfirmationFormPrompt(allocator, prompt, action, buttons[0..button_count]);
                     errdefer center.deinit(allocator);
                     try stack.children.put(allocator, center.getFocus().id, .{ .center = center });
                 } else if (data.view == .new_comment or data.view == .edit_comment) {
@@ -3179,15 +3182,14 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                     const entry = self.data.selectedThread() orelse return;
                     const revision: evt.Patch.MergeRevision = if (button_index > 1) .squash else .source;
                     if (!Data.canMerge(entry.*, self.session) or entry.mergeability.get(revision) != .clean) return;
-                    const author = ((try self.session.authorize(self.data.identity, .write, kind)) orelse return).author;
-                    self.data.mergePatch(self.session, allocator, author, entry.id, revision) catch |err| switch (err) {
-                        error.MergeConflict, error.MergeCheckUnavailable, error.PatchOutOfDate, error.PatchDataUnavailable => {
-                            const route = listRoute(self.data.identity, entryStatus(entry.*), entry.id) orelse return;
-                            try self.session.navigate(route);
-                            return;
-                        },
-                        else => return err,
-                    };
+                    const author = ((try self.session.authorize(self.data.identity, Data.merge_role, kind)) orelse return).author;
+                    // a refusal shows on the merge page, read again
+                    if (try self.data.mergePatch(self.session, allocator, author, entry, revision)) |refusal| {
+                        const route = mergeRoute(self.data.identity, entry.id) orelse return;
+                        try self.session.navigate(route);
+                        self.session.data.form_feedback = .{ .merge = .{ .failure = refusal } };
+                        return;
+                    }
                     const merged = std.meta.stringToEnum(Status, "merged") orelse return;
                     const route = listRoute(self.data.identity, merged, entry.id) orelse return;
                     try self.session.navigate(route);

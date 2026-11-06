@@ -16,6 +16,7 @@ const srch_thrd = @import("../../search_thread.zig");
 const fork = @import("../../fork.zig");
 const pch = @import("../../patch.zig");
 const thread_write = @import("../../thread_write.zig");
+const patch_merge = @import("../../patch_merge.zig");
 
 const wasm = builtin.target.cpu.arch == .wasm32;
 
@@ -183,6 +184,8 @@ pub const PatchWithId = struct {
     base_oid: []const u8 = "",
     commit_count: ?u64 = null,
     no_changes: bool = false,
+    // the target branch's tip, "" when it has none or the patch is merged
+    target_oid: []const u8 = "",
     fork_exists: bool = false,
     // the url identity of the fork backing the patch: its forker and the repo name it was forked under
     fork_identity: []const u8 = "",
@@ -357,6 +360,23 @@ pub fn mergeRoute(identity: []const u8, selected: []const u8) ?ui.RoutablePage {
     return ui.RoutablePage.repoPatchMergeRoute(identity, selected);
 }
 
+/// the role a merge needs
+pub const merge_role = patch_merge.min_role;
+
+/// the query a merge form posts with: what the page shows, which the merge
+/// is checked against (see patch_merge.zig)
+pub fn mergeQuery(aa: std.mem.Allocator, entry_maybe: ?*const Entry) ![]const u8 {
+    const entry = entry_maybe orelse return "";
+    const revision = entry.record.event.revision orelse return "";
+    return aa.print("?revision={s}&target={s}", .{ &revision.id, entry.target_oid });
+}
+
+/// the merge page's question, or why the last merge from it was refused
+pub fn mergePrompt(session: *const ui.Session) []const u8 {
+    const feedback = session.formFeedback(.merge) orelse return ui.widget.confirmation_prompt;
+    return patch_merge.refusalText(feedback.failure);
+}
+
 pub fn canMerge(entry: Entry, session: *const ui.Session) bool {
     return mergeBlock(entry, session.data.host_kind) == null;
 }
@@ -463,27 +483,18 @@ pub fn publishDraft(data: *const Self, session: *ui.Session, allocator: std.mem.
     }
 }
 
-pub fn mergePatch(data: *const Self, session: *ui.Session, allocator: std.mem.Allocator, author: evt.CommitAuthor, id: []const u8, revision: evt.Patch.MergeRevision) !void {
+/// merges `entry` as the page showed it (its revision and its target's
+/// tip), or says why not
+pub fn mergePatch(data: *const Self, session: *ui.Session, allocator: std.mem.Allocator, author: evt.CommitAuthor, entry: *const Entry, revision: evt.Patch.MergeRevision) !?patch_merge.Refusal {
     const io = session.io orelse return error.NotFound;
     const server = switch (session.eventHost()) {
         .server => |server| server,
         .local => return error.NotFound,
     };
     const repo_source = data.repo_source orelse return error.NotFound;
-    if (repo_source.repo_kind != .xit) return error.NotFound;
-    const patch_id = evt.parseEventId(id) catch return error.NotFound;
-
-    const id_hex = std.fmt.bytesToHex(patch_id, .lower);
-    var target_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, repo_source.localInitOpts());
-    defer target_repo.deinit(io, allocator);
-    switch (target_repo) {
-        inline else => |*repo| try pch.mergeAndRemoveFork(repo.self_repo_opts, io, allocator, server, repo, .{
-            .id = id_hex,
-            .revision = revision,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        }),
-    }
+    const patch_id = evt.parseEventId(entry.id) catch return error.NotFound;
+    const shown = entry.record.event.revision orelse return .not_pushed;
+    return patch_merge.merge(server, io, allocator, repo_source, author, &patch_id, revision, .{ .revision = &shown.id, .target_commit = entry.target_oid });
 }
 
 pub fn editDraft(
@@ -866,6 +877,7 @@ fn setPatchDetails(
             item.mergeability = pch.readMergeability(repo_opts, state, io, arena, &id, item.record.event) catch .{};
         }
         const target_oid = try rf.readRecur(repo_kind, repo_opts, state, io, .{ .ref = .{ .kind = .head, .name = target_branch } });
+        if (target_oid) |*oid| item.target_oid = try arena.allocator().dupe(u8, oid);
         item.no_changes = if (target_oid) |oid| std.mem.eql(u8, &oid, revision.source_oid) else false;
     }
     target.items = items;

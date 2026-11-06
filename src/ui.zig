@@ -2529,6 +2529,7 @@ pub const Session = struct {
             }
         };
 
+        merge: struct { failure: @import("patch_merge.zig").Refusal },
         login: struct {
             failure: LoginFailure,
             username: []const u8,

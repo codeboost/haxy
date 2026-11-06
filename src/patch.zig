@@ -879,6 +879,16 @@ pub const MergeInput = struct {
     revision: evt.Patch.MergeRevision,
     author: evt.CommitAuthor,
     timestamp: u64,
+    // what the merging client was shown, checked when the merge runs; null
+    // merges the patch as it is then
+    reviewed: ?Reviewed = null,
+
+    pub const Reviewed = struct {
+        // the patch revision's hex id
+        revision: []const u8,
+        // the target branch's tip
+        target_oid: []const u8,
+    };
 };
 
 pub fn publish(
@@ -1117,6 +1127,8 @@ fn mergeInner(
         .merged => return error.PatchAlreadyMerged,
     }
     const selected = patch_record.event.revision orelse return error.PatchNotPushed;
+    if (input.reviewed) |reviewed| if (!std.mem.eql(u8, reviewed.revision, &selected.id)) return error.StaleRevision;
+    if (try patchConflicted(repo_opts, target_moment, patch_record, &patch_id)) return error.PatchConflicted;
     const target_ref = rf.Ref{ .kind = .head, .name = patch_record.event.target_branch };
 
     // open the fork
@@ -1154,6 +1166,7 @@ fn mergeInner(
             author: evt.CommitAuthor,
             timestamp: u64,
             users_dir: []const u8,
+            reviewed_target: ?[]const u8,
 
             pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 var moment = try DB.HashMap(.read_write).init(cursor.*);
@@ -1170,6 +1183,10 @@ fn mergeInner(
                     const newest = (try evt.PatchRev.readNewest(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, &check_arena)) orelse return error.PatchDataUnavailable;
                     if (!std.mem.eql(u8, &newest.id, &revision_id) or !selected_revision.matches(newest.record)) return error.PatchOutOfDate;
                 } else if (!try branchCurrent(repo_opts, state.readOnly(), ctx.io, &check_arena, ctx.expected_patch)) return error.PatchOutOfDate;
+
+                // the target must be where the merging client saw it
+                const before_oid = (try rf.readRecur(.xit, repo_opts, state.readOnly(), ctx.io, .{ .ref = ctx.target_ref })) orelse return error.InvalidTargetBranch;
+                if (ctx.reviewed_target) |reviewed| if (!std.mem.eql(u8, reviewed, &before_oid)) return error.TargetMoved;
 
                 // require a clean cached result for the selected merge style.
                 {
@@ -1192,7 +1209,6 @@ fn mergeInner(
                 }
 
                 // merge the selected commit
-                const before_oid = (try rf.readRecur(.xit, repo_opts, state.readOnly(), ctx.io, .{ .ref = ctx.target_ref })) orelse return error.InvalidTargetBranch;
                 {
                     var merge_result = try mrg.Merge(.xit, repo_opts).init(state, ctx.io, ctx.allocator, .{
                         .kind = .full,
@@ -1247,6 +1263,7 @@ fn mergeInner(
             .author = input.author,
             .timestamp = input.timestamp,
             .users_dir = server.users_dir,
+            .reviewed_target = if (input.reviewed) |reviewed| reviewed.target_oid else null,
         });
     }
     evt.bumpRepoActivityAt(io, allocator, server, target_repo.core.work_path);
@@ -1276,6 +1293,18 @@ pub fn mergeAndRemoveFork(
         break :blk (try fork.readForkerId(&config.sections, &patch_id)) orelse return;
     };
     try fork.remove(io, allocator, server.users_dir, &forker_id, &input.id, input.author);
+}
+
+// whether concurrent edits to the patch's fields await resolution
+fn patchConflicted(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    haxy_moment: evt.EventDB(repo_opts.hash).HashMap(.read_only),
+    record: evt.Patch.Record,
+    id: *const [evt.event_id_size]u8,
+) !bool {
+    const cursor = try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Patch.conflicts_key)) orelse return false;
+    const conflicts = try evt.EventDB(repo_opts.hash).SortedMap(.read_only).init(cursor);
+    return try conflicts.getCursor(&evt.orderKeyDesc(record.created_order, id)) != null;
 }
 
 fn commitAuthor(line: []const u8) !evt.CommitAuthor {
@@ -1351,10 +1380,7 @@ fn importMergedRevision(
     if (patch_record.removed or patch_record.event.status.kind() == .merged) return false;
     if (expected_patch) |expected| {
         if (!evt.fieldEqual(evt.Patch, expected, patch_record.event)) return false;
-        if (try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Patch.conflicts_key))) |cursor| {
-            const conflicts = try DB.SortedMap(.read_only).init(cursor);
-            if (try conflicts.getCursor(&evt.orderKeyDesc(patch_record.created_order, patch_id)) != null) return false;
-        }
+        if (try patchConflicted(repo_opts, haxy_moment, patch_record, patch_id)) return false;
     }
     const revision_id = try evt.parseEventId(&selected.id);
 

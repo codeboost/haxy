@@ -2,6 +2,7 @@ const std = @import("std");
 const api = @import("../api.zig");
 const evt = @import("../event.zig");
 const api_thread = @import("../api/thread.zig");
+const api_discussions = @import("../api/discussions.zig");
 const query_params = @import("../api/query.zig");
 const ui = @import("../ui.zig");
 
@@ -179,4 +180,13 @@ test "a write names a thread's fields; an id or revision it sends must be one ha
     try std.testing.expectEqualStrings("title", api_thread.fieldsError(.required_title).field_errors[0].field);
     try std.testing.expectEqualStrings("labels", api_thread.fieldsError(.invalid_labels).field_errors[0].field);
     try std.testing.expectEqual(.validation, api_thread.fieldsError(.invalid_labels).code);
+}
+
+test "discussion routes are the thread routes under the discussions segment; a discussion offers no status change or assignment" {
+    try std.testing.expectEqual(.list, std.meta.activeTag(api_discussions.route("/api/v1/repos/bobby/linux/discussions").?.resource));
+    try std.testing.expectEqual(.labels, std.meta.activeTag(api_discussions.route("/api/v1/repo/discussions/labels").?.resource));
+    try std.testing.expectEqualStrings("abc", api_discussions.route("/api/v1/repos/bobby/linux/discussions/abc/comments").?.resource.comments);
+    try std.testing.expectEqual(null, api_discussions.route("/api/v1/repos/bobby/linux/issues"));
+    try std.testing.expectEqual(null, api_discussions.route("/api/v1/repo/discussionsx"));
+    try expectJson("{\"create\":{\"available\":false,\"reason\":{\"code\":\"unauthenticated\",\"message\":\"Log in to open a discussion.\"}}}", api_thread.listActions(.discuss, .{ .may_write = false, .signed_in = false }));
 }

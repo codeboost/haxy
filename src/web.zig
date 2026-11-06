@@ -14,6 +14,7 @@ const api_undo = @import("./api/undo.zig");
 const api_sync = @import("./api/sync.zig");
 const api_issues = @import("./api/issues.zig");
 const api_patches = @import("./api/patches.zig");
+const api_discussions = @import("./api/discussions.zig");
 const api_repo = @import("./api/repo.zig");
 const api_repo_admin = @import("./api/repo_admin.zig");
 const api_repo_create = @import("./api/repo_create.zig");
@@ -249,6 +250,7 @@ fn routeApiRequest(
     if (api_issues.route(path)) |route|
         return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_patches.route(path)) |route| return api_patches.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_discussions.route(path)) |route| return api_discussions.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_undo.route(path)) |route| return api_undo.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
     if (api_sync.route(path)) return api_sync.handle(io, request, allocator, apiRepoHost(host));
     if (api_events.route(path)) |route| return api_events.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
@@ -2096,31 +2098,6 @@ fn respondRemoveNotFound(request: *std.http.Server.Request) !void {
     });
 }
 
-fn updateDiscussion(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    host: Host,
-    repo_base: []const u8,
-    id: *const [evt.event_id_size]u8,
-    title: []const u8,
-    labels: []const u8,
-    description: []const u8,
-    author: evt.CommitAuthor,
-) !void {
-    const request_repo = (try requestRepoSource(io, allocator, host, repo_base)) orelse return error.NotFound;
-    defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try evt.Discussion.update(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, id, title, labels, description, author),
-            }
-        },
-    }
-}
-
 // set the status of the issue the url names (base is
 // "/<owner>:<name>/issue:<id>", identity elided in local mode) by
 // re-emitting its event, then redirect back to it
@@ -2269,7 +2246,7 @@ fn handleThreadEdit(
         else => unreachable,
     };
     (switch (parts.thread_kind) {
-        .issue => thread_write.editIssue(host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, .{
+        .issue => thread_write.edit(host.event(), io, allocator, request_repo.source, actor, .issue, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .description = description,
@@ -2280,7 +2257,11 @@ fn handleThreadEdit(
             .description = description,
             .target_branch = target_branch,
         } }, author),
-        .discuss => updateDiscussion(io, allocator, host, parts.repo_base, &parts.thread_id, title, labels, description, author),
+        .discuss => thread_write.edit(host.event(), io, allocator, request_repo.source, actor, .discuss, &parts.thread_id, .{
+            .title = title,
+            .labels = labels,
+            .description = description,
+        }, null),
         else => unreachable,
     }) catch |err| switch (err) {
         error.Forbidden => return respondForbidden(request),

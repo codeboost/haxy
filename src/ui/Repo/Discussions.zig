@@ -121,6 +121,9 @@ pub fn init(
     comments_start: usize,
     view: ui.RoutablePage.DiscussionsView,
     viewer: ?ui.Viewer,
+    // how many discussions the window holds: the TUI's `page_size`, or what
+    // an API client asked for
+    shown: usize,
 ) !Self {
     var empty = try emptyResult(arena.allocator(), identity, search, selected_id, comment_id, comments_start, view);
     // the early returns below still let the viewer write
@@ -182,7 +185,7 @@ pub fn init(
     }
 
     const discussion_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
-    const loaded_window = try thread.loadWindow(Self, .discuss, repo_opts.hash, arena, admin_moment, haxy_moment, records, sets, root_key, null, empty.selected_id, discussion_comments_start, filters.words, viewer, page_size);
+    const loaded_window = try thread.loadWindow(Self, .discuss, repo_opts.hash, arena, admin_moment, haxy_moment, records, sets, root_key, null, empty.selected_id, discussion_comments_start, filters.words, viewer, shown);
     const comment_page = if (empty.comment_id.len == 0)
         null
     else

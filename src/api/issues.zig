@@ -49,10 +49,10 @@ pub fn handle(
     const method = request.head.method;
     const read_methods = method == .GET or method == .HEAD;
     const change: ?Change = switch (matched.resource) {
-        .list => if (read_methods) null else if (method == .POST) .create else return unsupported(request, allocator, "GET, HEAD, POST"),
-        .labels => if (read_methods) null else return unsupported(request, allocator, "GET, HEAD"),
-        .thread => if (read_methods) null else if (method == .PATCH) .edit else if (method == .DELETE) .remove else return unsupported(request, allocator, "GET, HEAD, PATCH, DELETE"),
-        .status => if (method == .PUT) .set_status else return unsupported(request, allocator, "PUT"),
+        .list => if (read_methods) null else if (method == .POST) .create else return api_thread.unsupported(request, allocator, "GET, HEAD, POST"),
+        .labels => if (read_methods) null else return api_thread.unsupported(request, allocator, "GET, HEAD"),
+        .thread => if (read_methods) null else if (method == .PATCH) .edit else if (method == .DELETE) .remove else return api_thread.unsupported(request, allocator, "GET, HEAD, PATCH, DELETE"),
+        .status => if (method == .PUT) .set_status else return api_thread.unsupported(request, allocator, "PUT"),
         .comments, .comment => unreachable,
     };
     if (change) |value| return handleWrite(io, request, allocator, host, viewer, matched, value);
@@ -104,12 +104,6 @@ pub const no_such_issue: api.Error = .{ .code = .not_found, .message = "There is
 // an issue's comments, as the shared comment routes serve them
 const comment_kind: api_comments.Kind = .{ .kind = .issue, .section = .issues, .noun = "issue", .plural = "issues", .off = issues_off, .no_such_thread = no_such_issue };
 
-const stale_cursor: api.Error = .{
-    .code = .validation,
-    .message = "Check the paging parameters.",
-    .field_errors = &.{.{ .field = "cursor", .message = "This cursor isn't one Haxy gave out for this list; start from the first page." }},
-};
-
 // what one request reads, with its parameters checked
 const Read = union(enum) {
     list: struct {
@@ -132,13 +126,13 @@ fn readRequest(aa: std.mem.Allocator, resource: api_thread.Route.Resource, query
                 else => |e| return e,
             }) orelse "open";
             const status = std.meta.stringToEnum(evt.Issue.Status, status_text) orelse
-                return .{ .invalid = invalidField("status", "The status must be open or closed.") };
-            const search = switch (try searchParam(aa, query)) {
+                return .{ .invalid = api_thread.invalidField("status", "The status must be open or closed.") };
+            const search = switch (try api_thread.searchParam(aa, query)) {
                 .ok => |search| search,
                 .invalid => |err| return .{ .invalid = err },
             };
             const cursor = (query_params.param(aa, query, "cursor") catch |err| switch (err) {
-                error.InvalidPercentEncoding => return .{ .invalid = stale_cursor },
+                error.InvalidPercentEncoding => return .{ .invalid = api_thread.stale_cursor },
                 else => |e| return e,
             }) orelse "";
             const page_size = switch (try query_params.pageSize(aa, query, .{ .default = Issues.page_size, .max = max_page_size })) {
@@ -148,7 +142,7 @@ fn readRequest(aa: std.mem.Allocator, resource: api_thread.Route.Resource, query
             return .{ .ok = .{ .list = .{ .status = status, .search = search, .cursor = cursor, .page_size = page_size } } };
         },
         .labels => {
-            const search = switch (try searchParam(aa, query)) {
+            const search = switch (try api_thread.searchParam(aa, query)) {
                 .ok => |search| search,
                 .invalid => |err| return .{ .invalid = err },
             };
@@ -163,15 +157,6 @@ fn readRequest(aa: std.mem.Allocator, resource: api_thread.Route.Resource, query
         // a write route, or the comments'; handle sends them elsewhere
         .status, .comments, .comment => unreachable,
     }
-}
-
-// the decoded `search` parameter, "" when absent
-fn searchParam(aa: std.mem.Allocator, query: []const u8) !union(enum) { ok: []const u8, invalid: api.Error } {
-    const search = query_params.param(aa, query, "search") catch |err| switch (err) {
-        error.InvalidPercentEncoding => return .{ .invalid = invalidField("search", "The search isn't validly encoded.") },
-        else => |e| return e,
-    };
-    return .{ .ok = search orelse "" };
 }
 
 fn write(
@@ -196,13 +181,13 @@ fn write(
             // the other status's window is read only for its count
             const data = Issues.init(repo_kind, repo_opts, arena, repo, io, admin_moment, opened.resolved.identity, try routeSearch(aa, list.search), list.cursor, "", 0, "", view, viewer, .{ .shown = list.page_size, .others = 0 }) catch |err| switch (err) {
                 // a cursor naming no issue the filters list
-                error.NotFound => return stale_cursor,
+                error.NotFound => return api_thread.stale_cursor,
                 else => |e| return e,
             };
             // a cursor roots its own issue's status, which must be this list's
             if (list.cursor.len != 0) {
-                const rooted = data.selectedThread() orelse return stale_cursor;
-                if (rooted.record.event.status != list.status) return stale_cursor;
+                const rooted = data.selectedThread() orelse return api_thread.stale_cursor;
+                if (rooted.record.event.status != list.status) return api_thread.stale_cursor;
             }
             const window = data.window(list.status);
             const items = try aa.alloc(api_thread.Summary(evt.Issue.Status), window.items.len);
@@ -255,19 +240,6 @@ fn routeSearch(aa: std.mem.Allocator, search: []const u8) ![]const u8 {
     return api_path.encode(aa, search);
 }
 
-fn invalidField(comptime field: []const u8, comptime message: []const u8) api.Error {
-    return .{
-        .code = .validation,
-        .message = "Check the request's parameters.",
-        .field_errors = &.{.{ .field = field, .message = message }},
-    };
-}
-
-fn unsupported(request: *std.http.Server.Request, allocator: std.mem.Allocator, comptime allow: []const u8) !void {
-    // a write's body goes unread, so the connection closes
-    return api.respondError(request, allocator, .{ .code = .unsupported, .message = "This route only supports " ++ allow ++ "." }, .{ .allow = allow, .keep_alive = false });
-}
-
 // --- writes -------------------------------------------------------------------
 //
 // every write resolves the repo as the viewer (one they can't read is not
@@ -300,20 +272,12 @@ pub const StatusRequest = struct {
     status: []const u8,
 };
 
-const unauthenticated: api.Error = .{ .code = .unauthenticated, .message = "Log in to make changes to issues." };
-const role_forbidden: api.Error = .{ .code = .forbidden, .message = "Your role in this repository doesn't allow writing issues." };
 pub const change_forbidden: api.Error = .{ .code = .forbidden, .message = "Only the issue's author and the repository's writers can change it." };
 const stale_revision: api.Error = .{
     .code = .conflict,
     .message = "This issue changed since you loaded it.",
     .field_errors = &.{.{ .field = "revision", .message = "Someone else changed this issue meanwhile. Load it again, then make your change." }},
 };
-const id_taken: api.Error = .{
-    .code = .conflict,
-    .message = "Check the highlighted fields.",
-    .field_errors = &.{.{ .field = "id", .message = "An event in this repository already has this id." }},
-};
-
 // what one write asks for, its body read
 const Write = union(Change) {
     create: CreateRequest,
@@ -370,8 +334,8 @@ fn handleWrite(
 
     const failure: ?api.Error = switch (body) {
         .create => |fields| blk: {
-            const chosen = api_thread.parseNewId(fields.id) orelse break :blk invalidField("id", "Leave the id out, or send 32 lowercase hex digits.");
-            const new_fields = try threadFields(aa, fields);
+            const chosen = api_thread.parseNewId(fields.id) orelse break :blk api_thread.invalidField("id", "Leave the id out, or send 32 lowercase hex digits.");
+            const new_fields = try api_thread.bodyFields(aa, fields);
             if (thread_write.checkFields(.issue, new_fields)) |field_failure| break :blk api_thread.fieldsError(field_failure);
             const id = chosen orelse random: {
                 var bytes: [evt.event_id_size]u8 = undefined;
@@ -379,20 +343,20 @@ fn handleWrite(
                 break :random bytes;
             };
             thread_write.create(event_host, io, allocator, opened.source, .issue, &id, new_fields, actor.author) catch |err| switch (err) {
-                error.IdTaken => break :blk id_taken,
+                error.IdTaken => break :blk api_thread.id_taken,
                 else => |e| return e,
             };
             return respondDetail(request, allocator, &arena, io, &opened, &id, .created);
         },
         .edit => |fields| blk: {
-            const revision = api_thread.parseRevision(fields.revision) orelse break :blk invalidField("revision", "Send the revision of the issue as you loaded it.");
-            const new_fields = try threadFields(aa, fields);
+            const revision = api_thread.parseRevision(fields.revision) orelse break :blk api_thread.invalidField("revision", "Send the revision of the issue as you loaded it.");
+            const new_fields = try api_thread.bodyFields(aa, fields);
             if (thread_write.checkFields(.issue, new_fields)) |field_failure| break :blk api_thread.fieldsError(field_failure);
-            thread_write.editIssue(event_host, io, allocator, opened.source, actor, &thread_id.?, new_fields, revision) catch |err| break :blk try writeError(err);
+            thread_write.edit(event_host, io, allocator, opened.source, actor, .issue, &thread_id.?, new_fields, revision) catch |err| break :blk try writeError(err);
             break :blk null;
         },
         .set_status => |fields| blk: {
-            const status = std.meta.stringToEnum(evt.Issue.Status, fields.status) orelse break :blk invalidField("status", "The status must be open or closed.");
+            const status = std.meta.stringToEnum(evt.Issue.Status, fields.status) orelse break :blk api_thread.invalidField("status", "The status must be open or closed.");
             thread_write.setStatus(evt.Issue, event_host, io, allocator, opened.source, actor, &thread_id.?, status) catch |err| break :blk try writeError(err);
             break :blk null;
         },
@@ -417,15 +381,9 @@ fn writeError(err: anyerror) !api.Error {
     };
 }
 
-// a body's fields, the description's line breaks as the web form stores them
-fn threadFields(aa: std.mem.Allocator, fields: anytype) !thread_write.Fields {
-    return .{ .title = fields.title, .labels = fields.labels, .description = try thread_write.plainNewlines(aa, fields.description) };
-}
+pub const Authorized = api_thread.Authorized;
 
-pub const Authorized = union(enum) { actor: ui.Actor, refused: api.Error };
-
-// who the write acts as, checked against the admin db as it is now: a role
-// revoked since the viewer's page loaded refuses the write
+// who the write acts as (see `api_thread.authorize`)
 pub fn authorize(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -434,19 +392,7 @@ pub fn authorize(
     viewer: ?[evt.event_id_size]u8,
     opened: *api_thread.Opened,
 ) !Authorized {
-    switch (host) {
-        .local => |source| return .{ .actor = .{ .author = try ui.localAuthor(source, io, allocator, arena), .role = .owner } },
-        .server => |server| {
-            const user_id = viewer orelse return .{ .refused = unauthenticated };
-            const moment = opened.session.haxy_moment orelse return .{ .refused = unauthenticated };
-            return switch (try ui.authorizeUser(io, moment, arena, server.users_dir, user_id, opened.resolved.identity, .read, .issue)) {
-                .actor => |actor| .{ .actor = actor },
-                .login_required => .{ .refused = unauthenticated },
-                .repo_not_found => .{ .refused = api_repo.not_found_repo },
-                .forbidden => .{ .refused = role_forbidden },
-            };
-        },
-    }
+    return api_thread.authorize(.issue, io, allocator, arena, host, viewer, opened);
 }
 
 // the issue `id` names as its own route answers it, or null when there is none

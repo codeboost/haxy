@@ -127,7 +127,7 @@ test "notifs" {
     // subscribing replaces the mute record and indexes the subscriber in the owner's repo
     const id_b = notify.idOf(&location.repo_id, &thread_b);
     try std.testing.expectEqual(.muted, try readMode(io, allocator, &arena, users_dir, &recipient_id, &location.repo_id, &thread_b));
-    try notify.subscribe(io, allocator, users_dir, &recipient_id, location, &thread_b, author);
+    try std.testing.expectEqual(.subscribed, try notify.subscribe(io, allocator, users_dir, &recipient_id, location, &thread_b, author));
     try std.testing.expectEqual(.subscribed, try readMode(io, allocator, &arena, users_dir, &recipient_id, &location.repo_id, &thread_b));
     try notify.deliver(io, allocator, users_dir, &recipient_id, &.{notif_b});
     try std.testing.expectEqual(1, (try readRecent(io, allocator, &arena, users_dir, &recipient_id)).len);
@@ -141,13 +141,29 @@ test "notifs" {
     try notify.mute(io, allocator, users_dir, &recipient_id, location, &thread_b, author);
     try std.testing.expectEqual(0, (try readNotified(io, allocator, &arena, users_dir, &owner_id, &id_b)).len);
 
+    // a subscription whose record can't be written (the subscriber has no user
+    // repo yet) gives its place in the tier back, so a later one can land whole
+    {
+        const late_id = evt.EventWithId.randomId(prng.random());
+        const id_a_tier = notify.idOf(&location.repo_id, &thread_a);
+        try std.testing.expectError(error.NotFound, notify.subscribe(io, allocator, users_dir, &late_id, location, &thread_a, author));
+        for (try readNotified(io, allocator, &arena, users_dir, &owner_id, &id_a_tier)) |user_id| {
+            try std.testing.expect(!std.mem.eql(u8, &user_id, &late_id));
+        }
+        try initUserRepo(io, allocator, users_dir, &late_id);
+        try std.testing.expectEqual(.subscribed, try notify.subscribe(io, allocator, users_dir, &late_id, location, &thread_a, author));
+        try std.testing.expectEqual(.subscribed, try readMode(io, allocator, &arena, users_dir, &late_id, &location.repo_id, &thread_a));
+        // and leaves again, so the cap below counts from none
+        try notify.mute(io, allocator, users_dir, &late_id, location, &thread_a, author);
+    }
+
     // a full subscribed tier refuses one more
     for (0..notify.max_subscribed) |_| {
         const user_id = evt.EventWithId.randomId(prng.random());
         try initUserRepo(io, allocator, users_dir, &user_id);
-        try notify.subscribe(io, allocator, users_dir, &user_id, location, &thread_a, author);
+        try std.testing.expectEqual(.subscribed, try notify.subscribe(io, allocator, users_dir, &user_id, location, &thread_a, author));
     }
-    try notify.subscribe(io, allocator, users_dir, &recipient_id, location, &thread_a, author);
+    try std.testing.expectEqual(.full, try notify.subscribe(io, allocator, users_dir, &recipient_id, location, &thread_a, author));
     try std.testing.expectEqual(null, try readMode(io, allocator, &arena, users_dir, &recipient_id, &location.repo_id, &thread_a));
 
     // past the cap, the oldest go. times tie within a second, so which one goes isn't checked.
@@ -162,4 +178,53 @@ test "notifs" {
         try notify.deliver(io, allocator, users_dir, &recipient_id, many);
     }
     try std.testing.expectEqual(notify.max_notifs, (try readRecent(io, allocator, &arena, users_dir, &recipient_id)).len);
+}
+
+// one of several subscriptions racing for the same user and thread
+const Racer = struct {
+    users_dir: []const u8,
+    user_id: *const [evt.event_id_size]u8,
+    location: evt.RepoLocation,
+    thread_id: *const [evt.event_id_size]u8,
+    // whether the call answered that the user is subscribed
+    subscribed: bool = false,
+
+    fn run(self: *Racer, io: std.Io) void {
+        const outcome = notify.subscribe(io, std.heap.smp_allocator, self.users_dir, self.user_id, self.location, self.thread_id, author) catch return;
+        self.subscribed = outcome == .subscribed;
+    }
+};
+
+test "a subscription answers only once it holds: one racing it never answers for it before it lands" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const temp_path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(temp_path);
+    const users_dir = try std.Io.Dir.path.join(allocator, &.{ temp_path, "users" });
+    defer allocator.free(users_dir);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    var prng = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const owner_id = evt.EventWithId.randomId(prng.random());
+    try initUserRepo(io, allocator, users_dir, &owner_id);
+    const location = try evt.createRepo(io, allocator, users_dir, &owner_id, author, "repo", "", .private, repo_opts.hash, null);
+    // the subscriber has no user repo, so every record write fails and gives its place back
+    const user_id = evt.EventWithId.randomId(prng.random());
+
+    for (0..40) |_| {
+        const thread_id = evt.EventWithId.randomId(prng.random());
+        var racers: [6]Racer = undefined;
+        for (&racers) |*racer| racer.* = .{ .users_dir = users_dir, .user_id = &user_id, .location = location, .thread_id = &thread_id };
+        var group: std.Io.Group = .init;
+        for (&racers) |*racer| try group.concurrent(io, Racer.run, .{ racer, io });
+        try group.await(io);
+        const held = for (try readNotified(io, allocator, &arena, users_dir, &owner_id, &notify.idOf(&location.repo_id, &thread_id))) |notified| {
+            if (std.mem.eql(u8, &notified, &user_id)) break true;
+        } else false;
+        for (racers) |racer| try std.testing.expect(!racer.subscribed or held);
+    }
 }

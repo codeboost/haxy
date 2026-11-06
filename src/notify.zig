@@ -234,8 +234,218 @@ pub fn unreadCount(moment: UserDB.HashMap(.read_only)) !u64 {
     return try (try UserDB.SortedSet(.read_only).init(unread_cursor)).count();
 }
 
+//
+// what a user may see of their inbox
+//
+
+/// whether someone holding `role` in `repo` (null for none) may read its
+/// threads of `kind`: the repo is theirs to read and the kind's tab is on.
+/// delivery and every inbox reader decide by this one rule.
+pub fn mayRead(repo: evt.Repo, role: ?evt.Repo.Role, kind: evt.EventKind) bool {
+    return role != null and repo.threadRole(kind) != null;
+}
+
+/// where a notif's thread lives now, as a reader who may still read it finds it
+pub const Place = struct {
+    owner_name: []const u8,
+    // the repo's name now, which a rename since the notif's last bump changed
+    repo_name: []const u8,
+};
+
+/// decides which of a user's notifs they may still read, remembering each
+/// repo's answer. a notif names its repo's owner as of its last bump; the
+/// repo is then read again by its id, so a repo that took its name since is
+/// never mistaken for it.
+pub const Readable = struct {
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    users_dir: []const u8,
+    admin_moment: evt.AdminDB.HashMap(.read_only),
+    viewer_id: [evt.event_id_size]u8,
+    // each repo as the viewer reads it now, or null when it's gone or hidden from them
+    repos: std.AutoHashMapUnmanaged([evt.event_id_size]u8, ?Found) = .empty,
+
+    const Found = struct { owner_id: [evt.event_id_size]u8, repo: evt.Repo.RepoWithRole };
+
+    /// where the notif's thread is, or null when the viewer may no longer read
+    /// its repo's threads of its kind. whether the thread itself is still there
+    /// is `dropRemoved`'s to say.
+    pub fn placeOf(self: *Readable, notif: Notif) !?Place {
+        const found = (try self.repoOf(notif)) orelse return null;
+        if (!mayRead(found.repo.repo.event, found.repo.role, notif.thread_kind)) return null;
+        return .{ .owner_name = notif.owner_name, .repo_name = found.repo.repo.event.name };
+    }
+
+    fn repoOf(self: *Readable, notif: Notif) !?Found {
+        if (self.repos.get(notif.repo_id)) |found| return found;
+        const found: ?Found = blk: {
+            const owner_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, self.admin_moment, notif.owner_name)) orelse break :blk null;
+            const repo = (try evt.readRepoById(self.io, self.allocator, self.arena, self.users_dir, &owner_id, &notif.repo_id, self.viewer_id)) orelse break :blk null;
+            break :blk .{ .owner_id = owner_id, .repo = repo };
+        };
+        try self.repos.put(self.arena.allocator(), notif.repo_id, found);
+        return found;
+    }
+
+    /// clears the place of every entry of `repo_id`'s repo whose thread is
+    /// removed (or not there at all), opening the repo once
+    fn dropRemoved(self: *Readable, entries: []Entry, repo_id: *const [evt.event_id_size]u8) !void {
+        const found = (self.repos.get(repo_id.*) orelse return) orelse return;
+        const path = try evt.repoPath(self.arena.allocator(), self.users_dir, &found.owner_id, repo_id);
+        // only this directory's own repo: never one an ancestor directory holds
+        var any_repo = rp.AnyRepo(.xit, .{}).open(self.io, self.allocator, .{ .path = path, .require_repo_root = true }) catch |err| switch (err) {
+            // deleted since its record was read, partly (its database gone,
+            // `RepoNotFound`) or wholly (its directory gone, `FileNotFound`):
+            // unreadable, as a repo that is gone
+            error.FileNotFound, error.RepoNotFound => {
+                for (entries) |*entry| {
+                    if (std.mem.eql(u8, &entry.item.notif.repo_id, repo_id)) entry.place = null;
+                }
+                return;
+            },
+            else => |e| return e,
+        };
+        defer any_repo.deinit(self.io, self.allocator);
+        switch (any_repo) {
+            inline else => |*repo| {
+                const repo_opts = repo.self_repo_opts;
+                // a repo without events yet holds no threads
+                const moment = evt.currentMoment(repo_opts, repo) catch |err| switch (err) {
+                    error.NotFound => null,
+                    else => |e| return e,
+                };
+                for (entries) |*entry| {
+                    if (entry.place == null or !std.mem.eql(u8, &entry.item.notif.repo_id, repo_id)) continue;
+                    const live = if (moment) |value| try threadLive(repo_opts.hash, self.arena, value, entry.item.notif.thread_kind, &entry.item.notif.thread_id) else false;
+                    if (!live) entry.place = null;
+                }
+            },
+        }
+    }
+};
+
+// a notif as `readWindow` walks it: where its thread is, or null when the viewer may not read it
+const Entry = struct { item: Item, place: ?Place, order_key: OrderKey };
+
+/// whether `id` names a thread of `kind` that isn't removed, in a repo's events `moment`
+pub fn threadLive(comptime repo_hash: hash.HashKind, arena: *std.heap.ArenaAllocator, moment: evt.EventDB(repo_hash).HashMap(.read_only), kind: evt.EventKind, id: *const [evt.event_id_size]u8) !bool {
+    const DB = evt.EventDB(repo_hash);
+    const kinds_cursor = try moment.getCursor(hash.hashInt(repo_hash, evt.event_index_key)) orelse return false;
+    if (try evt.readEventKind(repo_hash, try DB.HashMap(.read_only).init(kinds_cursor), id) != kind) return false;
+    const Removed = struct { removed: bool };
+    const record = switch (kind) {
+        .issue => try evt.readRecordSubset(evt.Issue, Removed, DB, repo_hash, moment, arena, id),
+        .discuss => try evt.readRecordSubset(evt.Discussion, Removed, DB, repo_hash, moment, arena, id),
+        .patch => try evt.readRecordSubset(evt.Patch, Removed, DB, repo_hash, moment, arena, id),
+        else => return false,
+    } orelse return false;
+    return !record.removed;
+}
+
+/// a notif's position in the inbox's order, newest first. a cursor names one.
+pub const OrderKey = [@sizeOf(u64) + evt.event_id_size]u8;
+
+/// a notif the viewer may read, with where its thread is now
+pub const Shown = struct {
+    item: Item,
+    place: Place,
+    order_key: OrderKey,
+};
+
+/// one window of the notifs a viewer may read, with their counts
+pub const Window = struct {
+    items: []const Shown,
+    // the first notif after the window, or null when it is the last
+    next: ?OrderKey,
+    // how many readable notifs the window's start skipped
+    skipped: u64,
+    // every readable notif, and the unread ones among them
+    total: u64,
+    unread: u64,
+};
+
+/// where a window starts among the readable notifs: after skipping a number of
+/// them, or at the first whose order key is at or after a cursor's (a notif
+/// bumped or dismissed since the cursor was given out doesn't move it)
+pub const From = union(enum) {
+    index: u64,
+    key: OrderKey,
+};
+
+/// up to `count` of the notifs `readable`'s viewer may read (of threads still
+/// there, in repos they may still read), from `from`,
+/// newest first, with the counts of every readable notif, read or not.
+/// `moment` is the viewer's user repo's latest. the TUI's inbox and the JSON
+/// API both read through this, so neither shows a notif of a thread its
+/// reader may no longer read, in a list or in a count.
+pub fn readWindow(moment: UserDB.HashMap(.read_only), arena: *std.heap.ArenaAllocator, readable: *Readable, from: From, count: usize) !Window {
+    var window: Window = .{ .items = &.{}, .next = null, .skipped = 0, .total = 0, .unread = 0 };
+    var items: std.ArrayList(Shown) = .empty;
+    const recent_cursor = try moment.getCursor(hash.hashInt(hash_kind, recent_notif_id_set_key)) orelse return window;
+    const recent = try UserDB.SortedSet(.read_only).init(recent_cursor);
+
+    // every notif, newest first, with the place of its thread if the viewer may read its repo
+    var entries: std.ArrayList(Entry) = .empty;
+    var iter = try recent.iteratorFromIndex(0);
+    while (try iter.next()) |kv_cursor| {
+        var cursor = kv_cursor;
+        const kv_pair = try cursor.readKeyValuePair();
+        var order_key: OrderKey = undefined;
+        _ = try kv_pair.key_cursor.readBytes(&order_key);
+        const id = order_key[@sizeOf(u64)..].*;
+        const item = (try readItem(moment, arena, &id)) orelse return error.NotFound;
+        try entries.append(arena.allocator(), .{ .item = item, .place = try readable.placeOf(item.notif), .order_key = order_key });
+    }
+    // then of those, the ones whose thread is gone, each repo opened once
+    var checked: std.AutoHashMapUnmanaged([evt.event_id_size]u8, void) = .empty;
+    for (entries.items, 0..) |entry, index| {
+        if (entry.place == null) continue;
+        if ((try checked.getOrPut(arena.allocator(), entry.item.notif.repo_id)).found_existing) continue;
+        try readable.dropRemoved(entries.items[index..], &entry.item.notif.repo_id);
+    }
+
+    for (entries.items) |entry| {
+        const item = entry.item;
+        const order_key = entry.order_key;
+        const place = entry.place orelse continue;
+
+        const started = switch (from) {
+            .index => |start| window.total >= start,
+            .key => |key| std.mem.order(u8, &order_key, &key) != .lt,
+        };
+        window.total += 1;
+        if (item.unread) window.unread += 1;
+        if (!started) {
+            window.skipped += 1;
+        } else if (items.items.len < count) {
+            try items.append(arena.allocator(), .{ .item = item, .place = place, .order_key = order_key });
+        } else if (window.next == null) {
+            window.next = order_key;
+        }
+    }
+    window.items = items.items;
+    return window;
+}
+
+// one change of a notify mode at a time in this process (the web, the API and
+// the TUI over SSH all run in it): a subscription's place in its tier and its
+// record land together, or neither does, before another change reads them, so
+// no change answers on one still being made
+var mode_mutex: std.Io.Mutex = .init;
+
+/// what subscribing came to
+pub const Subscribed = enum {
+    // a tier holds the user: the subscribed one now, or one that already did
+    subscribed,
+    // the subscribed tier was at its cap, so nothing changed
+    full,
+};
+
 // notify `user_id` of the thread `thread_id` in the repo at `location` by
-// choice, unless a tier already holds them or the subscribed tier is full
+// choice, unless a tier already holds them or the subscribed tier is full.
+// the cap is checked and the user put in the tier in one transaction on the
+// owner's index, so subscribers racing for the last place can't pass it.
 pub fn subscribe(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -244,16 +454,72 @@ pub fn subscribe(
     location: evt.RepoLocation,
     thread_id: *const [evt.event_id_size]u8,
     author: evt.CommitAuthor,
-) !void {
-    {
-        var owner_repo = (try evt.openUserRepo(io, allocator, users_dir, &location.owner_id)) orelse return error.NotFound;
-        defer owner_repo.deinit(io, allocator);
-        const moment = try owner_repo.core.latestMoment();
-        const notif_id = idOf(&location.repo_id, thread_id);
-        if (try isNotified(moment, &notif_id, user_id)) return;
-        if (try tierFull(moment, &notif_id, .subscribed)) return;
+) !Subscribed {
+    mode_mutex.lockUncancelable(io);
+    defer mode_mutex.unlock(io);
+    const Reserved = enum { already, full, reserved };
+    const Ctx = struct {
+        notif_id: [evt.event_id_size]u8,
+        user_id: *const [evt.event_id_size]u8,
+        out: *Reserved,
+
+        pub fn run(ctx: @This(), cursor: *UserDB.Cursor(.read_write)) !void {
+            const moment = try UserDB.HashMap(.read_write).init(cursor.*);
+            if (try isNotified(moment.readOnly(), &ctx.notif_id, ctx.user_id)) {
+                ctx.out.* = .already;
+                return error.CancelTransaction;
+            }
+            if (try tierFull(moment.readOnly(), &ctx.notif_id, .subscribed)) {
+                ctx.out.* = .full;
+                return error.CancelTransaction;
+            }
+            const tier = comptime tierOf(.subscribed) orelse unreachable;
+            const sets = try UserDB.HashMap(.read_write).init(try moment.putCursor(hash.hashInt(hash_kind, tier.map_key)));
+            const users = try UserDB.SortedSet(.read_write).init(try sets.putCursor(hash.hashInt(hash_kind, &ctx.notif_id)));
+            try users.put(ctx.user_id);
+            ctx.out.* = .reserved;
+        }
+    };
+    var reserved: Reserved = .already;
+    try transact(io, allocator, users_dir, &location.owner_id, Ctx{ .notif_id = idOf(&location.repo_id, thread_id), .user_id = user_id, .out = &reserved });
+    switch (reserved) {
+        .already => return .subscribed,
+        .full => return .full,
+        .reserved => {},
     }
-    try writeMode(io, allocator, users_dir, user_id, &location, thread_id, .subscribed, author);
+    // a record that can't be written gives the place back, so the index never
+    // holds a subscriber whose own record says otherwise (or nothing), and a
+    // retry reserves afresh
+    errdefer unreserve(io, allocator, users_dir, &location, thread_id, user_id);
+    try writeRecord(io, allocator, users_dir, user_id, &location, thread_id, .subscribed, author);
+    return .subscribed;
+}
+
+// take `user_id` out of the subscribed tier `subscribe` reserved for them,
+// logging rather than returning a failure
+fn unreserve(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    location: *const evt.RepoLocation,
+    thread_id: *const [evt.event_id_size]u8,
+    user_id: *const [evt.event_id_size]u8,
+) void {
+    const Ctx = struct {
+        notif_id: [evt.event_id_size]u8,
+        user_id: *const [evt.event_id_size]u8,
+
+        pub fn run(ctx: @This(), cursor: *UserDB.Cursor(.read_write)) !void {
+            const moment = try UserDB.HashMap(.read_write).init(cursor.*);
+            const tier = comptime tierOf(.subscribed) orelse unreachable;
+            const sets = try UserDB.HashMap(.read_write).init(try moment.putCursor(hash.hashInt(hash_kind, tier.map_key)));
+            const users = try UserDB.SortedSet(.read_write).init(try sets.putCursor(hash.hashInt(hash_kind, &ctx.notif_id)));
+            if (!try users.remove(ctx.user_id)) return error.CancelTransaction;
+        }
+    };
+    transact(io, allocator, users_dir, &location.owner_id, Ctx{ .notif_id = idOf(&location.repo_id, thread_id), .user_id = user_id }) catch |err| {
+        std.log.warn("failed to release a subscriber's place: {s}", .{@errorName(err)});
+    };
 }
 
 // never notify `user_id` of the thread `thread_id` in the repo at `location`, dropping its notif
@@ -266,12 +532,45 @@ pub fn mute(
     thread_id: *const [evt.event_id_size]u8,
     author: evt.CommitAuthor,
 ) !void {
-    try writeMode(io, allocator, users_dir, user_id, &location, thread_id, .muted, author);
+    mode_mutex.lockUncancelable(io);
+    defer mode_mutex.unlock(io);
+    try writeModeLocked(io, allocator, users_dir, user_id, &location, thread_id, .muted, author);
     try dismiss(io, allocator, users_dir, user_id, &idOf(&location.repo_id, thread_id));
 }
 
 // write the user's notify event for a thread, then move them to its tier in the owner's index
 pub fn writeMode(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    user_id: *const [evt.event_id_size]u8,
+    location: *const evt.RepoLocation,
+    thread_id: *const [evt.event_id_size]u8,
+    mode: evt.Notify.Mode,
+    author: evt.CommitAuthor,
+) !void {
+    mode_mutex.lockUncancelable(io);
+    defer mode_mutex.unlock(io);
+    try writeModeLocked(io, allocator, users_dir, user_id, location, thread_id, mode, author);
+}
+
+// `writeMode`, for a caller holding `mode_mutex`
+fn writeModeLocked(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    user_id: *const [evt.event_id_size]u8,
+    location: *const evt.RepoLocation,
+    thread_id: *const [evt.event_id_size]u8,
+    mode: evt.Notify.Mode,
+    author: evt.CommitAuthor,
+) !void {
+    try writeRecord(io, allocator, users_dir, user_id, location, thread_id, mode, author);
+    indexMode(io, allocator, users_dir, location, thread_id, user_id, mode);
+}
+
+// write the user's notify event for a thread
+fn writeRecord(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
@@ -296,7 +595,6 @@ pub fn writeMode(
             } },
         }});
     }
-    indexMode(io, allocator, users_dir, location, thread_id, user_id, mode);
 }
 
 // move `user_id` to `mode`'s tier on the thread in its repo owner's index, or
@@ -363,6 +661,9 @@ fn subscribeEach(io: std.Io, allocator: std.mem.Allocator, users_dir: []const u8
         };
         const user_id = (try evt.User.readIdByEmail(evt.AdminDB, evt.admin_repo_opts.hash, admin_moment, email)) orelse continue;
         const thread_id = try evt.parseEventId(&thread_hex);
+        // the check and the write it allows are one change of the user's mode
+        mode_mutex.lockUncancelable(io);
+        defer mode_mutex.unlock(io);
         // a mute stands, and a record only ever moves up to involved
         {
             var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &user_id)) orelse continue;
@@ -380,7 +681,7 @@ fn subscribeEach(io: std.Io, allocator: std.mem.Allocator, users_dir: []const u8
             if (try tierFull(try owner_repo.core.latestMoment(), &idOf(&location.repo_id, &thread_id), .commented)) continue;
         }
         // the write's own author, which for an assignment is the assigner
-        try writeMode(io, allocator, users_dir, &user_id, &location, &thread_id, mode, event.author);
+        try writeModeLocked(io, allocator, users_dir, &user_id, &location, &thread_id, mode, event.author);
     }
 }
 
@@ -432,6 +733,41 @@ pub fn tierFull(moment: UserDB.HashMap(.read_only), notif_id: *const [evt.event_
     return try users.count() >= cap;
 }
 
+// mark `user_id`'s notif on a thread read now that a page has shown the thread
+// as `repo`'s current moment holds it: unless it was bumped past `seen` (the
+// bump the page read, or null for whichever it names now) since, or names a
+// child the page can't show. markRead checks the bump again in its transaction.
+pub fn markViewed(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    users_dir: []const u8,
+    user_id: *const [evt.event_id_size]u8,
+    repo: *rp.Repo(.xit, repo_opts),
+    repo_id: *const [evt.event_id_size]u8,
+    thread_id: *const [evt.event_id_size]u8,
+    seen: ?*const [evt.event_id_size]u8,
+) !void {
+    const notif_id = idOf(repo_id, thread_id);
+    const item = blk: {
+        var user_repo = (try evt.openUserRepo(io, allocator, users_dir, user_id)) orelse return;
+        defer user_repo.deinit(io, allocator);
+        const latest = (try latestMoment(&user_repo)) orelse return;
+        break :blk (try readItem(latest, arena, &notif_id)) orelse return;
+    };
+    if (!item.unread) return;
+    const last_child_id = seen orelse &item.notif.last_child_id;
+    if (!std.mem.eql(u8, last_child_id, &item.notif.last_child_id)) return;
+    // the page reads this moment or a newer one, so a child in it is shown
+    const moment = try evt.currentMoment(repo_opts, repo);
+    const kinds_cursor = try moment.getCursor(hash.hashInt(repo_opts.hash, evt.event_index_key)) orelse return error.CursorNotFound;
+    const kinds = try evt.EventDB(repo_opts.hash).HashMap(.read_only).init(kinds_cursor);
+    // a child the page can't show leaves it unread
+    if (try evt.readEventKind(repo_opts.hash, kinds, last_child_id) == null) return;
+    try markRead(io, allocator, users_dir, user_id, &notif_id, last_child_id);
+}
+
 //
 // delivery
 //
@@ -463,12 +799,12 @@ const Inboxes = struct {
     owner_moment: UserDB.HashMap(.read_only),
     repo: evt.Repo.Record,
     repo_id: *const [evt.event_id_size]u8,
-    // whether each user is active and can read the repo
-    readers: std.AutoHashMapUnmanaged([evt.event_id_size]u8, bool) = .empty,
+    // each user's role in the repo, or null when they are inactive or hold none
+    roles: std.AutoHashMapUnmanaged([evt.event_id_size]u8, ?evt.Repo.Role) = .empty,
     by_user: std.AutoArrayHashMapUnmanaged([evt.event_id_size]u8, std.ArrayList(Notif)) = .empty,
 
     fn add(self: *Inboxes, user_id: [evt.event_id_size]u8, notif: Notif) !void {
-        if (!try self.canRead(user_id)) return;
+        if (!mayRead(self.repo.event, try self.roleOf(user_id), notif.thread_kind)) return;
         const entry = try self.by_user.getOrPut(self.arena.allocator(), user_id);
         if (!entry.found_existing) entry.value_ptr.* = .empty;
         // events arrive newest first, so a thread keeps its latest child
@@ -478,14 +814,14 @@ const Inboxes = struct {
         try entry.value_ptr.append(self.arena.allocator(), notif);
     }
 
-    fn canRead(self: *Inboxes, user_id: [evt.event_id_size]u8) !bool {
-        if (self.readers.get(user_id)) |can_read| return can_read;
-        const can_read = if (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, self.admin_moment, self.arena, &user_id)) |user|
-            !user.removed and try evt.Repo.roleOf(UserDB, hash_kind, self.owner_moment, self.arena, self.repo, self.repo_id, user_id) != null
+    fn roleOf(self: *Inboxes, user_id: [evt.event_id_size]u8) !?evt.Repo.Role {
+        if (self.roles.get(user_id)) |role| return role;
+        const role = if (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, self.admin_moment, self.arena, &user_id)) |user|
+            (if (user.removed) null else try evt.Repo.roleOf(UserDB, hash_kind, self.owner_moment, self.arena, self.repo, self.repo_id, user_id))
         else
-            false;
-        try self.readers.put(self.arena.allocator(), user_id, can_read);
-        return can_read;
+            null;
+        try self.roles.put(self.arena.allocator(), user_id, role);
+        return role;
     }
 };
 

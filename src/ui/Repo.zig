@@ -520,19 +520,7 @@ fn readNotify(
     }
 
     if (viewed_thread.len == 0) return;
-    var user_repo = (try evt.openUserRepo(io, gpa, users_dir, &user_id)) orelse return;
-    defer user_repo.deinit(io, gpa);
-    const latest = (try notify.latestMoment(&user_repo)) orelse return;
-    const notif_id = notify.idOf(repo_id, &try evt.parseEventId(viewed_thread));
-    const item = (try notify.readItem(latest, arena, &notif_id)) orelse return;
-    if (!item.unread) return;
-    // the page reads this moment or a newer one, so a child in it is shown
-    const moment = try evt.currentMoment(repo_opts, repo);
-    const kinds_cursor = try moment.getCursor(hash.hashInt(repo_opts.hash, evt.event_index_key)) orelse return error.CursorNotFound;
-    const kinds = try evt.EventDB(repo_opts.hash).HashMap(.read_only).init(kinds_cursor);
-    // a child the page can't show leaves it unread
-    if (try evt.readEventKind(repo_opts.hash, kinds, &item.notif.last_child_id) == null) return;
-    try notify.markRead(io, gpa, users_dir, &user_id, &notif_id, &item.notif.last_child_id);
+    try notify.markViewed(repo_opts, io, gpa, arena, users_dir, &user_id, repo, repo_id, &try evt.parseEventId(viewed_thread), null);
 }
 
 // set the viewer's notify button on each of a window's threads

@@ -114,6 +114,26 @@ pub fn readPatchRev(
     return if (record.removed) null else record;
 }
 
+/// `readPatchRev` in an xit repo's snapshot `moment`, so a caller can read
+/// what the revision names in that same snapshot (a git repo's events live
+/// apart from its refs, in a database without snapshots)
+pub fn readPatchRevAt(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    moment: anytype,
+    id_hex: []const u8,
+) !?evt.PatchRev.Record {
+    if (comptime repo_kind == .git) return readPatchRev(repo_kind, repo_opts, arena, repo, io, gpa, id_hex);
+    const id = evt.parseEventId(id_hex) catch return null;
+    const events = evt.currentMomentFromRepoMoment(repo_opts.hash, moment.*) catch return null;
+    const record = (try evt.PatchRev.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, events, arena, &id)) orelse return null;
+    return if (record.removed) null else record;
+}
+
 pub fn filesRoute(self: *const Self, path: []const u8, line: usize) ?ui.RoutablePage {
     if (self.patchrev_id) |id| return switch (self.handle.location) {
         .repo => |identity| ui.RoutablePage.repoPatchRevFilesRoute(identity, id, path, line),

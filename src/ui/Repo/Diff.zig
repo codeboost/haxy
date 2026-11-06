@@ -146,17 +146,19 @@ pub fn init(
     const aa = arena.allocator();
     const oid_len = comptime xit.hash.hexLen(repo_opts.hash);
     const identity = try aa.dupe(u8, route.name.slice());
-    const base_oid, const head_oid, const diff_route = if (route.patchrev_id.len != 0) blk: {
-        const id = evt.parseEventId(route.patchrev_id.slice()) catch return error.NotFound;
-        const record = (try evt.readFromRepo(evt.PatchRev, repo_kind, repo_opts, io, gpa, arena, repo, &id)) orelse return error.NotFound;
-        if (record.removed) return error.NotFound;
-        if (record.base_tree_oid.len != oid_len or record.head_tree_oid.len != oid_len) return error.NotFound;
-        break :blk .{
-            record.base_tree_oid[0..oid_len].*,
-            record.head_tree_oid[0..oid_len].*,
-            Route{ .patchrev = .{ .identity = identity, .id = try aa.dupe(u8, route.patchrev_id.slice()), .base_oid = try aa.dupe(u8, record.event.base_oid) } },
+    if (route.patchrev_id.len != 0) {
+        // the revision and every file it compares come from one snapshot
+        var moment = try repo.core.latestMoment();
+        const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
+        const path = try aa.dupe(u8, route.path.slice());
+        const revision = (try renderRevisionAt(repo_kind, repo_opts, arena, repo, io, gpa, state, route.patchrev_id.slice(), .{ .start = route.start, .path = path })) orelse return error.NotFound;
+        return .{
+            .route = .{ .patchrev = .{ .identity = identity, .id = try aa.dupe(u8, route.patchrev_id.slice()), .base_oid = try aa.dupe(u8, revision.record.event.base_oid) } },
+            .path = path,
+            .window = revision.window,
         };
-    } else blk: {
+    }
+    const base_oid, const head_oid, const diff_route = blk: {
         const resolved = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).init(repo, io, aa, route.ref_or_oid, route.value.slice())) orelse return error.NotFound;
         evt.PatchRev.validateOid(repo_opts.hash, &resolved.oid) catch return error.NotFound;
         evt.PatchRev.validateOid(repo_opts.hash, route.base_oid.slice()) catch return error.NotFound;
@@ -182,6 +184,47 @@ pub fn init(
         .route = diff_route,
         .path = path,
         .window = try render(repo_kind, repo_opts, io, gpa, aa, repo, if (std.mem.allEqual(u8, &base_oid, '0')) null else &base_oid, head_oid, .{ .start = route.start, .path = path }),
+    };
+}
+
+/// a patch revision's diff and the revision itself
+pub fn Revision(comptime hash_kind: xit.hash.HashKind) type {
+    return struct {
+        record: evt.PatchRev.Record,
+        // the trees the revision recorded: its base commit's and its source
+        // commit's
+        base_tree: [xit.hash.hexLen(hash_kind)]u8,
+        head_tree: [xit.hash.hexLen(hash_kind)]u8,
+        window: Window,
+    };
+}
+
+/// a window of patch revision `id_hex`'s diff, read in the snapshot `state`
+/// (the revision too, in an xit repo): the tree of the commit it was based
+/// on against its source commit's, so what its target already had before is
+/// left out. the TUI's patch diff and the web API's revision diff both read
+/// it here. null when the repo has no such revision.
+pub fn renderRevisionAt(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    state: rp.Repo(repo_kind, repo_opts).State(.read_only),
+    id_hex: []const u8,
+    options: Options,
+) !?Revision(repo_opts.hash) {
+    const oid_len = comptime xit.hash.hexLen(repo_opts.hash);
+    const record = (try ui.Repo.Files.readPatchRevAt(repo_kind, repo_opts, arena, repo, io, gpa, state.extra.moment, id_hex)) orelse return null;
+    if (record.base_tree_oid.len != oid_len or record.head_tree_oid.len != oid_len) return null;
+    const base_tree = record.base_tree_oid[0..oid_len].*;
+    const head_tree = record.head_tree_oid[0..oid_len].*;
+    return .{
+        .record = record,
+        .base_tree = base_tree,
+        .head_tree = head_tree,
+        .window = try renderAt(repo_kind, repo_opts, io, gpa, arena.allocator(), state, if (std.mem.allEqual(u8, &base_tree, '0')) null else &base_tree, head_tree, options),
     };
 }
 

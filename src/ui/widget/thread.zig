@@ -3126,8 +3126,8 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             }
 
             const id_bytes = try evt.parseEventId(entry.id);
-            if (comptime kind == .issue) {
-                thread_write.editIssue(self.session.eventHost(), io, allocator, src, actor, &id_bytes, .{ .title = title, .labels = labels, .description = description }, null) catch |err| switch (err) {
+            if (comptime kind == .issue or kind == .discuss) {
+                thread_write.edit(self.session.eventHost(), io, allocator, src, actor, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description }, null) catch |err| switch (err) {
                     error.Forbidden => return,
                     else => |e| return e,
                 };
@@ -3149,7 +3149,7 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                                     try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
                                     return;
                                 };
-                            } else try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, title, labels, description, author),
+                            } else unreachable,
                         }
                     },
                 }

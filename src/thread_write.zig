@@ -216,17 +216,19 @@ pub fn setStatus(
     }
 }
 
-/// replaces the fields of the issue `id` names, keeping its status, as
-/// `actor`; with a `revision`, only while the issue is still at it
+/// replaces the fields of the thread of `kind` (an issue or a discussion)
+/// that `id` names, keeping an issue's status, as `actor`; with a `revision`
+/// (the kind's `contentRevision`), only while the thread is still at it
 /// (error.Stale otherwise). error.Forbidden when the actor may not change
-/// it, error.NotFound when there is no such issue. the caller has checked
-/// the fields (`checkFields`).
-pub fn editIssue(
+/// it, error.NotFound when there is no such thread of that kind. the caller
+/// has checked the fields (`checkFields`).
+pub fn edit(
     host: evt.Host,
     io: std.Io,
     allocator: std.mem.Allocator,
     source: ui.RepoSource,
     actor: ui.Actor,
+    kind: evt.EventKind,
     id: *const [evt.event_id_size]u8,
     fields: Fields,
     revision: ?evt.Issue.Revision,
@@ -234,17 +236,25 @@ pub fn editIssue(
     const locked = try lockEvents(io, source);
     defer unlockEvents(io, locked);
     try catchUp(host, io, allocator, source);
-    if (!try source.canModify(io, allocator, actor, .issue, id)) return error.Forbidden;
+    if (!try source.canModify(io, allocator, actor, kind, id)) return error.Forbidden;
     switch (source.repo_kind) {
         inline else => |repo_kind| {
             var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
             defer any_repo.deinit(io, allocator);
             switch (any_repo) {
-                inline else => |*repo| try evt.Issue.updateAt(host, repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{ .fields = .{
-                    .title = fields.title,
-                    .labels = fields.labels,
-                    .description = fields.description,
-                } }, actor.author, revision),
+                inline else => |*repo| switch (kind) {
+                    .issue => try evt.Issue.updateAt(host, repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{ .fields = .{
+                        .title = fields.title,
+                        .labels = fields.labels,
+                        .description = fields.description,
+                    } }, actor.author, revision),
+                    .discuss => try evt.Discussion.updateAt(host, repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{
+                        .title = fields.title,
+                        .labels = fields.labels,
+                        .description = fields.description,
+                    }, actor.author, revision),
+                    else => unreachable,
+                },
             }
         },
     }

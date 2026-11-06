@@ -64,8 +64,8 @@ test "an edit made against a stale revision changes nothing; only an author or a
 
     // someone retitles it after the form loaded: the edit based on the old
     // revision is refused, and their title stands
-    try thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Retitled", .labels = "bug", .description = "" }, loaded);
-    try std.testing.expectError(error.Stale, thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Overwritten", .labels = "", .description = "" }, loaded));
+    try thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Retitled", .labels = "bug", .description = "" }, loaded);
+    try std.testing.expectError(error.Stale, thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Overwritten", .labels = "", .description = "" }, loaded));
     try std.testing.expectEqualStrings("Retitled", (try readIssue(&arena, &repo, &id)).?.event.title);
 
     // a status change isn't an edit's to overwrite: the revision stays, and
@@ -73,13 +73,13 @@ test "an edit made against a stale revision changes nothing; only an author or a
     const retitled = evt.Issue.contentRevision((try readIssue(&arena, &repo, &id)).?.event);
     try thread_write.setStatus(evt.Issue, .local, io, allocator, source, writer, &id, .closed);
     try std.testing.expectEqualSlices(u8, &retitled, &evt.Issue.contentRevision((try readIssue(&arena, &repo, &id)).?.event));
-    try thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Edited", .labels = "ui", .description = "Now with text." }, retitled);
+    try thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Edited", .labels = "ui", .description = "Now with text." }, retitled);
     const edited = (try readIssue(&arena, &repo, &id)).?;
     try std.testing.expectEqualStrings("Edited", edited.event.title);
     try std.testing.expectEqual(.closed, edited.event.status);
 
     // a reader who didn't open it may not change it in any way
-    try std.testing.expectError(error.Forbidden, thread_write.editIssue(.local, io, allocator, source, reader, &id, .{ .title = "Mine now", .labels = "", .description = "" }, null));
+    try std.testing.expectError(error.Forbidden, thread_write.edit(.local, io, allocator, source, reader, .issue, &id, .{ .title = "Mine now", .labels = "", .description = "" }, null));
     try std.testing.expectError(error.Forbidden, thread_write.setStatus(evt.Issue, .local, io, allocator, source, reader, &id, .open));
     try std.testing.expectError(error.Forbidden, thread_write.remove(.local, io, allocator, source, reader, .issue, &id, .issue, &id));
 
@@ -92,7 +92,7 @@ test "an edit made against a stale revision changes nothing; only an author or a
 
     // a removed issue is gone for every write
     try thread_write.remove(.local, io, allocator, source, writer, .issue, &id, .issue, &id);
-    try std.testing.expectError(error.NotFound, thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Back", .labels = "", .description = "" }, null));
+    try std.testing.expectError(error.NotFound, thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Back", .labels = "", .description = "" }, null));
     try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, writer, .issue, &id, .issue, &id));
 }
 
@@ -118,7 +118,7 @@ test "a merge that changes an issue's fields moves its revision, so an edit base
     const base_oid = (try repo.readRef(io, evt.events_ref)).?;
 
     // here the issue is retitled, and a client loads it
-    try thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Retitled", .labels = "bug", .description = "Base words." }, null);
+    try thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Retitled", .labels = "bug", .description = "Base words." }, null);
     const loaded = evt.Issue.contentRevision((try readIssue(&arena, &repo, &id)).?.event);
 
     // another host rewrote its description from the same base
@@ -147,7 +147,7 @@ test "a merge that changes an issue's fields moves its revision, so an edit base
 
     // the client's edit, made from what it loaded, would drop their words
     try std.testing.expect(!std.mem.eql(u8, &loaded, &evt.Issue.contentRevision(merged.event)));
-    try std.testing.expectError(error.Stale, thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Retitled again", .labels = "bug", .description = "Base words." }, loaded));
+    try std.testing.expectError(error.Stale, thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Retitled again", .labels = "bug", .description = "Base words." }, loaded));
     try std.testing.expectEqualStrings("Their words.", (try readIssue(&arena, &repo, &id)).?.event.description);
 }
 
@@ -182,7 +182,7 @@ test "in a git repository, writes read the events branch as it is, not an event 
     try forget(path);
     try thread_write.setStatus(evt.Issue, .local, io, allocator, source, writer, &id, .closed);
     try forget(path);
-    try thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Cloned, edited", .labels = "", .description = "From upstream." }, evt.Issue.contentRevision(.{ .title = "Cloned", .labels = "", .description = "From upstream." }));
+    try thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Cloned, edited", .labels = "", .description = "From upstream." }, evt.Issue.contentRevision(.{ .title = "Cloned", .labels = "", .description = "From upstream." }));
     try forget(path);
     try forget(path);
     try thread_write.remove(.local, io, allocator, source, writer, .issue, &id, .issue, &id);
@@ -215,7 +215,7 @@ test "a status change that lands between an edit's read and its write stands; th
     Interleave.path_seen = path;
     evt.Issue.testing.after_read = Interleave.closeIt;
     defer evt.Issue.testing.after_read = null;
-    try thread_write.editIssue(.local, io, allocator, source, writer, &id, .{ .title = "Retitled", .labels = "", .description = "" }, loaded);
+    try thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "Retitled", .labels = "", .description = "" }, loaded);
 
     const issue = (try readIssue(&arena, &repo, &id)).?;
     try std.testing.expectEqualStrings("Retitled", issue.event.title);
@@ -250,7 +250,7 @@ test "two concurrent edits of a git repository's issue from the same revision: o
             }
         }
         fn edit(edit_source: ui.RepoSource, title: []const u8, result: *anyerror!void) void {
-            result.* = thread_write.editIssue(.local, std.testing.io, std.testing.allocator, edit_source, writer, &@as([evt.event_id_size]u8, @splat(14)), .{ .title = title, .labels = "", .description = "" }, evt.Issue.contentRevision(.{ .title = "Shared", .labels = "", .description = "" }));
+            result.* = thread_write.edit(.local, std.testing.io, std.testing.allocator, edit_source, writer, .issue, &@as([evt.event_id_size]u8, @splat(14)), .{ .title = title, .labels = "", .description = "" }, evt.Issue.contentRevision(.{ .title = "Shared", .labels = "", .description = "" }));
         }
     };
     evt.Issue.testing.after_read = Race.waitForOther;
@@ -502,4 +502,89 @@ test "in a git repository, a comment's id and revision are checked against the e
     try thread_write.editComment(.local, io, allocator, source, writer, .issue, &issue, &comment_id, "Hello, edited", hello);
     try forget(path);
     try std.testing.expectError(error.Stale, thread_write.editComment(.local, io, allocator, source, writer, .issue, &issue, &comment_id, "Again", hello));
+}
+
+// the discussion `id` names, as the repo's views read it
+fn readDiscussion(arena: *std.heap.ArenaAllocator, repo: *rp.Repo(.xit, .{}), id: *const [evt.event_id_size]u8) !?evt.Discussion.Record {
+    const opts: rp.RepoOpts(.xit) = .{};
+    return evt.readRecordSubset(evt.Discussion, evt.Discussion.Record, evt.EventDB(opts.hash), opts.hash, try evt.currentMoment(opts, repo), arena, id);
+}
+
+test "a discussion is edited and removed by an issue's rules: a stale revision changes nothing; only its author or a writer may change it" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    var repo = try rp.Repo(.xit, .{}).init(io, allocator, .{ .path = path });
+    defer repo.deinit(io, allocator);
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .xit };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const id: [evt.event_id_size]u8 = @splat(31);
+    try thread_write.create(.local, io, allocator, source, .discuss, &id, .{ .title = "Roadmap", .labels = "planning", .description = "" }, writer.author);
+    const loaded = evt.Discussion.contentRevision((try readDiscussion(&arena, &repo, &id)).?.event);
+
+    // someone retitles it after the form loaded: the edit based on the old
+    // revision is refused, and their title stands
+    try thread_write.edit(.local, io, allocator, source, writer, .discuss, &id, .{ .title = "Roadmap 2027", .labels = "planning", .description = "Next year." }, loaded);
+    try std.testing.expectError(error.Stale, thread_write.edit(.local, io, allocator, source, writer, .discuss, &id, .{ .title = "Overwritten", .labels = "", .description = "" }, loaded));
+    const edited = (try readDiscussion(&arena, &repo, &id)).?;
+    try std.testing.expectEqualStrings("Roadmap 2027", edited.event.title);
+    try std.testing.expectEqualStrings("Next year.", edited.event.description);
+    try std.testing.expect(!std.mem.eql(u8, &loaded, &evt.Discussion.contentRevision(edited.event)));
+
+    // it is no issue, so no issue edit finds it
+    try std.testing.expectError(error.NotFound, thread_write.edit(.local, io, allocator, source, writer, .issue, &id, .{ .title = "As an issue", .labels = "", .description = "" }, null));
+
+    // a reader who didn't open it may not change it in any way
+    try std.testing.expectError(error.Forbidden, thread_write.edit(.local, io, allocator, source, reader, .discuss, &id, .{ .title = "Mine now", .labels = "", .description = "" }, null));
+    try std.testing.expectError(error.Forbidden, thread_write.remove(.local, io, allocator, source, reader, .discuss, &id, .discuss, &id));
+
+    // a reader's own discussion is theirs to change
+    const own: [evt.event_id_size]u8 = @splat(32);
+    try thread_write.create(.local, io, allocator, source, .discuss, &own, .{ .title = "Reader's", .labels = "", .description = "" }, reader.author);
+    try thread_write.edit(.local, io, allocator, source, reader, .discuss, &own, .{ .title = "Reader's, edited", .labels = "", .description = "" }, null);
+    try thread_write.remove(.local, io, allocator, source, reader, .discuss, &own, .discuss, &own);
+    try std.testing.expect((try readDiscussion(&arena, &repo, &own)).?.removed);
+
+    // a removed discussion is gone for every write
+    try thread_write.remove(.local, io, allocator, source, writer, .discuss, &id, .discuss, &id);
+    try std.testing.expectError(error.NotFound, thread_write.edit(.local, io, allocator, source, writer, .discuss, &id, .{ .title = "Back", .labels = "", .description = "" }, null));
+    try std.testing.expectError(error.NotFound, thread_write.remove(.local, io, allocator, source, writer, .discuss, &id, .discuss, &id));
+}
+
+test "in a git repository, two concurrent edits of a discussion from the same revision: one lands, the other is stale" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(path);
+    {
+        var repo = try rp.Repo(.git, .{}).init(io, allocator, .{ .path = path });
+        defer repo.deinit(io, allocator);
+    }
+    const source: ui.RepoSource = .{ .path = path, .repo_kind = .git };
+    const id: [evt.event_id_size]u8 = @splat(33);
+    try thread_write.create(.local, io, allocator, source, .discuss, &id, .{ .title = "Shared", .labels = "", .description = "" }, writer.author);
+
+    const Race = struct {
+        fn edit(edit_source: ui.RepoSource, title: []const u8, result: *anyerror!void) void {
+            result.* = thread_write.edit(.local, std.testing.io, std.testing.allocator, edit_source, writer, .discuss, &@as([evt.event_id_size]u8, @splat(33)), .{ .title = title, .labels = "", .description = "" }, evt.Discussion.contentRevision(.{ .title = "Shared", .labels = "", .description = "" }));
+        }
+    };
+    var first: anyerror!void = {};
+    var second: anyerror!void = {};
+    const thread = try std.Thread.spawn(.{}, Race.edit, .{ source, "First", &first });
+    Race.edit(source, "Second", &second);
+    thread.join();
+
+    var landed: usize = 0;
+    for ([_]anyerror!void{ first, second }) |result| {
+        if (result) |_| landed += 1 else |err| try std.testing.expectEqual(error.Stale, err);
+    }
+    try std.testing.expectEqual(1, landed);
 }

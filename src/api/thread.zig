@@ -16,6 +16,7 @@ const md = @import("../markdown.zig");
 const srch_thrd = @import("../search_thread.zig");
 const thread_write = @import("../thread_write.zig");
 const ui = @import("../ui.zig");
+const query_params = @import("./query.zig");
 
 pub const Route = struct {
     target: api_repo.Route.Target,
@@ -374,6 +375,11 @@ fn noun(kind: evt.EventKind) []const u8 {
     };
 }
 
+// "an issue", "a discussion"
+fn article(comptime word: []const u8) []const u8 {
+    return (if (std.mem.indexOfScalar(u8, "aeiou", word[0]) != null) "an " else "a ") ++ word;
+}
+
 fn nounPlural(kind: evt.EventKind) []const u8 {
     return switch (kind) {
         .issue => "issues",
@@ -387,7 +393,7 @@ fn nounPlural(kind: evt.EventKind) []const u8 {
 /// write in its tab
 pub fn listActions(comptime kind: evt.EventKind, rights: Rights) ListActions {
     if (rights.may_write) return .{ .create = .available };
-    if (!rights.signed_in) return .{ .create = .{ .unavailable = .{ .code = .unauthenticated, .message = "Log in to open an " ++ comptime noun(kind) ++ "." } } };
+    if (!rights.signed_in) return .{ .create = .{ .unavailable = .{ .code = .unauthenticated, .message = "Log in to open " ++ comptime article(noun(kind)) ++ "." } } };
     return .{ .create = .{ .unavailable = .{ .code = .forbidden, .message = "Your role in this repository doesn't allow opening " ++ comptime nounPlural(kind) ++ "." } } };
 }
 
@@ -434,4 +440,80 @@ pub fn fieldsError(failure: thread_write.FieldFailure) api.Error {
         .required_title => .{ .code = .validation, .message = check_fields, .field_errors = &.{.{ .field = "title", .message = "Enter a title." }} },
         .invalid_labels => .{ .code = .validation, .message = check_fields, .field_errors = &.{.{ .field = "labels", .message = std.fmt.comptimePrint("Separate labels with spaces; each can be up to {d} characters.", .{evt.Issue.label_max_len}) }} },
     };
+}
+
+// --- what every kind's routes share ----------------------------------------------
+
+pub const Authorized = union(enum) { actor: ui.Actor, refused: api.Error };
+
+/// who a write in a kind's threads acts as, checked against the admin db as
+/// it is now (`ui.authorizeUser`: the viewer's role in the repo, then the
+/// kind's thread role), so a role revoked since the viewer's page loaded
+/// refuses the write. local mode writes as its repo's owner.
+pub fn authorize(
+    comptime kind: evt.EventKind,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    host: api_repo.Host,
+    viewer: ?[evt.event_id_size]u8,
+    opened: *Opened,
+) !Authorized {
+    const unauthenticated: api.Error = .{ .code = .unauthenticated, .message = "Log in to make changes to " ++ comptime nounPlural(kind) ++ "." };
+    const role_forbidden: api.Error = .{ .code = .forbidden, .message = "Your role in this repository doesn't allow writing " ++ comptime nounPlural(kind) ++ "." };
+    switch (host) {
+        .local => |source| return .{ .actor = .{ .author = try ui.localAuthor(source, io, allocator, arena), .role = .owner } },
+        .server => |server| {
+            const user_id = viewer orelse return .{ .refused = unauthenticated };
+            const moment = opened.session.haxy_moment orelse return .{ .refused = unauthenticated };
+            return switch (try ui.authorizeUser(io, moment, arena, server.users_dir, user_id, opened.resolved.identity, .read, kind)) {
+                .actor => |actor| .{ .actor = actor },
+                .login_required => .{ .refused = unauthenticated },
+                .repo_not_found => .{ .refused = api_repo.not_found_repo },
+                .forbidden => .{ .refused = role_forbidden },
+            };
+        },
+    }
+}
+
+/// a write body's fields, the description's line breaks as the web form stores them
+pub fn bodyFields(aa: std.mem.Allocator, fields: anytype) !thread_write.Fields {
+    return .{ .title = fields.title, .labels = fields.labels, .description = try thread_write.plainNewlines(aa, fields.description) };
+}
+
+pub const id_taken: api.Error = .{
+    .code = .conflict,
+    .message = check_fields,
+    .field_errors = &.{.{ .field = "id", .message = "An event in this repository already has this id." }},
+};
+
+/// a list cursor naming a thread the listing no longer holds
+pub const stale_cursor: api.Error = .{
+    .code = .validation,
+    .message = "Check the paging parameters.",
+    .field_errors = &.{.{ .field = "cursor", .message = "This cursor isn't one Haxy gave out for this list; start from the first page." }},
+};
+
+/// a request parameter or body field refused, beside it
+pub fn invalidField(comptime field: []const u8, comptime message: []const u8) api.Error {
+    return .{
+        .code = .validation,
+        .message = "Check the request's parameters.",
+        .field_errors = &.{.{ .field = field, .message = message }},
+    };
+}
+
+/// the decoded `search` parameter, "" when absent
+pub fn searchParam(aa: std.mem.Allocator, query: []const u8) !union(enum) { ok: []const u8, invalid: api.Error } {
+    const search = query_params.param(aa, query, "search") catch |err| switch (err) {
+        error.InvalidPercentEncoding => return .{ .invalid = invalidField("search", "The search isn't validly encoded.") },
+        else => |e| return e,
+    };
+    return .{ .ok = search orelse "" };
+}
+
+/// a wrong method's answer, naming the methods the route takes
+pub fn unsupported(request: *std.http.Server.Request, allocator: std.mem.Allocator, comptime allow: []const u8) !void {
+    // a write's body goes unread, so the connection closes
+    return api.respondError(request, allocator, .{ .code = .unsupported, .message = "This route only supports " ++ allow ++ "." }, .{ .allow = allow, .keep_alive = false });
 }

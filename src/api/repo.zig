@@ -176,6 +176,8 @@ const Overview = struct {
     // the branch HEAD names, even before it has a commit; null when HEAD is
     // detached
     default_branch: ?[]const u8,
+    // the same branch as a ref id, to send back unchanged
+    default_branch_id: ?[]const u8,
     // the default branch has no commit yet
     empty: bool,
     sections: []const ui.Repo.Section,
@@ -196,9 +198,8 @@ fn writeOverview(
     writer: *std.Io.Writer,
 ) !?api.Error {
     var head_buffer: [xit.ref.MAX_REF_CONTENT_SIZE]u8 = undefined;
-    const default_branch: ?[]const u8 = if (repo.head(io, &head_buffer)) |head| switch (head) {
-        // for display, like every name a response carries
-        .ref => |ref| try api_path.display(aa, ref.name),
+    const head_name: ?[]const u8 = if (repo.head(io, &head_buffer)) |head| switch (head) {
+        .ref => |ref| ref.name,
         .oid => null,
     } else |_| null;
     const empty = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).init(repo, io, aa, null, "")) == null;
@@ -215,7 +216,9 @@ fn writeOverview(
         .name = try api_path.display(aa, resolved.repo.event.name),
         .description = resolved.repo.event.description,
         .access = if (local) null else resolved.repo.event.read_access,
-        .default_branch = default_branch,
+        // for display, like every name a response carries
+        .default_branch = if (head_name) |name| try api_path.display(aa, name) else null,
+        .default_branch_id = if (head_name) |name| try (api_refs.Selection{ .branch = name }).id(aa) else null,
         .empty = empty,
         .sections = sections.items,
         .clone = (try ui.widget.cloneCommands(aa, session.data, repo_handle)).list,

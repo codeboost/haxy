@@ -29,6 +29,8 @@ const draft = @import("./draft.zig");
 const pch = @import("./patch.zig");
 const notify = @import("./notify.zig");
 const thread_write = @import("./thread_write.zig");
+const patch_merge = @import("./patch_merge.zig");
+const query_params = @import("./api/query.zig");
 const shared_attachment = @import("./attachment.zig");
 const same_origin = @import("./origin.zig");
 const xitui = xit.xitui;
@@ -1455,45 +1457,47 @@ fn handlePatchMerge(
 ) !void {
     const parts = commentBaseParts(host, base) orelse return respondRemoveNotFound(request);
     if (parts.thread_kind != .patch or parts.comment_id != null) return respondRemoveNotFound(request);
-    const server = switch (host.event()) {
+    const server = switch (host) {
         .server => |server| server,
         .local => return respondRemoveNotFound(request),
     };
-    var author_arena = std.heap.ArenaAllocator.init(allocator);
-    defer author_arena.deinit();
-    const author = ((try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .write, .patch)) orelse return).author;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const author = ((try authorizeWrite(io, allocator, &arena, request, host, parts.repo_base, patch_merge.min_role, .patch)) orelse return).author;
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
-    var target_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, request_repo.source.localInitOpts());
-    defer target_repo.deinit(io, allocator);
 
+    // the form posts what its page showed; a merge checks it again
+    const reviewed = try mergeFormReviewed(arena.allocator(), request.head.target);
     const id = std.fmt.bytesToHex(parts.thread_id, .lower);
-    const merged = switch (target_repo) {
-        inline else => |*repo| pch.mergeAndRemoveFork(repo.self_repo_opts, io, allocator, server, repo, .{
-            .id = id,
-            .revision = revision,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        }),
-    };
-    merged catch |err| switch (err) {
-        error.MergeConflict => return request.respond("merge conflict", .{
-            .status = .conflict,
-            .keep_alive = false,
-            .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
-        }),
-        error.MergeCheckUnavailable, error.PatchOutOfDate, error.PatchDataUnavailable => {},
-        else => return err,
-    };
+    const refusal = try patch_merge.merge(host.event().server, io, allocator, request_repo.source, author, &parts.thread_id, revision, reviewed);
+    if (refusal) |failure| {
+        const merge_page = try arena.allocator().print("{s}/patch:{s}/merge", .{ parts.repo_base, &id });
+        return respondFormFailure(request, allocator, server.session_store, merge_page, .{ .merge = .{ .failure = failure } });
+    }
 
-    const location = try allocator.print("{s}/patch:{s}", .{ parts.repo_base, &id });
-    defer allocator.free(location);
+    const location = try arena.allocator().print("{s}/patch:{s}", .{ parts.repo_base, &id });
     try request.respond("", .{
         .status = .see_other,
         .keep_alive = false,
         .extra_headers = &.{.{ .name = "location", .value = location }},
     });
+}
+
+// what a merge form's page showed, from its query; a form without it
+// names nothing a merge can match
+fn mergeFormReviewed(aa: std.mem.Allocator, target: []const u8) !patch_merge.Reviewed {
+    const query = if (std.mem.indexOfScalar(u8, target, '?')) |start| target[start + 1 ..] else "";
+    const read = struct {
+        fn param(arena: std.mem.Allocator, text: []const u8, name: []const u8) ![]const u8 {
+            return (query_params.param(arena, text, name) catch |err| switch (err) {
+                error.InvalidPercentEncoding => null,
+                else => |e| return e,
+            }) orelse "";
+        }
+    };
+    return .{ .revision = try read.param(aa, query, "revision"), .target_commit = try read.param(aa, query, "target") };
 }
 
 // create a reply and redirect to its permalink.

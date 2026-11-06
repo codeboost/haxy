@@ -501,13 +501,20 @@ pub const ConfirmationButton = struct {
     action: []const u8 = "submit",
 };
 
+pub const confirmation_prompt = "are you sure?";
+
 // "are you sure?" over the buttons, in a form posting to `action`
 pub fn initConfirmationForm(allocator: std.mem.Allocator, action: []const u8, buttons: []const ConfirmationButton) !Center {
+    return initConfirmationFormPrompt(allocator, confirmation_prompt, action, buttons);
+}
+
+// `prompt_text` over the buttons, in a form posting to `action`
+pub fn initConfirmationFormPrompt(allocator: std.mem.Allocator, prompt_text: []const u8, action: []const u8, buttons: []const ConfirmationButton) !Center {
     var box = try wgt.Box(Widget).init(allocator, .{ .border = null, .round_corners = true, .direction = .vert });
     errdefer box.deinit(allocator);
     box.getFocus().kind = .{ .custom = action };
 
-    var prompt = try wgt.Text.init(allocator, "are you sure?");
+    var prompt = try wgt.Text.init(allocator, prompt_text);
     errdefer prompt.deinit(allocator);
     try box.children.put(allocator, prompt.getFocus().id, .{ .widget = .{ .text = prompt }, .rect = null, .min_size = null });
 

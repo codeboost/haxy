@@ -11,7 +11,8 @@
 //! into another), editing its fields and target, closing or reopening it,
 //! and removing it, through the operations the TUI and Haxy's forms use
 //! (`thread_write.createBranchPatch`, `edit`, `setStatus`, `remove`). drafts
-//! and fork-backed patches are opened elsewhere, and merging is not here.
+//! and fork-backed patches are opened elsewhere, and merging is in
+//! api/patch_merge.zig.
 //! what the TUI lets anyone write on a patch's page goes through the shared
 //! thread routes: its comments (api/comments.zig), its attachments
 //! (api/attachments.zig) and the viewer's notification state
@@ -30,6 +31,7 @@ const api_comments = @import("./comments.zig");
 const api_diff = @import("./diff.zig");
 const api_drafts = @import("./patch_drafts.zig");
 const api_md = @import("./markdown.zig");
+const api_patch_merge = @import("./patch_merge.zig");
 const api_path = @import("./path.zig");
 const api_refs = @import("./refs.zig");
 const api_repo = @import("./repo.zig");
@@ -52,10 +54,13 @@ pub const Route = union(enum) {
     thread: api_thread.Route,
     // a patch revision's diff, `…/revisions/{id}/diff?path=&cursor=&page_size=`
     revision_diff: struct { target: api_repo.Route.Target, id: []const u8 },
+    // merging a patch, `…/patches/{id}/merge`
+    merge: api_patch_merge.Route,
 };
 
 /// the patch route `path` names, or null when it names none
 pub fn route(path: []const u8) ?Route {
+    if (api_patch_merge.route(path)) |matched| return .{ .merge = matched };
     if (api_thread.route(path, "patches")) |matched| return .{ .thread = matched };
     const target: api_repo.Route.Target, const tail = target: {
         const local_prefix = "/api/v1/repo/revisions/";
@@ -91,6 +96,7 @@ pub fn handle(
     const thread_route = switch (matched) {
         .thread => |thread_route| thread_route,
         .revision_diff => |diff| return handleRevisionDiff(io, request, allocator, host, viewer, diff.target, diff.id, query),
+        .merge => |merge| return api_patch_merge.handle(io, request, allocator, host, viewer, merge),
     };
     switch (thread_route.resource) {
         .comments, .comment => return api_comments.handle(io, request, allocator, host, viewer, thread_route, query, comment_kind),
@@ -383,6 +389,14 @@ const Branch = struct {
     }
 };
 
+/// the branch a patch goes to, with its tip as the read saw it (null when
+/// the branch has none, or the patch was merged), which a merge sends back
+const Target = struct {
+    name: []const u8,
+    id: []const u8,
+    commit: ?[]const u8,
+};
+
 /// where a patch's commits come from: a branch of the repository, or a fork
 /// (by its owner and name, null once the fork is gone)
 const Source = union(enum) {
@@ -485,8 +499,8 @@ const Review = union(enum) {
 };
 
 /// what the viewer may do to one patch through the API: change its fields,
-/// close or reopen it, remove it, attach a file to it; merging is #19's
-const Actions = struct { edit: Availability, set_status: Availability, remove: Availability, attach: Availability };
+/// close or reopen it, remove it, attach a file to it, merge it
+const Actions = struct { edit: Availability, set_status: Availability, remove: Availability, attach: Availability, merge: Availability };
 
 /// one patch: its summary, its whole description (parsed by haxy's markdown
 /// reader, as the TUI renders it), what it proposes, its attachments, and what
@@ -496,7 +510,7 @@ const Detail = struct {
     description: []const md.Block,
     description_text: []const u8,
     source: Source,
-    target: Branch,
+    target: Target,
     revision: ?Revision,
     merged: ?Merged,
     // the target branch is at the revision's source commit already
@@ -547,7 +561,10 @@ pub fn detail(aa: std.mem.Allocator, entry: *const Patches.Entry, host_kind: evt
         .description = (try md.parseText(aa, patch.description)).blocks,
         .description_text = patch.description,
         .source = source,
-        .target = try .init(aa, patch.target_branch),
+        .target = target: {
+            const branch: Branch = try .init(aa, patch.target_branch);
+            break :target .{ .name = branch.name, .id = branch.id, .commit = if (entry.target_oid.len == 0 or patch.status.kind() == .merged) null else entry.target_oid };
+        },
         .revision = if (patch.revision) |*revision| .{
             .id = &revision.id,
             .source_commit = revision.source_oid,
@@ -571,21 +588,22 @@ pub fn detail(aa: std.mem.Allocator, entry: *const Patches.Entry, host_kind: evt
         },
         .edit_revision = try aa.dupe(u8, &std.fmt.bytesToHex(evt.Patch.contentRevision(patch.*), .lower)),
         .attachments = try api_attachments.items(aa, entry.attachments, .{ .viewer = viewer.tab, .signed_in = viewer.signed_in }),
-        .actions = actions(entry, viewer.signed_in),
+        .actions = actions(entry, host_kind, viewer),
     };
 }
 
 /// what the viewer may do to a patch: what they may do to any thread they
 /// wrote or may write to (`api_thread.threadActions`), except that a merged
 /// patch stays merged
-pub fn actions(entry: *const Patches.Entry, signed_in: bool) Actions {
-    const shared = api_thread.threadActions(.patch, .{ .may_write = entry.can_modify, .signed_in = signed_in });
+pub fn actions(entry: *const Patches.Entry, host_kind: evt.HostKind, viewer: api_thread.ViewerRights) Actions {
+    const shared = api_thread.threadActions(.patch, .{ .may_write = entry.can_modify, .signed_in = viewer.signed_in });
     const merged = entry.record.event.status.kind() == .merged;
     return .{
         .edit = shared.edit,
         .set_status = if (merged and shared.set_status == .available) merged_status else shared.set_status,
         .remove = shared.remove,
         .attach = shared.attach,
+        .merge = api_patch_merge.availability(entry, host_kind, viewer),
     };
 }
 
@@ -814,7 +832,7 @@ pub fn statusWriteError(err: anyerror) !api.Error {
     return writeError(err);
 }
 
-fn respondDetail(request: *std.http.Server.Request, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8, status: std.http.Status) !void {
+pub fn respondDetail(request: *std.http.Server.Request, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, io: std.Io, opened: *api_thread.Opened, id: *const [evt.event_id_size]u8, status: std.http.Status) !void {
     // the write landed; only a removal racing it leaves nothing to show
     const answer = (try readDetail(arena, io, opened, id)) orelse return api.respondError(request, allocator, no_such_patch, .{});
     return api.respondJson(request, answer, .{ .status = status });

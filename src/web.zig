@@ -10,6 +10,7 @@ const api_assignees = @import("./api/assignees.zig");
 const api_conflicts = @import("./api/conflicts.zig");
 const api_commits = @import("./api/commits.zig");
 const api_discovery = @import("./api/discovery.zig");
+const api_forks = @import("./api/forks.zig");
 const api_events = @import("./api/events.zig");
 const api_undo = @import("./api/undo.zig");
 const api_sync = @import("./api/sync.zig");
@@ -255,6 +256,13 @@ fn routeApiRequest(
             .local => null,
         };
         return api_discovery.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
+    if (api_forks.route(path)) |route| {
+        const server: ?api_forks.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix },
+            .local => null,
+        };
+        return api_forks.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
     }
     if (api_repo_admin.route(path, request.head.method)) |route| {
         const server: ?api_repo_admin.Server = switch (host) {

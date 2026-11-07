@@ -580,7 +580,7 @@ pub fn detail(aa: std.mem.Allocator, entry: *const Patches.Entry, host_kind: evt
         .mergeability = if (Patches.mergeBlock(entry.*, host_kind)) |block| .{ .unavailable = mergeUnavailable(block) } else .{ .available = entry.mergeability },
         .review = switch (Patches.review(entry)) {
             .revision => |revision| .{ .available = .{ .revision = revision.id, .diff = revision.diff_id } },
-            .fork => .{ .unavailable = .{ .code = .unsupported, .message = "This patch's commits are in its fork, which Haxy Hub can't browse yet." } },
+            .fork => .{ .unavailable = .{ .code = .unsupported, .message = "This patch's commits are in its fork; review them there." } },
             .none => .{ .unavailable = .{ .code = .unsupported, .message = if (patch.revision == null)
                 "Nothing has been pushed to this patch yet."
             else

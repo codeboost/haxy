@@ -9,6 +9,7 @@ comptime {
     _ = @import("test/api_discovery.zig");
     _ = @import("test/api_events.zig");
     _ = @import("test/api_find.zig");
+    _ = @import("test/api_forks.zig");
     _ = @import("test/api_issues.zig");
     _ = @import("test/api_patches.zig");
     _ = @import("test/api_patch_drafts.zig");

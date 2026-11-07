@@ -150,6 +150,40 @@ pub fn writeRevisionDiffAt(
     return null;
 }
 
+/// writes the window of the diff from `base` (null for none) to `head` that
+/// the `cursor`, `page_size` and `path` parameters name, as the TUI's fork diff
+/// tab renders a fork's whole diff
+pub fn writeRangeDiff(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    base: ?*const [xit.hash.hexLen(repo_opts.hash)]u8,
+    head: [xit.hash.hexLen(repo_opts.hash)]u8,
+    query: []const u8,
+    writer: *std.Io.Writer,
+) !?api.Error {
+    const aa = arena.allocator();
+    const window_query = switch (try WindowQuery.parse(aa, query)) {
+        .ok => |window_query| window_query,
+        .invalid => |err| return err,
+    };
+    var moment = try repo.core.latestMoment();
+    const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
+    const window = try Diff.renderAt(repo_kind, repo_opts, io, gpa, aa, state, base, head, window_query.options());
+    try std.json.Stringify.value(.{
+        .base = if (base) |oid| @as(?[]const u8, oid) else null,
+        .head = &head,
+        .path = try window_query.echoedPath(aa),
+        .items = try listItems(aa, window),
+        .truncated = window.truncated,
+        .page = try windowPage(aa, window),
+    }, .{}, writer);
+    return null;
+}
+
 // the window a diff request names: its page and its path filter
 const WindowQuery = struct {
     page: query_params.Page,

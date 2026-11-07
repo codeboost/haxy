@@ -370,7 +370,9 @@ pub const Form = struct {
         const issue_role = labelRole((try formRadio(self.formBox(), "issue_role")).selected()) catch unreachable;
         const patch_role = labelRole((try formRadio(self.formBox(), "patch_role")).selected()) catch unreachable;
 
-        const route = update(io, allocator, users_dir, actor, self.data.identity, name, description, access, discuss_role, issue_role, patch_role) catch |err| {
+        const route = update(io, allocator, users_dir, actor, self.data.identity, name, description, access, discuss_role, issue_role, patch_role, null, null) catch |err| {
+            // demoted or revoked meanwhile, like a failed authorize
+            if (err == error.NotOwner) return;
             const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
             const aa = self.session.arena.allocator();
             self.session.data.form_feedback = .{ .repo_settings = .{ .failure = failure, .fields = .{
@@ -423,10 +425,29 @@ pub fn update(
     discuss_role: ?evt.Repo.Role,
     issue_role: ?evt.Repo.Role,
     patch_role: ?evt.Repo.Role,
+    // the settings revision the change was made from, or null to change the
+    // settings as they are (the TUI and the web form)
+    revision: ?evt.Repo.Revision,
+    // the repo the caller authorized, by id; null resolves `identity` now
+    repo_id_maybe: ?*const [evt.event_id_size]u8,
 ) !ui.RoutablePage {
     const parsed = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
     const owner_id = actor.repo_user_id orelse return error.NotFound;
-    try evt.updateRepo(io, allocator, users_dir, &owner_id, actor.author, parsed.name, name, description, access, discuss_role, issue_role, patch_role);
+    const actor_id = actor.user_id orelse return error.NotFound;
+    if (repo_id_maybe) |repo_id| {
+        // the change refuses the repo once it no longer has the name it was made for
+        try evt.Repo.validateName(name);
+        try evt.changeRepo(io, allocator, users_dir, &owner_id, repo_id, &actor_id, actor.author, evt.SettingsChange{
+            .old_name = parsed.name,
+            .name = name,
+            .description = description,
+            .read_access = access,
+            .discuss_role = discuss_role,
+            .issue_role = issue_role,
+            .patch_role = patch_role,
+            .revision = revision,
+        });
+    } else try evt.updateRepo(io, allocator, users_dir, &owner_id, &actor_id, actor.author, parsed.name, name, description, access, discuss_role, issue_role, patch_role, revision);
     var buf: [ui.RoutablePage.repo_route_max_len]u8 = undefined;
     const new_identity = std.fmt.bufPrint(&buf, "{s}:{s}", .{ parsed.owner, name }) catch return error.RouteTooLong;
     return ui.RoutablePage.repoSettingsRoute(new_identity) orelse error.RouteTooLong;

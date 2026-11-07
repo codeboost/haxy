@@ -9,6 +9,8 @@ const wgt = xitui.widget;
 pub const WithId = struct {
     id: [evt.event_id_size * 2]u8,
     name: []const u8,
+    // who attached it, which with the write role decides who may remove it
+    author_email: ?[]const u8 = null,
 };
 
 // every attachment on a target event, oldest first. removed ones are
@@ -34,6 +36,7 @@ pub fn load(
         try attachments.append(arena.allocator(), .{
             .id = std.fmt.bytesToHex(id_bytes, .lower),
             .name = record.name,
+            .author_email = record.author_email,
         });
     }
     return attachments.items;

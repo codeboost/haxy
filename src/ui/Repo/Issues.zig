@@ -19,6 +19,15 @@ pub const page_size = 20;
 // how many labels the labels view shows at most.
 pub const max_labels = 1000;
 
+// how many issues `init` reads into the window the page shows (its view's
+// status, or the conflicts) and into each other window. the TUI reads full
+// windows; the web API reads its own page size, and the others only for
+// their counts.
+pub const WindowSizes = struct {
+    shown: usize = page_size,
+    others: usize = page_size,
+};
+
 // one issue from the repo's consumed event database, with its hex event id
 // (the id lives in the event envelope, not the payload).
 pub const IssueWithId = struct {
@@ -53,6 +62,8 @@ pub const FieldConflict = struct {
 // the selected issue's conflict, read for the resolve view. ours is the live
 // record; the chunks split the description against the merge base.
 pub const Conflict = struct {
+    // what a resolution names to resolve this conflict and no later one
+    conflict_revision: evt.ConflictRevision = @splat(0),
     title: ?FieldConflict = null,
     labels: ?FieldConflict = null,
     description: ?struct {
@@ -215,6 +226,7 @@ pub fn init(
     theirs_picks: []const u8,
     view: ui.RoutablePage.IssuesView,
     viewer: ?ui.Viewer,
+    window_sizes: WindowSizes,
 ) !Self {
     var empty = try emptyResult(arena.allocator(), identity, search, selected_id, comment_id, comments_start, theirs_picks, view);
     // the early returns below still let the viewer write
@@ -338,9 +350,12 @@ pub fn init(
     }
 
     const thread_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
-    const open_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, open_sets, open_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    const closed_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, closed_sets, closed_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    const conflicts_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, if (conflict_set) |*set| set[0..1] else &.{}, conflicts_root, conflict_set, empty.selected_id, thread_comments_start, "", viewer);
+    const open_size = if (resolved_view == .open) window_sizes.shown else window_sizes.others;
+    const closed_size = if (resolved_view == .closed) window_sizes.shown else window_sizes.others;
+    const conflicts_size = if (view == .conflicts) window_sizes.shown else window_sizes.others;
+    const open_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, open_sets, open_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer, open_size);
+    const closed_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, closed_sets, closed_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer, closed_size);
+    const conflicts_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, if (conflict_set) |*set| set[0..1] else &.{}, conflicts_root, conflict_set, empty.selected_id, thread_comments_start, "", viewer, conflicts_size);
     if (view == .conflicts and conflicts_window.count > 0) resolved_view = .conflicts;
 
     const comment_page = if (empty.comment_id.len == 0)

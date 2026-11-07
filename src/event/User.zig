@@ -30,6 +30,8 @@ pub const name_min_len = 3;
 pub const name_max_len = 32;
 // how many ssh keys a user may hold, so the keys tab stays one short page
 pub const ssh_key_max_count = 50;
+// the ssh key types a user may add: the ones the ssh server verifies
+pub const supported_key_types = [_][]const u8{ "ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384" };
 
 // the moment keys `evt.merge` reads and writes for this kind
 pub const merge_policy: evt.MergePolicy = .target_wins;

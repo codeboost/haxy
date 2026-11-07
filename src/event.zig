@@ -307,6 +307,27 @@ pub fn readRepoById(
     };
 }
 
+/// the repo `repo_id` from its owner's user repo while it is still named
+/// `name`, or null once it is gone or renamed. a request that resolved a repo
+/// by name reads it again by id with this, so a repo that took the name
+/// meanwhile is never mistaken for it.
+pub fn readNamedRepo(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    name: []const u8,
+) !?Repo.RepoWithId {
+    var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return null;
+    defer user_repo.deinit(io, allocator);
+    const moment = (try userMoment(&user_repo)) orelse return null;
+    const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, arena, repo_id)) orelse return null;
+    if (!std.mem.eql(u8, repo.event.name, name)) return null;
+    return .{ .repo = repo, .event_id = repo_id.* };
+}
+
 // a repo's active grants, from its owner's user repo
 pub fn readRepoGrants(
     io: std.Io,
@@ -641,6 +662,9 @@ pub fn remove(
 
 pub const undo_action = "haxy/events";
 pub const merge_undo_action = "haxy/merge-events";
+// a sync put the remote-tracking events ref back after what it fetched
+// couldn't be merged
+pub const restore_fetch_undo_action = "haxy/restore-fetched-events";
 
 // index that tracks the events consumed in a given haxy moment
 pub const moment_index_to_event_id_set_key = "moment-index->event-id-set";
@@ -684,6 +708,29 @@ pub fn consume(
     ref: rf.Ref,
     events: []const EventWithId,
 ) !void {
+    return consumeGuarded(host, role, repo_kind, repo_opts, io, allocator, repo, ref, events, null);
+}
+
+// `consume`, for a xit repo, with `guard.check(haxy_moment)` run first inside
+// its transaction, against the state it builds on (null before the repo's
+// first event). an error from the check abandons the transaction, so a
+// precondition read there can't go stale before the events land.
+pub fn consumeGuarded(
+    host: Host,
+    comptime role: RepoRole,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    ref: rf.Ref,
+    events: []const EventWithId,
+    guard: anytype,
+) !void {
+    const guarded = @TypeOf(guard) != @TypeOf(null);
+    comptime if (guarded and repo_kind != .xit) @compileError("only a xit repo's consume runs in one transaction");
+    // a struct can't hold null's comptime-only type
+    const Guard = if (guarded) @TypeOf(guard) else void;
     for (events) |event| {
         if (!role.allows(std.meta.activeTag(event.event))) return error.EventKindNotAllowed;
     }
@@ -746,10 +793,18 @@ pub fn consume(
                 patch_ids: []const [event_id_size]u8,
                 first_parent_oids: ?[1][hash.hexLen(repo_opts.hash)]u8,
                 moment_index: *?u64,
+                guard: Guard,
 
                 pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
                     var moment = try DB.HashMap(.read_write).init(cursor.*);
                     const state = State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    if (guarded) {
+                        const haxy_moment = currentMomentFromRepoMoment(repo_opts.hash, moment.readOnly()) catch |err| switch (err) {
+                            error.NotFound => null,
+                            else => |e| return e,
+                        };
+                        try ctx.guard.check(haxy_moment);
+                    }
 
                     try commitEvents(.xit, repo_opts, state, ctx.io, ctx.allocator, ctx.ref, ctx.events, ctx.first_parent_oids);
                     ctx.moment_index.* = try consumeInTransaction(role, .xit, repo_opts, state, &moment, ctx.io, ctx.allocator, ctx.ref);
@@ -772,6 +827,7 @@ pub fn consume(
                 .patch_ids = patch_ids.items,
                 .first_parent_oids = first_parent_oids,
                 .moment_index = &moment_index,
+                .guard = if (guarded) guard else {},
             }) catch |err| switch (err) {
                 error.CancelTransaction => return,
                 else => |e| return e,
@@ -830,6 +886,136 @@ pub fn mergeEvents(
                 error.CancelTransaction => {},
                 else => |e| return e,
             };
+        },
+    }
+}
+
+// `mergeEvents`, then consume the merged events branch into the db the
+// repo's views read, as one step: when the merged history can't be consumed
+// (a fetched commit that isn't an event Haxy can read), the events branch
+// stays where it was and the event db as it was, so later reads keep working
+// and nothing unreadable is pushed from here. a xit repo merges and consumes
+// in one transaction. a git repo's branch is a file beside its standalone
+// event db: the db's exclusive lock, which every read of it waits on, is held
+// from before the branch moves until it is consumed or moved back.
+pub fn mergeAndConsumeEvents(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    remote_ref: rf.Ref,
+) !void {
+    switch (repo_kind) {
+        .git => {
+            var event_db = try LocalEventDB(repo_opts.hash).open(io, allocator, repo.core.repo_dir);
+            defer event_db.deinit(io, allocator);
+
+            const state: rp.Repo(.git, repo_opts).State(.read_write) = .{ .core = &repo.core, .extra = .{} };
+            const before = try rf.readRecur(.git, repo_opts, state.readOnly(), io, .{ .ref = events_ref });
+            const moved = try mergeEventsInTransaction(.git, repo_opts, state, io, allocator, remote_ref);
+            event_db.consume(.git, repo_opts, io, allocator, repo, events_ref) catch |err| {
+                if (moved) try setRef(.git, repo_opts, state, io, events_ref, if (before) |*oid| oid else null);
+                return err;
+            };
+        },
+        .xit => {
+            const DB = rp.Repo(.xit, repo_opts).DB;
+            const State = rp.Repo(.xit, repo_opts).State;
+
+            const Ctx = struct {
+                core: *rp.Repo(.xit, repo_opts).Core,
+                io: std.Io,
+                allocator: std.mem.Allocator,
+                remote_ref: rf.Ref,
+
+                pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
+                    var moment = try DB.HashMap(.read_write).init(cursor.*);
+                    const state = State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    const moved = try mergeEventsInTransaction(.xit, repo_opts, state, ctx.io, ctx.allocator, ctx.remote_ref);
+                    // a tip consumed before cancels the consume; the merge
+                    // that moved the branch there still stands
+                    _ = consumeInTransaction(.repo, .xit, repo_opts, state, &moment, ctx.io, ctx.allocator, events_ref) catch |err| switch (err) {
+                        error.CancelTransaction => if (!moved) return err,
+                        else => |e| return e,
+                    };
+                    // the merge record covers the events it consumed (the
+                    // undo view counts them)
+                    try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = merge_undo_action } });
+                }
+            };
+
+            try repo.core.db_file.lock(io, .exclusive);
+            defer repo.core.db_file.unlock(io);
+
+            const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+            history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{
+                .core = &repo.core,
+                .io = io,
+                .allocator = allocator,
+                .remote_ref = remote_ref,
+            }) catch |err| switch (err) {
+                error.CancelTransaction => {},
+                else => |e| return e,
+            };
+        },
+    }
+}
+
+// points `ref` at `oid`, or removes it when `oid` is null (and it exists)
+fn setRef(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    state: rp.Repo(repo_kind, repo_opts).State(.read_write),
+    io: std.Io,
+    ref: rf.Ref,
+    oid: ?*const [hash.hexLen(repo_opts.hash)]u8,
+) !void {
+    var ref_path_buffer: [rf.MAX_REF_CONTENT_SIZE]u8 = undefined;
+    const ref_path = try ref.toPath(&ref_path_buffer);
+    if (oid) |value| return rf.write(repo_kind, repo_opts, state, io, ref_path, .{ .oid = value });
+    rf.remove(repo_kind, repo_opts, state, io, ref_path) catch |err| switch (err) {
+        error.RefNotFound => {},
+        else => |e| return e,
+    };
+}
+
+/// points the remote-tracking events ref `ref` back at `oid` (or removes it
+/// when null), in a transaction of its own for a xit repo: a sync puts it back
+/// where it was when what it fetched couldn't be merged
+pub fn restoreFetchedRef(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    ref: rf.Ref,
+    oid: ?*const [hash.hexLen(repo_opts.hash)]u8,
+) !void {
+    switch (repo_kind) {
+        .git => try setRef(.git, repo_opts, .{ .core = &repo.core, .extra = .{} }, io, ref, oid),
+        .xit => {
+            const DB = rp.Repo(.xit, repo_opts).DB;
+            const State = rp.Repo(.xit, repo_opts).State;
+
+            const Ctx = struct {
+                core: *rp.Repo(.xit, repo_opts).Core,
+                io: std.Io,
+                ref: rf.Ref,
+                oid: ?*const [hash.hexLen(repo_opts.hash)]u8,
+
+                pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
+                    var moment = try DB.HashMap(.read_write).init(cursor.*);
+                    const state = State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    try setRef(.xit, repo_opts, state, ctx.io, ctx.ref, ctx.oid);
+                    try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = restore_fetch_undo_action } });
+                }
+            };
+
+            try repo.core.db_file.lock(io, .exclusive);
+            defer repo.core.db_file.unlock(io);
+
+            const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+            try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{ .core = &repo.core, .io = io, .ref = ref, .oid = oid });
         },
     }
 }
@@ -1321,11 +1507,21 @@ fn consumeWithScratch(
                 const parent_haxy_moment_cursor = try haxy_moments.getCursor(hash.bytesToInt(repo_opts.hash, &oid)) orelse return error.CursorNotFound;
                 const parent_haxy_moment = try DB.HashMap(.read_only).init(parent_haxy_moment_cursor);
 
-                const baseline_oid_hex = try mrg.commonAncestor(repo_kind, repo_opts, read_state, io, allocator, &parent_oids[0], parent_oid);
-                var baseline_oid: [hash.byteLen(repo_opts.hash)]u8 = undefined;
-                _ = try std.fmt.hexToBytes(&baseline_oid, &baseline_oid_hex);
-                const baseline_haxy_moment_cursor = try haxy_moments.getCursor(hash.bytesToInt(repo_opts.hash, &baseline_oid)) orelse return error.CursorNotFound;
-                const baseline_haxy_moment = try DB.HashMap(.read_only).init(baseline_haxy_moment_cursor);
+                // histories that began apart (events written on two hosts
+                // before they first synced) have no baseline: every record
+                // only one side has arrives whole, and every field the sides
+                // set differently is a conflict
+                const baseline_oid_hex_maybe: ?[hash.hexLen(repo_opts.hash)]u8 = mrg.commonAncestor(repo_kind, repo_opts, read_state, io, allocator, &parent_oids[0], parent_oid) catch |err| switch (err) {
+                    error.NoCommonAncestor => null,
+                    else => |e| return e,
+                };
+                var baseline_haxy_moment: ?DB.HashMap(.read_only) = null;
+                if (baseline_oid_hex_maybe) |baseline_oid_hex| {
+                    var baseline_oid: [hash.byteLen(repo_opts.hash)]u8 = undefined;
+                    _ = try std.fmt.hexToBytes(&baseline_oid, &baseline_oid_hex);
+                    const baseline_haxy_moment_cursor = try haxy_moments.getCursor(hash.bytesToInt(repo_opts.hash, &baseline_oid)) orelse return error.CursorNotFound;
+                    baseline_haxy_moment = try DB.HashMap(.read_only).init(baseline_haxy_moment_cursor);
+                }
 
                 inline for (@typeInfo(Event).@"union".field_types) |field_type| {
                     const T = @typeInfo(field_type).optional.child;
@@ -1527,6 +1723,107 @@ pub const base_record_key = "base-record";
 pub const their_record_key = "their-record";
 pub const their_field_to_oid_key = "their-field->oid";
 
+/// a version of a thread's unresolved conflict: a digest of everything its
+/// resolution is built from (the conflicting fields, the live record, the
+/// merged-in side and the merge base), so it moves whenever a later event
+/// or merge changes any of them
+pub const ConflictRevision = [16]u8;
+
+/// the revision of the conflict `entry` holds against the live `ours`
+pub fn conflictRevision(
+    comptime T: type,
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    ours: T,
+    entry: EventDB(hash_kind).HashMap(.read_only),
+) !ConflictRevision {
+    const DB = EventDB(hash_kind);
+    const aa = arena.allocator();
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    const fields_cursor = (try entry.getCursor(hash.hashInt(hash_kind, conflicted_fields_key))) orelse return error.NotFound;
+    hashPart(&hasher, try fields_cursor.readBytesAlloc(aa, null));
+    hashPart(&hasher, try jsonText(aa, ours));
+    for ([_][]const u8{ their_record_key, base_record_key }) |key| {
+        const side: ?T = if (try entry.getCursor(hash.hashInt(hash_kind, key))) |cursor|
+            (try read(T.Record, DB, hash_kind, arena, try DB.HashMap(.read_only).init(cursor))).event
+        else
+            null;
+        hashPart(&hasher, try jsonText(aa, side));
+    }
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return digest[0..@sizeOf(ConflictRevision)].*;
+}
+
+fn hashPart(hasher: *std.crypto.hash.sha2.Sha256, part: []const u8) void {
+    var len: [8]u8 = undefined;
+    std.mem.writeInt(u64, &len, part.len, .little);
+    hasher.update(&len);
+    hasher.update(part);
+}
+
+fn jsonText(aa: std.mem.Allocator, value: anytype) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(aa);
+    try std.json.Stringify.value(value, .{}, &out.writer);
+    return out.written();
+}
+
+/// the revision of the unresolved conflict of the thread of kind `T` that
+/// `id` names in `moment`, or null when it has none
+pub fn conflictRevisionAt(
+    comptime T: type,
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    moment: EventDB(hash_kind).HashMap(.read_only),
+    id: *const [event_id_size]u8,
+) !?ConflictRevision {
+    const DB = EventDB(hash_kind);
+    const record = (try readRecordSubset(T, T.Record, DB, hash_kind, moment, arena, id)) orelse return null;
+    if (record.removed) return null;
+    const conflicts_cursor = (try moment.getCursor(hash.hashInt(hash_kind, T.conflicts_key))) orelse return null;
+    const conflicts = try DB.SortedMap(.read_only).init(conflicts_cursor);
+    const entry_cursor = (try conflicts.getCursor(&orderKeyDesc(record.created_order, id))) orelse return null;
+    return try conflictRevision(T, hash_kind, arena, record.event, try DB.HashMap(.read_only).init(entry_cursor));
+}
+
+/// `conflictRevisionAt` in the repo's consumed events as they are now
+pub fn readConflictRevision(
+    comptime T: type,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: *const [event_id_size]u8,
+) !?ConflictRevision {
+    var event_db_maybe: ?LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir) else null;
+    defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
+    const moment = (if (event_db_maybe) |*event_db|
+        currentMomentFromDb(repo_opts.hash, event_db.db)
+    else if (repo_kind == .git)
+        return null
+    else
+        currentMoment(repo_opts, repo)) catch return null;
+    return conflictRevisionAt(T, repo_opts.hash, arena, moment, id);
+}
+
+/// a resolution's check inside a xit repo's write transaction: the thread's
+/// conflict must still be at `revision` there (error.Stale otherwise), so a
+/// resolution built from it is still the one the client chose
+pub fn ConflictCheck(comptime T: type, comptime hash_kind: hash.HashKind) type {
+    return struct {
+        arena: *std.heap.ArenaAllocator,
+        id: *const [event_id_size]u8,
+        revision: ConflictRevision,
+
+        pub fn check(self: @This(), moment_maybe: ?EventDB(hash_kind).HashMap(.read_only)) !void {
+            const current = (try conflictRevisionAt(T, hash_kind, self.arena, moment_maybe orelse return error.Stale, self.id)) orelse return error.Stale;
+            if (!std.mem.eql(u8, &current, &self.revision)) return error.Stale;
+        }
+    };
+}
+
 // record the commit against every field this event changes. a merge passes no
 // oid, since each field's winner may come from a different side.
 pub fn writeOid(
@@ -1626,7 +1923,8 @@ pub fn merge(
     allocator: std.mem.Allocator,
     haxy_moment: DB.HashMap(.read_write),
     parent_moment: DB.HashMap(.read_only),
-    baseline_moment: DB.HashMap(.read_only),
+    // the merge base's moment; null when the histories share none
+    baseline_moment_maybe: ?DB.HashMap(.read_only),
 ) !void {
     const parent_set_cursor = try parent_moment.getCursor(hash.hashInt(hash_kind, T.all_id_set_key)) orelse return;
     const parent_set = try DB.SortedSet(.read_only).init(parent_set_cursor);
@@ -1635,8 +1933,10 @@ pub fn merge(
     const parent_records = try DB.HashMap(.read_only).init(parent_records_cursor);
 
     var baseline_records: ?DB.HashMap(.read_only) = null;
-    if (try baseline_moment.getCursor(hash.hashInt(hash_kind, T.record_map_key))) |cursor| {
-        baseline_records = try DB.HashMap(.read_only).init(cursor);
+    if (baseline_moment_maybe) |baseline_moment| {
+        if (try baseline_moment.getCursor(hash.hashInt(hash_kind, T.record_map_key))) |cursor| {
+            baseline_records = try DB.HashMap(.read_only).init(cursor);
+        }
     }
 
     var parent_conflicts: ?DB.SortedMap(.read_only) = null;
@@ -1647,8 +1947,10 @@ pub fn merge(
             if (try parent_moment.getCursor(hash.hashInt(hash_kind, T.conflicts_key))) |cursor| {
                 parent_conflicts = try DB.SortedMap(.read_only).init(cursor);
             }
-            if (try baseline_moment.getCursor(hash.hashInt(hash_kind, T.conflicts_key))) |cursor| {
-                baseline_conflicts = try DB.SortedMap(.read_only).init(cursor);
+            if (baseline_moment_maybe) |baseline_moment| {
+                if (try baseline_moment.getCursor(hash.hashInt(hash_kind, T.conflicts_key))) |cursor| {
+                    baseline_conflicts = try DB.SortedMap(.read_only).init(cursor);
+                }
             }
             if (try parent_moment.getCursor(hash.hashInt(hash_kind, T.id_to_field_to_oid_key))) |cursor| {
                 parent_id_to_field_to_oid = try DB.HashMap(.read_only).init(cursor);
@@ -2247,17 +2549,57 @@ pub fn createRepo(
         }
     }
 
-    try writeRepoEvent(io, allocator, users_dir, &user_repo, owner_id, owner, &id_bytes, name, description, read_access);
+    try registerNewRepo(io, allocator, users_dir, &user_repo, owner_id, owner, &id_bytes, name, description, read_access);
     return .{ .owner_id = owner_id.*, .repo_id = id_bytes };
 }
 
+// register the repo whose directory was just made under `repo_id` in its
+// owner's user repo, unless the owner took `name` meanwhile: the name is
+// checked again in the transaction that registers it, so two creations of
+// one name (a retry while a slow copy runs, two clients) never both land.
+// the loser's directory is removed, and it fails with NameTaken.
+pub fn registerNewRepo(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    user_repo: *rp.Repo(.xit, user_repo_opts),
+    owner_id: *const [event_id_size]u8,
+    owner: CommitAuthor,
+    repo_id: *const [event_id_size]u8,
+    name: []const u8,
+    description: []const u8,
+    read_access: Repo.Access,
+) !void {
+    const NameFree = struct {
+        allocator: std.mem.Allocator,
+        name: []const u8,
+
+        pub fn check(self: @This(), moment: ?UserDB.HashMap(.read_only)) !void {
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            if (try Repo.readByName(UserDB, user_repo_opts.hash, moment orelse return, &arena, self.name) != null) return error.NameTaken;
+        }
+    };
+    writeRepoEventGuarded(io, allocator, users_dir, user_repo, owner_id, owner, repo_id, name, description, read_access, NameFree{ .allocator = allocator, .name = name }) catch |err| {
+        if (err == error.NameTaken) {
+            const path = try repoPath(allocator, users_dir, owner_id, repo_id);
+            defer allocator.free(path);
+            try std.Io.Dir.cwd().deleteTree(io, path);
+        }
+        return err;
+    };
+}
+
 // change the name, description, read access, and tab roles of the repo
-// named `old_name` in its owner's user repo
+// named `old_name` in its owner's user repo, as `actor_id`, who must still own
+// it when the change lands. it changes those fields of the repo as it is
+// then, so a concurrent change of its other fields (a protected branch) stays.
 pub fn updateRepo(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     owner_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
     author: CommitAuthor,
     old_name: []const u8,
     name: []const u8,
@@ -2266,31 +2608,210 @@ pub fn updateRepo(
     discuss_role: ?Repo.Role,
     issue_role: ?Repo.Role,
     patch_role: ?Repo.Role,
+    // the settings revision the change was made from (Stale once another
+    // change of the settings landed); null changes the settings as they are
+    revision: ?Repo.Revision,
 ) !void {
     try Repo.validateName(name);
+    // the repo the name names now; every attempt changes this one
+    const repo_id = blk: {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+        defer user_repo.deinit(io, allocator);
+        const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
+        break :blk ((try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, old_name)) orelse return error.NotFound).event_id;
+    };
+    try changeRepo(io, allocator, users_dir, owner_id, &repo_id, actor_id, author, SettingsChange{
+        .old_name = old_name,
+        .name = name,
+        .description = description,
+        .read_access = read_access,
+        .discuss_role = discuss_role,
+        .issue_role = issue_role,
+        .patch_role = patch_role,
+        .revision = revision,
+    });
+}
+
+/// the fields a settings change sets, for `changeRepo`
+pub const SettingsChange = struct {
+    // the name the change was made for: a repo renamed meanwhile isn't the
+    // one its maker saw, so it is changed no more (NotFound)
+    old_name: []const u8,
+    name: []const u8,
+    description: []const u8,
+    read_access: Repo.Access,
+    discuss_role: ?Repo.Role,
+    issue_role: ?Repo.Role,
+    patch_role: ?Repo.Role,
+    // made from these settings (`Repo.settingsRevision`): another change of
+    // them since makes it Stale. null applies it to the settings as they are.
+    revision: ?Repo.Revision,
+
+    pub fn apply(self: SettingsChange, _: std.mem.Allocator, before: Repo) !?Repo {
+        if (!std.mem.eql(u8, before.name, self.old_name)) return error.NotFound;
+        if (self.revision) |revision| if (!std.mem.eql(u8, &revision, &before.settingsRevision())) return error.Stale;
+        var changed = before;
+        changed.name = self.name;
+        changed.description = self.description;
+        changed.read_access = self.read_access;
+        changed.discuss_role = self.discuss_role;
+        changed.issue_role = self.issue_role;
+        changed.patch_role = self.patch_role;
+        return changed;
+    }
+};
+
+/// change the repo `repo_id` in its owner's user repo as `actor_id`, who
+/// must own it: read it, let `change.apply(arena, before)` make the new repo
+/// event from it (null writes nothing), and write that only if the repo is
+/// still `before` when it lands (`writeRepoChange`). when another change
+/// landed first, it reads the same repo again and applies the change to it
+/// as it is now, so concurrent changes of other fields stay. the repo is
+/// always the one `repo_id` names, never another that took its name.
+pub fn changeRepo(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+    author: CommitAuthor,
+    change: anytype,
+) !void {
+    var attempts: usize = 0;
+    while (true) : (attempts += 1) {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const before = blk: {
+            var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+            defer user_repo.deinit(io, allocator);
+            const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
+            const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, repo_id)) orelse return error.NotFound;
+            // first, so a change by someone who isn't an owner is refused even
+            // when it would write nothing
+            try checkOwner(moment, &arena, owner_id, repo_id, actor_id);
+            break :blk repo.event;
+        };
+        const changed = (try change.apply(arena.allocator(), before)) orelse return;
+        writeRepoChange(io, allocator, users_dir, owner_id, repo_id, actor_id, before, changed, author) catch |err| switch (err) {
+            // another change landed between the read and the write: apply
+            // this one to the repo as it is now
+            error.RepoChanged => if (attempts + 1 < repo_change_attempts) continue else return err,
+            else => |e| return e,
+        };
+        return;
+    }
+}
+
+// how many times a repo change is read and applied again after another change
+// landed first
+const repo_change_attempts = 5;
+
+// write `changed` over the repo `repo_id` in its owner's user repo, as
+// `actor_id`. checked in the write's own transaction: the repo must still be
+// `before` (else RepoChanged, and the caller reads it again), its new name free
+// (NameTaken), and the actor still its owner (NotOwner).
+pub fn writeRepoChange(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+    before: Repo,
+    changed: Repo,
+    author: CommitAuthor,
+) !void {
+    const Unchanged = struct {
+        allocator: std.mem.Allocator,
+        owner_id: *const [event_id_size]u8,
+        repo_id: *const [event_id_size]u8,
+        actor_id: *const [event_id_size]u8,
+        before: Repo,
+        name: []const u8,
+
+        pub fn check(self: @This(), moment_maybe: ?UserDB.HashMap(.read_only)) !void {
+            const moment = moment_maybe orelse return error.NotFound;
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const now = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id)) orelse return error.NotFound;
+            try checkOwner(moment, &arena, self.owner_id, self.repo_id, self.actor_id);
+            if (!sameRepo(now.event, self.before)) return error.RepoChanged;
+            if (try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, self.name)) |taken| {
+                if (!std.mem.eql(u8, &taken.event_id, self.repo_id)) return error.NameTaken;
+            }
+        }
+    };
     var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
     defer user_repo.deinit(io, allocator);
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
-    const found = (try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, old_name)) orelse return error.NotFound;
-    if (try Repo.readByName(UserDB, user_repo_opts.hash, moment, &arena, name)) |taken| {
-        if (!std.mem.eql(u8, &taken.event_id, &found.event_id)) return error.NameTaken;
-    }
-
-    var event = found.repo.event;
-    event.name = name;
-    event.description = description;
-    event.read_access = read_access;
-    event.discuss_role = discuss_role;
-    event.issue_role = issue_role;
-    event.patch_role = patch_role;
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
-        .id = std.fmt.bytesToHex(found.event_id, .lower),
+    try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
+        .id = std.fmt.bytesToHex(repo_id.*, .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         .author = author,
-        .event = .{ .repo = event },
-    }});
+        .event = .{ .repo = changed },
+    }}, Unchanged{ .allocator = allocator, .owner_id = owner_id, .repo_id = repo_id, .actor_id = actor_id, .before = before, .name = changed.name });
+}
+
+fn sameRepo(a: Repo, b: Repo) bool {
+    return std.mem.eql(u8, &a.user_id, &b.user_id) and
+        std.mem.eql(u8, a.name, b.name) and
+        std.mem.eql(u8, a.description, b.description) and
+        a.read_access == b.read_access and
+        a.discuss_role == b.discuss_role and
+        a.issue_role == b.issue_role and
+        a.patch_role == b.patch_role and
+        std.mem.eql(u8, a.protected_branches, b.protected_branches);
+}
+
+/// run `action.run()` for a change that isn't an event (such as moving the
+/// repo's HEAD) only while `actor_id` owns the repo `repo_id`: it holds the
+/// exclusive lock every write to the owner's user repo takes, so no role
+/// change lands between the check and the action. NotOwner when the actor
+/// doesn't own the repo, NotFound when it is gone; the action doesn't run then.
+pub fn whileOwner(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+    action: anytype,
+    // the name the change was asked for: a repo renamed meanwhile isn't
+    // changed (NotFound). null changes it whatever its name.
+    name: ?[]const u8,
+) !void {
+    var locked = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+    defer locked.deinit(io, allocator);
+    try locked.core.db_file.lock(io, .exclusive);
+    defer locked.core.db_file.unlock(io);
+    {
+        // opened after the lock, so it reads the state the last write left
+        var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
+        defer user_repo.deinit(io, allocator);
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
+        const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, repo_id)) orelse return error.NotFound;
+        if (name) |expected| if (!std.mem.eql(u8, repo.event.name, expected)) return error.NotFound;
+        try checkOwner(moment, &arena, owner_id, repo_id, actor_id);
+    }
+    try action.run();
+}
+
+// fails with NotOwner unless `actor_id` owns the repo `repo_id` in `moment`,
+// its owner's: its creator always does, anyone else by an owner grant
+fn checkOwner(
+    moment: UserDB.HashMap(.read_only),
+    arena: *std.heap.ArenaAllocator,
+    owner_id: *const [event_id_size]u8,
+    repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
+) !void {
+    if (std.mem.eql(u8, actor_id, owner_id)) return;
+    const role = try Grant.readRole(UserDB, user_repo_opts.hash, moment, arena, repo_id, actor_id);
+    if (role != .owner) return error.NotOwner;
 }
 
 // remove the repo `repo_id` from its owner's user repo, then its dir. tombstone
@@ -2302,110 +2823,147 @@ pub fn deleteRepo(
     owner_id: *const [event_id_size]u8,
     repo_id: *const [event_id_size]u8,
     author: CommitAuthor,
+    // the name the deletion was asked for: a repo renamed meanwhile isn't
+    // deleted (NotFound). null deletes it by id whatever its name.
+    name: ?[]const u8,
 ) !void {
+    // checked in the removal's own transaction, so a rename or a deletion
+    // landing meanwhile can't slip between the check and the tombstone
+    const Named = struct {
+        allocator: std.mem.Allocator,
+        repo_id: *const [event_id_size]u8,
+        name: ?[]const u8,
+
+        pub fn check(self: @This(), moment_maybe: ?UserDB.HashMap(.read_only)) !void {
+            const moment = moment_maybe orelse return error.NotFound;
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id)) orelse return error.NotFound;
+            if (self.name) |expected| if (!std.mem.eql(u8, repo.event.name, expected)) return error.NotFound;
+        }
+    };
     {
         var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
         defer user_repo.deinit(io, allocator);
-        try remove(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, repo_id, .repo, author);
+        try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
+            .id = std.fmt.bytesToHex(repo_id.*, .lower),
+            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
+            .author = author,
+            // a removal, as `remove` writes it
+            .event = .{ .repo = null },
+        }}, Named{ .allocator = allocator, .repo_id = repo_id, .name = name });
     }
     const path = try repoPath(allocator, users_dir, owner_id, repo_id);
     defer allocator.free(path);
     try std.Io.Dir.cwd().deleteTree(io, path);
 }
 
-// grant `user_id` `role` on the repo `repo_id` in its owner's user repo,
-// replacing any role they held
-pub fn grantRole(
+// set `user_id`'s grant on the repo `repo_id` in its owner's user repo from
+// `from` to `to` (null holds none: a grant from null adds them, a change to
+// null revokes them), as `actor_id`. checked in the write's own transaction:
+// the grant must still be `from` (else RoleChanged, so a promote never
+// re-adds someone revoked meanwhile and an add never demotes someone
+// promoted meanwhile), the actor must still own the repo (NotOwner), and the
+// repo must exist (NotFound). the main owner holds no grant and always owns
+// the repo, so no change applies to them (MainOwner).
+pub fn changeRole(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     owner_id: *const [event_id_size]u8,
     repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
     user_id: *const [event_id_size]u8,
-    role: Repo.Role,
+    from: ?Repo.Role,
+    to: ?Repo.Role,
     author: CommitAuthor,
+    // the name the change was asked for: a repo renamed meanwhile isn't
+    // changed (NotFound). null changes it whatever its name.
+    name: ?[]const u8,
 ) !void {
+    if (std.mem.eql(u8, user_id, owner_id)) return error.MainOwner;
+    // nothing to change from or to
+    if (from == null and to == null) return error.RoleChanged;
+    const Held = struct {
+        allocator: std.mem.Allocator,
+        owner_id: *const [event_id_size]u8,
+        repo_id: *const [event_id_size]u8,
+        actor_id: *const [event_id_size]u8,
+        user_id: *const [event_id_size]u8,
+        from: ?Repo.Role,
+        name: ?[]const u8,
+
+        pub fn check(self: @This(), moment_maybe: ?UserDB.HashMap(.read_only)) !void {
+            const moment = moment_maybe orelse return error.NotFound;
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id)) orelse return error.NotFound;
+            if (self.name) |expected| if (!std.mem.eql(u8, repo.event.name, expected)) return error.NotFound;
+            try checkOwner(moment, &arena, self.owner_id, self.repo_id, self.actor_id);
+            if (try Grant.readRole(UserDB, user_repo_opts.hash, moment, &arena, self.repo_id, self.user_id) != self.from) return error.RoleChanged;
+        }
+    };
     var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
     defer user_repo.deinit(io, allocator);
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
+    try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
         .id = std.fmt.bytesToHex(Grant.idOf(repo_id, user_id), .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         .author = author,
-        .event = .{ .grant = .{ .target_id = std.fmt.bytesToHex(repo_id.*, .lower), .user_id = std.fmt.bytesToHex(user_id.*, .lower), .role = role } },
-    }});
-}
-
-// revoke `user_id`'s grant on the repo `repo_id` in its owner's user repo
-pub fn revokeRole(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    users_dir: []const u8,
-    owner_id: *const [event_id_size]u8,
-    repo_id: *const [event_id_size]u8,
-    user_id: *const [event_id_size]u8,
-    author: CommitAuthor,
-) !void {
-    var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
-    defer user_repo.deinit(io, allocator);
-    // a revoked grant stays in the kind index, which is all `remove` checks
-    {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        defer arena.deinit();
-        const moment = (try userMoment(&user_repo)) orelse return error.EventNotFound;
-        if (try Grant.readRole(UserDB, user_repo_opts.hash, moment, &arena, repo_id, user_id) == null) return error.EventNotFound;
-    }
-    try remove(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, &Grant.idOf(repo_id, user_id), .grant, author);
+        // a revoked grant is removed, as `remove` writes it
+        .event = .{ .grant = if (to) |role| .{ .target_id = std.fmt.bytesToHex(repo_id.*, .lower), .user_id = std.fmt.bytesToHex(user_id.*, .lower), .role = role } else null },
+    }}, Held{ .allocator = allocator, .owner_id = owner_id, .repo_id = repo_id, .actor_id = actor_id, .user_id = user_id, .from = from, .name = name });
 }
 
 // add `branch` to the protected branches of the repo `repo_id` in its owner's
-// user repo, or take it out when `protect` is false. taking out a branch that
-// isn't protected writes nothing.
+// user repo, or take it out when `protect` is false, as `actor_id`, who must
+// still own it when the change lands. taking out a branch that isn't
+// protected writes nothing. it changes the list as it is then, so a
+// concurrent change of the repo's other fields stays.
 pub fn protectBranch(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     owner_id: *const [event_id_size]u8,
     repo_id: *const [event_id_size]u8,
+    actor_id: *const [event_id_size]u8,
     branch: []const u8,
     protect: bool,
     author: CommitAuthor,
+    // the name the change was asked for: a repo renamed meanwhile isn't
+    // changed (NotFound), on any attempt. null changes it whatever its name.
+    name: ?[]const u8,
 ) !void {
-    var user_repo = (try openUserRepo(io, allocator, users_dir, owner_id)) orelse return error.NotFound;
-    defer user_repo.deinit(io, allocator);
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const aa = arena.allocator();
-    const moment = (try userMoment(&user_repo)) orelse return error.NotFound;
-    const repo = (try Repo.readById(UserDB, user_repo_opts.hash, moment, &arena, repo_id)) orelse return error.NotFound;
-    if (repo.removed) return error.NotFound;
+    const Protection = struct {
+        branch: []const u8,
+        protect: bool,
+        name: ?[]const u8,
 
-    var branches: std.ArrayList(u8) = .empty;
-    var count: usize = 0;
-    var held = false;
-    for (try repo.event.protectedBranchNames(aa)) |name| {
-        if (std.mem.eql(u8, name, branch)) {
-            held = true;
-            if (!protect) continue;
+        pub fn apply(self: @This(), aa: std.mem.Allocator, before: Repo) !?Repo {
+            if (self.name) |expected| if (!std.mem.eql(u8, before.name, expected)) return error.NotFound;
+            var branches: std.ArrayList(u8) = .empty;
+            var count: usize = 0;
+            var held = false;
+            for (try before.protectedBranchNames(aa)) |protected| {
+                if (std.mem.eql(u8, protected, self.branch)) {
+                    held = true;
+                    if (!self.protect) continue;
+                }
+                if (branches.items.len > 0) try branches.append(aa, '\n');
+                try branches.appendSlice(aa, protected);
+                count += 1;
+            }
+            if (self.protect) {
+                if (held) return error.BranchProtected;
+                if (count >= Repo.protected_branch_max_count) return error.TooManyProtectedBranches;
+                if (branches.items.len > 0) try branches.append(aa, '\n');
+                try branches.appendSlice(aa, self.branch);
+            } else if (!held) return null;
+            var changed = before;
+            changed.protected_branches = branches.items;
+            return changed;
         }
-        if (branches.items.len > 0) try branches.append(aa, '\n');
-        try branches.appendSlice(aa, name);
-        count += 1;
-    }
-    if (protect) {
-        if (held) return error.BranchProtected;
-        if (count >= Repo.protected_branch_max_count) return error.TooManyProtectedBranches;
-        if (branches.items.len > 0) try branches.append(aa, '\n');
-        try branches.appendSlice(aa, branch);
-    } else if (!held) return;
-
-    var event = repo.event;
-    event.protected_branches = branches.items;
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, events_ref, &[_]EventWithId{.{
-        .id = std.fmt.bytesToHex(repo_id.*, .lower),
-        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        .author = author,
-        .event = .{ .repo = event },
-    }});
+    };
+    try changeRepo(io, allocator, users_dir, owner_id, repo_id, actor_id, author, Protection{ .branch = branch, .protect = protect, .name = name });
 }
 
 // create a user and their user repo, returning the new user's id
@@ -2458,24 +3016,26 @@ pub fn createUser(
 }
 
 // change a user's email, and their password when the password fields are
-// filled in
+// filled in. a null email keeps the stored one, read here at write time, so
+// a password change never reverts an email changed meanwhile.
 pub fn updateUser(
     io: std.Io,
     allocator: std.mem.Allocator,
     users_dir: []const u8,
     admin_repo: *rp.Repo(.xit, admin_repo_opts),
     user_id: *const [event_id_size]u8,
-    email: []const u8,
+    email_maybe: ?[]const u8,
     current_password: []const u8,
     new_password: []const u8,
     new_password_again: []const u8,
 ) !void {
-    if (email.len == 0) return error.EmailEmpty;
+    if (email_maybe) |email| if (email.len == 0) return error.EmailEmpty;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const moment = try currentMoment(admin_repo_opts, admin_repo);
     const user = (try User.readById(AdminDB, admin_repo_opts.hash, moment, &arena, user_id)) orelse return error.NotFound;
     if (user.removed) return error.NotFound;
+    const email = email_maybe orelse user.event.email;
     if (!std.mem.eql(u8, email, user.event.email) and try User.readByEmail(AdminDB, admin_repo_opts.hash, moment, &arena, email) != null) return error.EmailTaken;
 
     var event = user.event;
@@ -2525,10 +3085,8 @@ pub fn addUserKey(
     // the keys are stored one per line
     if (std.mem.indexOfScalar(u8, key, '\n') != null) return error.InvalidKey;
     const fingerprint = User.fingerprintOfKey(key) orelse return error.InvalidKey;
-    // the key types the ssh server verifies
     const key_type = std.mem.sliceTo(key, ' ');
-    const supported = [_][]const u8{ "ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384" };
-    for (supported) |name| {
+    for (User.supported_key_types) |name| {
         if (std.mem.eql(u8, key_type, name)) break;
     } else return error.UnsupportedKey;
     try writeUserKeys(io, allocator, users_dir, admin_repo, user_id, &fingerprint, key);
@@ -2608,8 +3166,25 @@ fn writeRepoEvent(
     description: []const u8,
     read_access: Repo.Access,
 ) !void {
+    return writeRepoEventGuarded(io, allocator, users_dir, user_repo, owner_id, owner, id_bytes, name, description, read_access, null);
+}
+
+// writeRepoEvent, with `guard` checked in its transaction (see consumeGuarded)
+fn writeRepoEventGuarded(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    user_repo: *rp.Repo(.xit, user_repo_opts),
+    owner_id: *const [event_id_size]u8,
+    owner: CommitAuthor,
+    id_bytes: *const [event_id_size]u8,
+    name: []const u8,
+    description: []const u8,
+    read_access: Repo.Access,
+    guard: anytype,
+) !void {
     const timestamp: u64 = @intCast(std.Io.Timestamp.now(io, .real).toSeconds());
-    try consume(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, user_repo, events_ref, &[_]EventWithId{.{
+    try consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, user_repo, events_ref, &[_]EventWithId{.{
         .id = std.fmt.bytesToHex(id_bytes.*, .lower),
         .timestamp = timestamp,
         .author = owner,
@@ -2619,7 +3194,7 @@ fn writeRepoEvent(
             .description = description,
             .read_access = read_access,
         } },
-    }});
+    }}, guard);
     bumpRepoActivity(io, allocator, users_dir, owner_id, id_bytes, timestamp) catch |err| {
         std.log.warn("failed to record repo activity: {s}", .{@errorName(err)});
     };

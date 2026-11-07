@@ -50,15 +50,23 @@ pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, tab: ui.Routa
     var user_repo = (try evt.openUserRepo(io, gpa, users_dir, &user_id)) orelse return result;
     defer user_repo.deinit(io, gpa);
     const moment = (try notify.latestMoment(&user_repo)) orelse return result;
-    session.data.unread_notifs = try notify.unreadCount(moment);
-
-    const items = try notify.readRecent(moment, arena, tab.start, page_size + 1);
-    if (items.len > page_size) result.next_start = tab.start + page_size;
-    const rows = try aa.alloc(Row, @min(items.len, page_size));
-    for (rows, items[0..rows.len]) |*row, item| {
-        const identity = try aa.print("{s}:{s}", .{ item.notif.owner_name, item.notif.repo_name });
-        const route = ui.RoutablePage.repoThreadCommentsRoute(item.notif.thread_kind, identity, &std.fmt.bytesToHex(item.notif.thread_id, .lower), 0) orelse return error.RouteTooLong;
-        row.* = .{ .title = item.notif.title, .url = try route.toUrl(arena), .identity = identity, .unread = item.unread };
+    // a notif of a thread the user may no longer read is neither listed nor counted
+    var readable: notify.Readable = .{
+        .io = io,
+        .allocator = gpa,
+        .arena = arena,
+        .users_dir = users_dir,
+        .admin_moment = session.haxy_moment orelse return error.NoMoment,
+        .viewer_id = user_id,
+    };
+    const window = try notify.readWindow(moment, arena, &readable, .{ .index = tab.start }, page_size);
+    session.data.unread_notifs = window.unread;
+    if (window.next != null) result.next_start = tab.start + page_size;
+    const rows = try aa.alloc(Row, window.items.len);
+    for (rows, window.items) |*row, shown| {
+        const identity = try aa.print("{s}:{s}", .{ shown.place.owner_name, shown.place.repo_name });
+        const route = ui.RoutablePage.repoThreadCommentsRoute(shown.item.notif.thread_kind, identity, &std.fmt.bytesToHex(shown.item.notif.thread_id, .lower), 0) orelse return error.RouteTooLong;
+        row.* = .{ .title = shown.item.notif.title, .url = try route.toUrl(arena), .identity = identity, .unread = shown.item.unread };
     }
     result.rows = rows;
     return result;

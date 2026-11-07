@@ -117,6 +117,11 @@ pub fn build(b: *std.Build) void {
 
         const run_step = b.step("try", "Try the app");
         run_step.dependOn(&run_cmd.step);
+
+        // build the demo without running it, for harnesses that run it in
+        // their own directory (it seeds ./temp-try relative to its cwd)
+        const install_step = b.step("try-install", "Install the try demo without running it");
+        install_step.dependOn(&try_install.step);
     }
 
     // testnet

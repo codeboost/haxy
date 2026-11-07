@@ -52,6 +52,10 @@ pub fn perform(
     target: Target,
     typed: []const u8,
     password: []const u8,
+    // for a repo: the one the caller authorized, by id, deleted only while it
+    // still has the name `target` gives it (else NotFound). null resolves the
+    // name now.
+    repo_id_maybe: ?*const [evt.event_id_size]u8,
 ) !?ui.Session.FormFeedback.DeleteFailure {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -67,14 +71,14 @@ pub fn perform(
         .repo => |identity| {
             const parsed = evt.parseOwnerRepoPath(identity) orelse return error.NotFound;
             if (!std.mem.eql(u8, parsed.owner, user.event.name)) return error.NotFound;
-            const repo_id = blk: {
+            const repo_id = if (repo_id_maybe) |id| id.* else blk: {
                 var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &user_id)) orelse return error.NotFound;
                 defer user_repo.deinit(io, allocator);
                 const moment = (try evt.userMoment(&user_repo)) orelse return error.NotFound;
                 const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, parsed.name)) orelse return error.NotFound;
                 break :blk found.event_id;
             };
-            try evt.deleteRepo(io, allocator, users_dir, &user_id, &repo_id, author);
+            try evt.deleteRepo(io, allocator, users_dir, &user_id, &repo_id, author, parsed.name);
         },
         .fork => |f| {
             const parsed = evt.parseOwnerRepoPath(f.identity) orelse return error.NotFound;
@@ -230,7 +234,7 @@ pub const View = struct {
         const password = try self.textInput(password_index).text(allocator);
         defer allocator.free(password);
 
-        const failure = perform(io, allocator, users_dir, admin_repo, user_id, self.target, confirm, password) catch |err| switch (err) {
+        const failure = perform(io, allocator, users_dir, admin_repo, user_id, self.target, confirm, password, null) catch |err| switch (err) {
             // only the main owner is offered the form
             error.NotFound => return,
             else => return err,

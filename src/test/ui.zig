@@ -123,11 +123,11 @@ fn testDiff(comptime kind: xit.repo.RepoKind) !void {
     try std.testing.expectEqual(Diff.page_size, first.hunks.len);
     try std.testing.expect(first.start == 0 and first.has_more);
     try std.testing.expectEqualStrings("file-00.txt", first.hunks[0].path orelse return error.MissingPath);
-    const last = try Diff.render(kind, opts, io, allocator, arena.allocator(), &repo, &base, head, Diff.page_size, "");
+    const last = try Diff.render(kind, opts, io, allocator, arena.allocator(), &repo, &base, head, .{ .start = Diff.page_size });
     try std.testing.expectEqual(1, last.hunks.len);
     try std.testing.expect(last.start > 0 and !last.has_more);
     try std.testing.expectEqualStrings("file-10.txt", last.hunks[0].path orelse return error.MissingPath);
-    const filtered = try Diff.render(kind, opts, io, allocator, arena.allocator(), &repo, &base, head, 0, "file-00.txt");
+    const filtered = try Diff.render(kind, opts, io, allocator, arena.allocator(), &repo, &base, head, .{ .path = "file-00.txt" });
     try std.testing.expectEqual(1, filtered.hunks.len);
     try std.testing.expect(!filtered.has_more);
 
@@ -179,6 +179,178 @@ fn testDiff(comptime kind: xit.repo.RepoKind) !void {
                 try std.testing.expectEqualStrings("file-00.txt", file.fork_files.path.slice());
                 try std.testing.expectEqual(Diff.page_size, next.fork_diff.start);
             }
+        }
+    }
+}
+
+// a temporary repo whose files a test writes and commits
+fn DiffRepo(comptime kind: xit.repo.RepoKind, comptime opts: xit.repo.RepoOpts(kind)) type {
+    return struct {
+        const Repo = xit.repo.Repo(kind, opts);
+        const Oid = [xit.hash.hexLen(opts.hash)]u8;
+
+        temp: std.testing.TmpDir,
+        path: [:0]const u8,
+        repo: Repo,
+        arena: std.heap.ArenaAllocator,
+
+        const Self = @This();
+
+        fn init(self: *Self) !void {
+            const io = std.testing.io;
+            self.temp = std.testing.tmpDir(.{});
+            self.path = try self.temp.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+            self.repo = try Repo.init(io, std.testing.allocator, .{ .path = self.path });
+            self.arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        }
+
+        fn deinit(self: *Self) void {
+            self.arena.deinit();
+            self.repo.deinit(std.testing.io, std.testing.allocator);
+            std.testing.allocator.free(self.path);
+            self.temp.cleanup();
+        }
+
+        // writes `files` (name, content) and commits them
+        fn commit(self: *Self, files: []const [2][]const u8) !Oid {
+            const io = std.testing.io;
+            var names: std.ArrayList([]const u8) = .empty;
+            defer names.deinit(std.testing.allocator);
+            for (files) |file| {
+                const handle = try self.repo.core.work_dir.createFile(io, file[0], .{});
+                defer handle.close(io);
+                try handle.writeStreamingAll(io, file[1]);
+                try names.append(std.testing.allocator, file[0]);
+            }
+            try self.repo.add(io, std.testing.allocator, names.items);
+            return self.repo.commit(io, std.testing.allocator, .{ .message = "change" });
+        }
+
+        fn window(self: *Self, base: ?*const Oid, head: Oid, options: ui.Repo.Diff.Options) !ui.Repo.Diff.Window {
+            return ui.Repo.Diff.render(kind, opts, std.testing.io, std.testing.allocator, self.arena.allocator(), &self.repo, base, head, options);
+        }
+    };
+}
+
+fn entryAt(window: ui.Repo.Diff.Window, path: []const u8) !ui.Repo.Diff.Hunk {
+    for (window.hunks) |hunk| if (std.mem.eql(u8, hunk.path orelse continue, path)) return hunk;
+    return error.MissingEntry;
+}
+
+test "diff windows show binary changes as placeholders" {
+    try testBinaryDiff(.git);
+    try testBinaryDiff(.xit);
+}
+
+fn testBinaryDiff(comptime kind: xit.repo.RepoKind) !void {
+    var t: DiffRepo(kind, .{ .is_test = true }) = undefined;
+    try t.init();
+    defer t.deinit();
+    // invalid utf-8 makes a file binary, as xit decides
+    const base = try t.commit(&.{ .{ "text.txt", "one\n" }, .{ "image.bin", "\x00\xff\xfe" } });
+    const head = try t.commit(&.{ .{ "text.txt", "two\n" }, .{ "image.bin", "\x00\xfe\xff" }, .{ "added.bin", "\xff" } });
+
+    const window = try t.window(&base, head, .{});
+    try std.testing.expectEqual(3, window.hunks.len);
+    const changed = try entryAt(window, "image.bin");
+    try std.testing.expectEqual(.changed, changed.status);
+    try std.testing.expectEqual(.binary, changed.kind);
+    try std.testing.expectEqual(0, changed.lines.len);
+    const added = try entryAt(window, "added.bin");
+    try std.testing.expectEqual(.added, added.status);
+    try std.testing.expectEqual(.binary, added.kind);
+    const text = try entryAt(window, "text.txt");
+    try std.testing.expectEqual(.hunk, text.kind);
+    // each line carries its numbers on the side it is on
+    try std.testing.expect(text.lines.len >= 2);
+    try std.testing.expectEqual('-', text.lines[0].prefix);
+    try std.testing.expectEqual(@as(?usize, 1), text.lines[0].old);
+    try std.testing.expectEqual(@as(?usize, null), text.lines[0].new);
+    try std.testing.expectEqualStrings("one", text.lines[0].text);
+    try std.testing.expectEqual('+', text.lines[1].prefix);
+    try std.testing.expectEqual(@as(?usize, null), text.lines[1].old);
+    try std.testing.expectEqual(@as(?usize, 1), text.lines[1].new);
+    try std.testing.expectEqualStrings("two", text.lines[1].text);
+}
+
+test "diff windows show changes past xit's limits as placeholders" {
+    try testLargeDiff(.git);
+    try testLargeDiff(.xit);
+}
+
+fn testLargeDiff(comptime kind: xit.repo.RepoKind) !void {
+    {
+        // a file whose edits pass the limit is one placeholder; the files
+        // around it still diff
+        var t: DiffRepo(kind, .{ .is_test = true, .max_edit_count = 2 }) = undefined;
+        try t.init();
+        defer t.deinit();
+        const base = try t.commit(&.{ .{ "a.txt", "one\n" }, .{ "big.txt", "1\n2\n3\n" }, .{ "c.txt", "one\n" } });
+        const head = try t.commit(&.{ .{ "a.txt", "two\n" }, .{ "big.txt", "4\n5\n6\n" }, .{ "c.txt", "two\n" } });
+        const window = try t.window(&base, head, .{});
+        try std.testing.expectEqual(3, window.hunks.len);
+        try std.testing.expectEqual(.hunk, (try entryAt(window, "a.txt")).kind);
+        const big = try entryAt(window, "big.txt");
+        try std.testing.expectEqual(.too_large, big.kind);
+        try std.testing.expectEqual(.changed, big.status);
+        try std.testing.expectEqual(.hunk, (try entryAt(window, "c.txt")).kind);
+        try std.testing.expect(!window.truncated);
+        // the placeholder takes its place in the paging and the filter
+        const second = try t.window(&base, head, .{ .start = 1, .limit = 1 });
+        try std.testing.expectEqual(.too_large, second.hunks[0].kind);
+        try std.testing.expect(second.has_more);
+        const only = try t.window(&base, head, .{ .path = "big.txt" });
+        try std.testing.expectEqual(1, only.hunks.len);
+        try std.testing.expectEqual(.too_large, only.hunks[0].kind);
+    }
+    {
+        // past the limit on the lines a whole diff reads, the window ends
+        // early and says so
+        var t: DiffRepo(kind, .{ .is_test = true, .max_total_line_count = 6 }) = undefined;
+        try t.init();
+        defer t.deinit();
+        const base = try t.commit(&.{ .{ "a.txt", "one\n" }, .{ "b.txt", "one\n" } });
+        const head = try t.commit(&.{ .{ "a.txt", "two\n" }, .{ "b.txt", "two\n" } });
+        const window = try t.window(&base, head, .{});
+        try std.testing.expectEqual(1, window.hunks.len);
+        try std.testing.expectEqualStrings("a.txt", window.hunks[0].path.?);
+        try std.testing.expect(window.truncated and !window.has_more);
+    }
+}
+
+// whether the diff pane shows a row whose text holds `needle`
+fn diffPaneShows(view: *ui.Repo.Diff.View, needle: []const u8) !bool {
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (view.scroll.child.box.children.values()) |child| {
+        if (child.widget != .text_box) continue;
+        text.clearRetainingCapacity();
+        for (child.widget.text_box.content.items) |codepoint| {
+            var buf: [4]u8 = undefined;
+            try text.appendSlice(std.testing.allocator, buf[0..try std.unicode.utf8Encode(codepoint, &buf)]);
+        }
+        if (std.mem.indexOf(u8, text.items, needle) != null) return true;
+    }
+    return false;
+}
+
+test "a diff pane cut short by xit's limits says so, in the terminal and on the web" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const Diff = ui.Repo.Diff;
+    const hunks = [_]Diff.Hunk{.{ .path = "a.txt", .lines = &.{.{ .prefix = '+', .old = null, .new = 1, .text = "one" }} }};
+    for ([_]bool{ true, false }) |truncated| {
+        const data = Diff{
+            .route = .{ .fork = .{ .identity = "alice:project", .id = "11111111111111111111111111111111" } },
+            .window = .{ .hunks = &hunks, .truncated = truncated },
+        };
+        for ([_]bool{ true, false }) |terminal| {
+            var session = ui.Session{ .arena = &arena, .page_arena = &arena, .is_terminal = terminal };
+            session.data.current_page = ui.RoutablePage.forkDiffRoute("alice:project", "11111111111111111111111111111111", "", "", 0, "") orelse return error.BadRoute;
+            var view = try Diff.View.init(allocator, &data, &session);
+            defer view.deinit(allocator);
+            try std.testing.expectEqual(truncated, try diffPaneShows(&view, "too large"));
         }
     }
 }

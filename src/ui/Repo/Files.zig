@@ -31,7 +31,7 @@ const max_markdown_lines = 2000;
 const max_preloaded_bytes = 2 * 1024 * 1024;
 
 // how many rows a listing holds, for a directory and for search results alike.
-const max_list_entries = 1000;
+pub const max_list_entries = 1000;
 
 // one entry in the directory currently being viewed.
 pub const Entry = struct {
@@ -92,12 +92,46 @@ pub fn initPatchRev(
     path: []const u8,
     line: usize,
 ) !Self {
-    const id = evt.parseEventId(id_hex) catch return error.NotFound;
-    const record = (try evt.readFromRepo(evt.PatchRev, repo_kind, repo_opts, io, gpa, arena, repo, &id)) orelse return error.NotFound;
-    if (record.removed) return error.NotFound;
+    const record = (try readPatchRev(repo_kind, repo_opts, arena, repo, io, gpa, id_hex)) orelse return error.NotFound;
     var data = try init(repo_kind, repo_opts, arena, repo, io, gpa, handle, .object, record.head_tree_oid, path, line, "");
     data.patchrev_id = try arena.allocator().dupe(u8, id_hex);
     return data;
+}
+
+/// the patch revision `id_hex` names in `repo`, or null when there is none
+/// (a malformed id, an unknown one, or a removed revision)
+pub fn readPatchRev(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    id_hex: []const u8,
+) !?evt.PatchRev.Record {
+    const id = evt.parseEventId(id_hex) catch return null;
+    const record = (try evt.readFromRepo(evt.PatchRev, repo_kind, repo_opts, io, gpa, arena, repo, &id)) orelse return null;
+    return if (record.removed) null else record;
+}
+
+/// `readPatchRev` in an xit repo's snapshot `moment`, so a caller can read
+/// what the revision names in that same snapshot (a git repo's events live
+/// apart from its refs, in a database without snapshots)
+pub fn readPatchRevAt(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    moment: anytype,
+    id_hex: []const u8,
+) !?evt.PatchRev.Record {
+    if (comptime repo_kind == .git) return readPatchRev(repo_kind, repo_opts, arena, repo, io, gpa, id_hex);
+    const id = evt.parseEventId(id_hex) catch return null;
+    const events = evt.currentMomentFromRepoMoment(repo_opts.hash, moment.*) catch return null;
+    const record = (try evt.PatchRev.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, events, arena, &id)) orelse return null;
+    return if (record.removed) null else record;
 }
 
 pub fn filesRoute(self: *const Self, path: []const u8, line: usize) ?ui.RoutablePage {
@@ -157,18 +191,20 @@ pub fn init(
     var preloaded_bytes: usize = 0;
     var find_available = false;
 
-    // the index covers branch tips only, so any other view gets no search box
-    // and refuses a find: url.
+    // only an indexed view gets the search box; any other refuses a find: url.
+    const branch = std.Uri.percentDecodeInPlace(try aa.dupe(u8, resolved.value));
+    const file_index = try fileIndex(repo_kind, repo_opts, moment, resolved.ref_or_oid, branch, &resolved.oid);
     if (comptime repo_kind == .xit) index: {
-        if (resolved.ref_or_oid != .branch) break :index;
-        const branch = std.Uri.percentDecodeInPlace(try aa.dupe(u8, resolved.value));
-        const files = (try fnd.lookup(repo_opts, moment, branch, &resolved.oid)) orelse break :index;
+        const files = switch (file_index) {
+            .indexed => |files| files,
+            .missing, .unsupported => break :index,
+        };
         find_available = true;
         const value = term orelse break :index;
         // a result's name is its full path, so the listing has no directory and
         // the selected row is named in full.
         const selected: ?[]const u8 = if (path.len == 0) null else try aa.dupe(u8, path);
-        const results = try fnd.search(repo_opts, files, aa, value, max_list_entries);
+        const results = try findFiles(repo_opts, files, aa, value);
         capped = results.capped;
         var found = false;
         for (results.matches) |match| {
@@ -217,25 +253,24 @@ pub fn init(
     // here (into the page arena) so the detail pane can show them without
     // another lookup.
     try entries.ensureTotalCapacity(aa, @min(tree_dir.entries.count(), max_list_entries));
-    for ([_]bool{ true, false }) |want_dir| {
-        for (tree_dir.entries.keys(), tree_dir.entries.values()) |name, tree_entry| {
-            if (tree_entry.isTree() != want_dir) continue;
-            if (want_dir) {
-                if (entries.items.len >= max_list_entries) {
-                    capped = true;
-                    continue;
-                }
-                try entries.append(aa, .{ .name = try aa.dupe(u8, name), .is_dir = true });
-            } else {
-                // the rows the route and the default selection need are exempt
-                // from the cap, so a url naming a file always gets its row.
-                const exempt = isReadme(name) or (if (selected_file) |sf| std.mem.eql(u8, sf, name) else false);
-                if (entries.items.len >= max_list_entries and !exempt) {
-                    capped = true;
-                    continue;
-                }
-                try entries.append(aa, try fileEntry(repo_kind, repo_opts, state, io, gpa, aa, dir, name, &tree_entry.oid, tree_entry.mode, selected_file, line, &preloaded_bytes));
+    for (try listOrder(aa, tree_dir.entries.values())) |index| {
+        const name = tree_dir.entries.keys()[index];
+        const tree_entry = tree_dir.entries.values()[index];
+        if (tree_entry.isTree()) {
+            if (entries.items.len >= max_list_entries) {
+                capped = true;
+                continue;
             }
+            try entries.append(aa, .{ .name = try aa.dupe(u8, name), .is_dir = true });
+        } else {
+            // the rows the route and the default selection need are exempt
+            // from the cap, so a url naming a file always gets its row.
+            const exempt = isReadme(name) or (if (selected_file) |sf| std.mem.eql(u8, sf, name) else false);
+            if (entries.items.len >= max_list_entries and !exempt) {
+                capped = true;
+                continue;
+            }
+            try entries.append(aa, try fileEntry(repo_kind, repo_opts, state, io, gpa, aa, dir, name, &tree_entry.oid, tree_entry.mode, selected_file, line, &preloaded_bytes));
         }
     }
 
@@ -249,6 +284,56 @@ pub fn init(
         .capped = capped,
         .find_available = find_available,
     };
+}
+
+/// why haxy has no file index for a view: it indexes only the branch tips of
+/// an xit repo, so a git repo's views and a tag, commit or revision have none
+pub const Unindexed = enum { repository, ref };
+
+/// whether a view of a `repo_kind` repo at `ref_or_oid` can have a file index,
+/// or why not
+pub fn indexable(repo_kind: rp.RepoKind, ref_or_oid: ui.RoutablePage.RefOrOid) ?Unindexed {
+    if (repo_kind != .xit) return .repository;
+    if (ref_or_oid != .branch) return .ref;
+    return null;
+}
+
+/// the file index a view searches, or why it has none
+pub fn FileIndex(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.RepoOpts(repo_kind)) type {
+    return union(enum) {
+        // the index covering the viewed branch's tip
+        indexed: if (repo_kind == .xit) rp.Repo(.xit, repo_opts).DB.SortedMap(.read_only) else noreturn,
+        // a branch with no index covering its tip (not built yet, or stale)
+        missing,
+        // a view haxy never indexes
+        unsupported: Unindexed,
+    };
+}
+
+/// the file index of the view at `ref_or_oid` (`branch` is its decoded name
+/// when it is a branch) whose commit is `oid`, read from `moment`
+pub fn fileIndex(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    moment: anytype,
+    ref_or_oid: ui.RoutablePage.RefOrOid,
+    branch: []const u8,
+    oid: *const [xit.hash.hexLen(repo_opts.hash)]u8,
+) !FileIndex(repo_kind, repo_opts) {
+    if (indexable(repo_kind, ref_or_oid)) |reason| return .{ .unsupported = reason };
+    if (comptime repo_kind != .xit) unreachable;
+    return if (try fnd.lookup(repo_opts, moment, branch, oid)) |files| .{ .indexed = files } else .missing;
+}
+
+/// the indexed files whose name starts with `term`, ignoring ascii case, by
+/// name then path; at most a listing's worth, flagged `capped` past that
+pub fn findFiles(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    files: rp.Repo(.xit, repo_opts).DB.SortedMap(.read_only),
+    aa: std.mem.Allocator,
+    term: []const u8,
+) !fnd.Results(repo_opts.hash) {
+    return fnd.search(repo_opts, files, aa, term, max_list_entries);
 }
 
 // build one file's row, reading its content window when the preload budget (or
@@ -288,18 +373,39 @@ fn fileEntry(
     return entry;
 }
 
-const FileContent = struct {
+/// a window of a file's content, as the files view shows it
+pub const FileContent = struct {
     lines: []const []const u8,
     is_binary: bool = false,
+    // the file has no bytes at all
+    is_empty: bool = false,
     has_more: bool = false,
+    // the file's whole line count; 0 for a binary file
+    total_lines: usize = 0,
 };
+
+/// the order a directory listing shows `entries` (a tree's entries, in its
+/// name order) in: directories first, then files, each keeping that order.
+/// returns indices into `entries`.
+pub fn listOrder(aa: std.mem.Allocator, entries: anytype) ![]const usize {
+    var order = try aa.alloc(usize, entries.len);
+    var next: usize = 0;
+    for ([_]bool{ true, false }) |want_dir| {
+        for (entries, 0..) |entry, index| {
+            if (entry.isTree() != want_dir) continue;
+            order[next] = index;
+            next += 1;
+        }
+    }
+    return order;
+}
 
 // read the window of a committed file's contents from `start`, capped by
 // file_page and max_window_cells, into `arena`-owned lines, flagging whether
 // more follow. xit's line iterator flags binary files (its source becomes
 // `.binary`), in which case we report no lines and let the view show a
 // placeholder.
-fn readFileContent(
+pub fn readFileContent(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     state: rp.Repo(repo_kind, repo_opts).State(.read_only),
@@ -314,6 +420,7 @@ fn readFileContent(
     var line_iter = try df.LineIterator(repo_kind, repo_opts).initFromOid(state, io, gpa, path, oid, mode);
     defer line_iter.deinit();
     if (line_iter.source == .binary) return .{ .lines = &.{}, .is_binary = true };
+    const is_empty = line_iter.size == 0;
 
     // init reads through the file to validate it (and buffer it in memory), so
     // the line count is known and a window can be sliced out of the buffer.
@@ -333,7 +440,9 @@ fn readFileContent(
     }
     return .{
         .lines = try lines.toOwnedSlice(arena),
+        .is_empty = is_empty,
         .has_more = i < total,
+        .total_lines = total,
     };
 }
 
@@ -735,7 +844,7 @@ pub const View = struct {
                     try self.addContentBox(allocator, inner, &.{.{ .text = "(press enter to load this file)" }}, link);
                 } else if (entry.is_binary) {
                     try self.addContentBox(allocator, inner, &.{.{ .text = "(binary file)" }}, "");
-                } else if (isMarkdown(entry.name) and entry.window_start == 0 and !entry.has_more and entry.lines.len <= max_markdown_lines) {
+                } else if (showsMarkdown(entry.name, entry.window_start, entry.lines.len, entry.has_more)) {
                     const page_arena = self.session.page_arena;
                     const doc = try md.parse(page_arena.allocator(), entry.lines);
                     var view = try Markdown.View.init(allocator, self.session, doc, self.data, path);
@@ -1056,7 +1165,16 @@ fn isMarkdown(name: []const u8) bool {
     return std.ascii.eqlIgnoreCase(extension, ".md") or std.ascii.eqlIgnoreCase(extension, ".markdown");
 }
 
-fn isReadme(name: []const u8) bool {
+/// whether a window of the file `name` shows as rendered markdown rather than
+/// numbered source: a markdown file that one first window holds whole, and
+/// isn't too long to render.
+pub fn showsMarkdown(name: []const u8, window_start: usize, line_count: usize, has_more: bool) bool {
+    return isMarkdown(name) and window_start == 0 and !has_more and line_count <= max_markdown_lines;
+}
+
+/// whether a directory's file `name` is its README, which the files view
+/// shows when the directory opens
+pub fn isReadme(name: []const u8) bool {
     return std.ascii.eqlIgnoreCase(name, "README") or std.ascii.eqlIgnoreCase(name, "README.md");
 }
 

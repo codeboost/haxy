@@ -149,7 +149,29 @@ pub fn activityOrder(
     return try order_cursor.readUint();
 }
 
-pub fn update(
+/// a version of what an edit replaces (as `evt.Issue.contentRevision`): a
+/// digest of the title, labels and description, so it moves whenever any of
+/// them changes, however the change arrived
+pub const Revision = evt.Issue.Revision;
+
+pub fn contentRevision(discussion: Self) Revision {
+    return evt.Issue.contentRevision(.{ .title = discussion.title, .labels = discussion.labels, .description = discussion.description });
+}
+
+/// what an edit replaces
+pub const Fields = struct {
+    title: []const u8,
+    labels: []const u8,
+    description: []const u8,
+};
+
+// re-emits the discussion `id` names with `fields`, only while its fields are
+// still at `revision` (`contentRevision`), else error.Stale; null replaces
+// whatever it holds now. error.NotFound when the id names no live discussion.
+// a xit repo checks again inside the write's transaction, so a change that
+// lands meanwhile is never overwritten; a git repo's writers serialize the
+// read and the write instead (thread_write). `repo` must be writable.
+pub fn updateAt(
     host: evt.Host,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
@@ -157,28 +179,61 @@ pub fn update(
     allocator: std.mem.Allocator,
     repo: *rp.Repo(repo_kind, repo_opts),
     id: *const [evt.event_id_size]u8,
-    title: []const u8,
-    labels: []const u8,
-    description: []const u8,
+    fields: Fields,
     author: evt.CommitAuthor,
+    revision: ?Revision,
 ) !void {
-    if (!fieldsValid(title, labels)) return error.InvalidFields;
+    if (!fieldsValid(fields.title, fields.labels)) return error.InvalidFields;
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const discussion = (try readById(repo_kind, repo_opts, io, allocator, &arena, repo, id)) orelse return error.NotFound;
-    if (discussion.removed) return error.NotFound;
-
-    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{.{
+    var events = [_]evt.EventWithId{.{
         .id = std.fmt.bytesToHex(id.*, .lower),
         .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
         .author = author,
-        .event = .{ .discuss = .{
-            .title = title,
-            .labels = labels,
-            .description = description,
-        } },
-    }});
+        .event = .{ .discuss = undefined },
+    }};
+    const rebase = Rebase{ .fields = fields, .revision = revision, .event = &events[0] };
+    if (repo_kind == .xit) {
+        return evt.consumeGuarded(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events, RebaseIn(repo_opts.hash){ .arena = &arena, .id = id, .rules = rebase });
+    }
+    try rebase.apply(discussion);
+    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
+}
+
+// builds an edit's event from the discussion as it is, refusing a removed
+// discussion and a stale revision
+const Rebase = struct {
+    fields: Fields,
+    revision: ?Revision,
+    event: *evt.EventWithId,
+
+    fn apply(self: Rebase, record: Record) !void {
+        if (record.removed) return error.NotFound;
+        if (self.revision) |expected| {
+            if (!std.mem.eql(u8, &contentRevision(record.event), &expected)) return error.Stale;
+        }
+        self.event.event = .{ .discuss = .{ .title = self.fields.title, .labels = self.fields.labels, .description = self.fields.description } };
+    }
+};
+
+// `Rebase`, as consumeGuarded runs it inside a xit repo's write transaction
+fn RebaseIn(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        arena: *std.heap.ArenaAllocator,
+        id: *const [evt.event_id_size]u8,
+        rules: Rebase,
+
+        pub fn check(self: @This(), moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+            const DB = evt.EventDB(hash_kind);
+            const moment = moment_maybe orelse return error.NotFound;
+            const records_cursor = try moment.getCursor(hash.hashInt(hash_kind, record_map_key)) orelse return error.NotFound;
+            const records = try DB.HashMap(.read_only).init(records_cursor);
+            const record_cursor = try records.getCursor(hash.hashInt(hash_kind, self.id)) orelse return error.NotFound;
+            try self.rules.apply(try evt.read(Record, DB, hash_kind, self.arena, try DB.HashMap(.read_only).init(record_cursor)));
+        }
+    };
 }
 
 fn removeFromLabelSets(comptime DB: type, labels: DB.SortedMap(.read_write), names: []const u8, order_key: []const u8) !void {

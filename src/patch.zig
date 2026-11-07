@@ -12,6 +12,7 @@ const fork = @import("fork.zig");
 const serve_common = @import("serve_common.zig");
 const progress = @import("./progress.zig");
 const notify = @import("notify.zig");
+const thread_write = @import("thread_write.zig");
 
 // the action a patch merge records
 pub const merge_undo_action = "haxy/merge";
@@ -41,11 +42,32 @@ pub fn writeBranchPatch(
     expected_patch: ?evt.Patch,
     author: evt.CommitAuthor,
 ) !void {
+    return writeBranchPatchGuarded(host, repo_kind, repo_opts, io, allocator, repo, id, patch, expected_patch, author, null);
+}
+
+/// `writeBranchPatch`, with `guard.check(events moment)` run first where the
+/// write reads the patch it replaces: inside a xit repo's transaction, or
+/// against a git repo's event db (whose writers serialize through
+/// thread_write's lock). an error from the check writes nothing.
+pub fn writeBranchPatchGuarded(
+    host: evt.Host,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    id: [evt.event_id_size * 2]u8,
+    patch: evt.Patch,
+    expected_patch: ?evt.Patch,
+    author: evt.CommitAuthor,
+    guard: anytype,
+) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     // write git events through the local event database
     if (repo_kind == .git) {
+        try checkGitGuard(repo_opts, io, allocator, repo, guard);
         // reject edits based on an outdated patch
         if (expected_patch) |expected| {
             const current = (try evt.readFromRepo(evt.Patch, repo_kind, repo_opts, io, allocator, &arena, repo, &try evt.parseEventId(&id))) orelse return error.PatchOutOfDate;
@@ -56,45 +78,75 @@ pub fn writeBranchPatch(
         const events = try branchEvents(repo_kind, repo_opts, .{ .core = &repo.core, .extra = .{} }, io, &arena, id, patch, author);
         try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &events);
     } else {
-        const DB = evt.EventDB(repo_opts.hash);
-
-        const first_parent = try eventsFirstParent(repo_kind, repo_opts, io, allocator, repo);
-
-        // commit the patch, mergeability, and undo record together
-        {
-            const Ctx = struct {
-                repo: *rp.Repo(repo_kind, repo_opts),
-                io: std.Io,
-                arena: *std.heap.ArenaAllocator,
-                id: [evt.event_id_size * 2]u8,
-                patch: evt.Patch,
-                expected_patch: ?evt.Patch,
-                author: evt.CommitAuthor,
-                host: evt.Host,
-                first_parent: ?[1][hash.hexLen(repo_opts.hash)]u8,
-
-                pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
-                    var moment = try DB.HashMap(.read_write).init(cursor.*);
-                    const state = rp.Repo(repo_kind, repo_opts).State(.read_write){ .core = &ctx.repo.core, .extra = .{ .moment = &moment } };
-
-                    try writeBranchPatchInTransaction(ctx.host, repo_opts, state, &moment, ctx.io, ctx.arena, ctx.id, ctx.patch, ctx.expected_patch, ctx.author, ctx.first_parent);
-
-                    // record the user action for undo
-                    try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = evt.undo_action } });
-                }
-            };
-
-            try repo.core.db_file.lock(io, .exclusive);
-            defer repo.core.db_file.unlock(io);
-
-            const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
-            try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{ .repo = repo, .io = io, .arena = &arena, .id = id, .patch = patch, .expected_patch = expected_patch, .author = author, .host = host, .first_parent = first_parent });
-        }
+        try writeXitBranchPatch(host, repo_opts, io, allocator, &arena, repo, id, patch, expected_patch, author, guard);
         if (host == .server) {
             notify.subscribeParticipants(io, allocator, host.server, repo.core.work_path, &.{.{ .id = id, .author = author, .event = .{ .patch = patch } }});
             evt.bumpRepoActivityAt(io, allocator, host.server, repo.core.work_path);
         }
     }
+}
+
+// `guard.check` on a git repo's consumed events as they are now (null
+// before any), unless there is no guard
+fn checkGitGuard(
+    comptime repo_opts: rp.RepoOpts(.git),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(.git, repo_opts),
+    guard: anytype,
+) !void {
+    if (@TypeOf(guard) == @TypeOf(null)) return;
+    var event_db = (try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir)) orelse return guard.check(null);
+    defer event_db.deinit(io, allocator);
+    return guard.check(evt.currentMomentFromDb(repo_opts.hash, event_db.db) catch null);
+}
+
+// commits the patch, its mergeability and the undo record in one transaction
+fn writeXitBranchPatch(
+    host: evt.Host,
+    comptime repo_opts: rp.RepoOpts(.xit),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(.xit, repo_opts),
+    id: [evt.event_id_size * 2]u8,
+    patch: evt.Patch,
+    expected_patch: ?evt.Patch,
+    author: evt.CommitAuthor,
+    guard: anytype,
+) !void {
+    const DB = evt.EventDB(repo_opts.hash);
+    const Guard = if (@TypeOf(guard) == @TypeOf(null)) void else @TypeOf(guard);
+    const Ctx = struct {
+        repo: *rp.Repo(.xit, repo_opts),
+        io: std.Io,
+        arena: *std.heap.ArenaAllocator,
+        id: [evt.event_id_size * 2]u8,
+        patch: evt.Patch,
+        expected_patch: ?evt.Patch,
+        author: evt.CommitAuthor,
+        host: evt.Host,
+        first_parent: ?[1][hash.hexLen(repo_opts.hash)]u8,
+        guard: Guard,
+
+        pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
+            var moment = try DB.HashMap(.read_write).init(cursor.*);
+            const state = rp.Repo(.xit, repo_opts).State(.read_write){ .core = &ctx.repo.core, .extra = .{ .moment = &moment } };
+            if (Guard != void) try ctx.guard.check(evt.currentMomentFromRepoMoment(repo_opts.hash, moment.readOnly()) catch null);
+
+            try writeBranchPatchInTransaction(ctx.host, repo_opts, state, &moment, ctx.io, ctx.arena, ctx.id, ctx.patch, ctx.expected_patch, ctx.author, ctx.first_parent);
+
+            // record the user action for undo
+            try xit.undo.write(repo_opts, state, std.Io.Timestamp.now(ctx.io, .real).toSeconds(), .{ .custom = .{ .action_kind = evt.undo_action } });
+        }
+    };
+    const first_parent = try eventsFirstParent(.xit, repo_opts, io, allocator, repo);
+
+    try repo.core.db_file.lock(io, .exclusive);
+    defer repo.core.db_file.unlock(io);
+
+    const history = try DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+    try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{ .repo = repo, .io = io, .arena = arena, .id = id, .patch = patch, .expected_patch = expected_patch, .author = author, .host = host, .first_parent = first_parent, .guard = if (Guard == void) {} else guard });
 }
 
 // write one branch patch's revision into a transaction the caller owns. the
@@ -114,6 +166,17 @@ pub fn writeBranchPatchInTransaction(
     first_parent: ?[1][hash.hexLen(repo_opts.hash)]u8,
 ) !void {
     const DB = evt.EventDB(repo_opts.hash);
+
+    // a new patch takes an id no event has, so a retried creation can't open
+    // a second one; checked under the repository lock
+    if (expected_patch == null) {
+        if (evt.currentMomentFromRepoMoment(repo_opts.hash, moment.readOnly())) |events_moment| {
+            if (try thread_write.kindOf(repo_opts.hash, events_moment, &try evt.parseEventId(&id)) != null) return error.IdTaken;
+        } else |err| switch (err) {
+            error.NotFound => {},
+            else => |e| return e,
+        }
+    }
 
     // recheck the expected patch under the repository lock
     if (expected_patch) |expected| {
@@ -390,6 +453,8 @@ pub const EditDraftInput = struct {
     target_branch: []const u8,
     author: evt.CommitAuthor,
     timestamp: u64,
+    // what the edit replaces (`evt.Patch.contentRevision`), or null to overwrite
+    revision: ?evt.Patch.ContentRevision = null,
 };
 
 pub const Mergeability = struct {
@@ -867,6 +932,16 @@ pub const MergeInput = struct {
     revision: evt.Patch.MergeRevision,
     author: evt.CommitAuthor,
     timestamp: u64,
+    // what the merging client was shown, checked when the merge runs; null
+    // merges the patch as it is then
+    reviewed: ?Reviewed = null,
+
+    pub const Reviewed = struct {
+        // the patch revision's hex id
+        revision: []const u8,
+        // the target branch's tip
+        target_oid: []const u8,
+    };
 };
 
 pub fn publish(
@@ -1021,48 +1096,108 @@ pub fn editDraft(
     if (!evt.Patch.fieldsValid(input.title, input.labels)) return error.InvalidFields;
     if (!evt.Patch.branchValid(input.target_branch)) return error.InvalidTargetBranch;
     const patch_id = try evt.parseEventId(&input.id);
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
+    if (!try draftEditable(io, allocator, users_dir, admin_repo, input, &patch_id)) return false;
 
-    // validate the draft ownership and editing identity
-    {
-        var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &input.user_id)) orelse return false;
-        defer user_repo.deinit(io, allocator);
-        const admin_moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
-        const user_moment = (try evt.userMoment(&user_repo)) orelse return false;
-        const fork_record = (try evt.Fork.readById(evt.UserDB, evt.user_repo_opts.hash, user_moment, &arena, &patch_id)) orelse return false;
-        if (fork_record.event.stage != .draft) return false;
-        if (fork_record.removed or !std.mem.eql(u8, &fork_record.event.repo_id, &std.fmt.bytesToHex(input.repo_id, .lower))) return error.InvalidPatchDraft;
-        const user = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, admin_moment, &arena, &input.user_id)) orelse return error.InvalidPatchDraft;
-        if (user.removed or
-            !std.mem.eql(u8, user.event.name, input.author.name) or
-            !std.mem.eql(u8, user.event.email, input.author.email)) return error.InvalidPatchDraft;
-    }
-
-    // read the draft patch from its fork
-    const fork_path = try fork.forkPath(arena.allocator(), users_dir, &input.user_id, &patch_id);
+    const fork_path = try fork.forkPath(allocator, users_dir, &input.user_id, &patch_id);
+    defer allocator.free(fork_path);
     var fork_repo = rp.Repo(.xit, repo_opts).open(io, allocator, .{ .path = fork_path, .require_repo_root = true }) catch return error.PatchDataUnavailable;
     defer fork_repo.deinit(io, allocator);
-    const fork_moment = evt.currentMoment(repo_opts, &fork_repo) catch return error.PatchDataUnavailable;
-    const record = (try evt.Patch.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, &arena, &patch_id)) orelse return error.PatchDataUnavailable;
+    for (0..draft_edit_attempts) |_| {
+        writeDraftEdit(repo_opts, io, allocator, users_dir, &fork_repo, input, &patch_id) catch |err| switch (err) {
+            error.DraftMoved => continue,
+            else => |e| return e,
+        };
+        return true;
+    }
+    return error.Stale;
+}
+
+// whether `input` edits a draft its author still has, as that author: false
+// for no draft, error.InvalidPatchDraft for one removed, of another repo or
+// written as someone else
+fn draftEditable(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    admin_repo: *rp.Repo(.xit, evt.admin_repo_opts),
+    input: EditDraftInput,
+    patch_id: *const [evt.event_id_size]u8,
+) !bool {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &input.user_id)) orelse return false;
+    defer user_repo.deinit(io, allocator);
+    const admin_moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
+    const user_moment = (try evt.userMoment(&user_repo)) orelse return false;
+    const fork_record = (try evt.Fork.readById(evt.UserDB, evt.user_repo_opts.hash, user_moment, &arena, patch_id)) orelse return false;
+    if (fork_record.event.stage != .draft) return false;
+    if (fork_record.removed or !std.mem.eql(u8, &fork_record.event.repo_id, &std.fmt.bytesToHex(input.repo_id, .lower))) return error.InvalidPatchDraft;
+    const user = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, admin_moment, &arena, &input.user_id)) orelse return error.InvalidPatchDraft;
+    if (user.removed or
+        !std.mem.eql(u8, user.event.name, input.author.name) or
+        !std.mem.eql(u8, user.event.email, input.author.email)) return error.InvalidPatchDraft;
+    return true;
+}
+
+// reads the draft from its fork and writes the edit only while it is still as
+// read: error.DraftMoved when a push (or another edit) landed in between
+fn writeDraftEdit(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    users_dir: []const u8,
+    fork_repo: *rp.Repo(.xit, repo_opts),
+    input: EditDraftInput,
+    patch_id: *const [evt.event_id_size]u8,
+) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const fork_moment = evt.currentMoment(repo_opts, fork_repo) catch return error.PatchDataUnavailable;
+    const record = (try evt.Patch.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, &arena, patch_id)) orelse return error.PatchDataUnavailable;
     if (record.removed) return error.PatchDataUnavailable;
-
-    // apply the edits and invalidate a revision targeting another branch
-    var patch = record.event;
-    patch.title = input.title;
-    patch.labels = input.labels;
-    patch.description = input.description;
-    if (!std.mem.eql(u8, patch.target_branch, input.target_branch)) patch.revision = null;
-    patch.target_branch = input.target_branch;
-
-    // commit the updated draft metadata
-    try evt.consume(.{ .server = .{ .users_dir = users_dir } }, .fork, .xit, repo_opts, io, allocator, &fork_repo, evt.events_ref, &.{.{
+    if (input.revision) |expected| if (!std.mem.eql(u8, &expected, &evt.Patch.contentRevision(record.event))) return error.Stale;
+    const event = evt.EventWithId{
         .id = input.id,
         .timestamp = input.timestamp,
         .author = input.author,
-        .event = .{ .patch = patch },
-    }});
-    return true;
+        .event = .{ .patch = editedDraft(record.event, input) },
+    };
+    const guard = DraftUnchanged(repo_opts.hash){ .id = patch_id, .read = record.event, .arena = &arena };
+    try evt.consumeGuarded(.{ .server = .{ .users_dir = users_dir } }, .fork, .xit, repo_opts, io, allocator, fork_repo, evt.events_ref, &.{event}, guard);
+}
+
+// how often an edit reads a draft again when a push lands between its read and its write
+const draft_edit_attempts = 3;
+
+// the draft `patch` with an edit's fields; a revision targeting another branch is dropped
+fn editedDraft(patch: evt.Patch, input: EditDraftInput) evt.Patch {
+    var edited = patch;
+    edited.title = input.title;
+    edited.labels = input.labels;
+    edited.description = input.description;
+    if (!std.mem.eql(u8, patch.target_branch, input.target_branch)) edited.revision = null;
+    edited.target_branch = input.target_branch;
+    return edited;
+}
+
+// fails with error.DraftMoved unless the draft is still as `read`: the same
+// fields and the same pushed revision
+fn DraftUnchanged(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        id: *const [evt.event_id_size]u8,
+        read: evt.Patch,
+        arena: *std.heap.ArenaAllocator,
+
+        pub fn check(self: @This(), moment_maybe: ?evt.EventDB(hash_kind).HashMap(.read_only)) !void {
+            const moment = moment_maybe orelse return error.DraftMoved;
+            const now = (try evt.Patch.readById(evt.EventDB(hash_kind), hash_kind, moment, self.arena, self.id)) orelse return error.DraftMoved;
+            if (now.removed) return error.DraftMoved;
+            if (!std.mem.eql(u8, &evt.Patch.contentRevision(now.event), &evt.Patch.contentRevision(self.read))) return error.DraftMoved;
+            const now_revision: []const u8 = if (now.event.revision) |*revision| &revision.id else "";
+            const read_revision: []const u8 = if (self.read.revision) |*revision| &revision.id else "";
+            if (!std.mem.eql(u8, now_revision, read_revision)) return error.DraftMoved;
+        }
+    };
 }
 
 // merge the selected patch revision into its target branch
@@ -1105,6 +1240,8 @@ fn mergeInner(
         .merged => return error.PatchAlreadyMerged,
     }
     const selected = patch_record.event.revision orelse return error.PatchNotPushed;
+    if (input.reviewed) |reviewed| if (!std.mem.eql(u8, reviewed.revision, &selected.id)) return error.StaleRevision;
+    if (try patchConflicted(repo_opts, target_moment, patch_record, &patch_id)) return error.PatchConflicted;
     const target_ref = rf.Ref{ .kind = .head, .name = patch_record.event.target_branch };
 
     // open the fork
@@ -1142,6 +1279,7 @@ fn mergeInner(
             author: evt.CommitAuthor,
             timestamp: u64,
             users_dir: []const u8,
+            reviewed_target: ?[]const u8,
 
             pub fn run(ctx: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 var moment = try DB.HashMap(.read_write).init(cursor.*);
@@ -1158,6 +1296,10 @@ fn mergeInner(
                     const newest = (try evt.PatchRev.readNewest(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, &check_arena)) orelse return error.PatchDataUnavailable;
                     if (!std.mem.eql(u8, &newest.id, &revision_id) or !selected_revision.matches(newest.record)) return error.PatchOutOfDate;
                 } else if (!try branchCurrent(repo_opts, state.readOnly(), ctx.io, &check_arena, ctx.expected_patch)) return error.PatchOutOfDate;
+
+                // the target must be where the merging client saw it
+                const before_oid = (try rf.readRecur(.xit, repo_opts, state.readOnly(), ctx.io, .{ .ref = ctx.target_ref })) orelse return error.InvalidTargetBranch;
+                if (ctx.reviewed_target) |reviewed| if (!std.mem.eql(u8, reviewed, &before_oid)) return error.TargetMoved;
 
                 // require a clean cached result for the selected merge style.
                 {
@@ -1180,7 +1322,6 @@ fn mergeInner(
                 }
 
                 // merge the selected commit
-                const before_oid = (try rf.readRecur(.xit, repo_opts, state.readOnly(), ctx.io, .{ .ref = ctx.target_ref })) orelse return error.InvalidTargetBranch;
                 {
                     var merge_result = try mrg.Merge(.xit, repo_opts).init(state, ctx.io, ctx.allocator, .{
                         .kind = .full,
@@ -1235,6 +1376,7 @@ fn mergeInner(
             .author = input.author,
             .timestamp = input.timestamp,
             .users_dir = server.users_dir,
+            .reviewed_target = if (input.reviewed) |reviewed| reviewed.target_oid else null,
         });
     }
     evt.bumpRepoActivityAt(io, allocator, server, target_repo.core.work_path);
@@ -1264,6 +1406,18 @@ pub fn mergeAndRemoveFork(
         break :blk (try fork.readForkerId(&config.sections, &patch_id)) orelse return;
     };
     try fork.remove(io, allocator, server.users_dir, &forker_id, &input.id, input.author);
+}
+
+// whether concurrent edits to the patch's fields await resolution
+fn patchConflicted(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    haxy_moment: evt.EventDB(repo_opts.hash).HashMap(.read_only),
+    record: evt.Patch.Record,
+    id: *const [evt.event_id_size]u8,
+) !bool {
+    const cursor = try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Patch.conflicts_key)) orelse return false;
+    const conflicts = try evt.EventDB(repo_opts.hash).SortedMap(.read_only).init(cursor);
+    return try conflicts.getCursor(&evt.orderKeyDesc(record.created_order, id)) != null;
 }
 
 fn commitAuthor(line: []const u8) !evt.CommitAuthor {
@@ -1339,10 +1493,7 @@ fn importMergedRevision(
     if (patch_record.removed or patch_record.event.status.kind() == .merged) return false;
     if (expected_patch) |expected| {
         if (!evt.fieldEqual(evt.Patch, expected, patch_record.event)) return false;
-        if (try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Patch.conflicts_key))) |cursor| {
-            const conflicts = try DB.SortedMap(.read_only).init(cursor);
-            if (try conflicts.getCursor(&evt.orderKeyDesc(patch_record.created_order, patch_id)) != null) return false;
-        }
+        if (try patchConflicted(repo_opts, haxy_moment, patch_record, patch_id)) return false;
     }
     const revision_id = try evt.parseEventId(&selected.id);
 

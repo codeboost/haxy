@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const pch = @import("../../patch.zig");
 const evt = @import("../../event.zig");
 const notify = @import("../../notify.zig");
+const thread_write = @import("../../thread_write.zig");
 const ui = @import("../../ui.zig");
 const widget = @import("../widget.zig");
 const xit = @import("xit");
@@ -79,7 +80,8 @@ pub fn readConflict(
             our_field_oids = try DB.SortedMap(.read_only).init(cursor);
     }
 
-    var conflict = Data.Conflict{};
+    var conflict = Data.Conflict{ .conflict_revision = try evt.conflictRevision(Event, repo_opts.hash, arena, ours.event, conflict_entry) };
+    if (comptime @hasField(Data.Conflict, "events")) conflict.events = .{ .ours = ours.event, .theirs = theirs.event };
     var field_iter = std.mem.splitScalar(u8, conflicted_fields, ' ');
     while (field_iter.next()) |field| {
         const our_author = try oidAuthor(repo_kind, repo_opts, arena, repo, io, admin_moment, try readFieldOid(repo_opts.hash, our_field_oids, field));
@@ -277,19 +279,22 @@ pub fn loadWindow(
     // the words the listing is narrowed to, "" for none
     words: []const u8,
     viewer: ?ui.Viewer,
+    // how many threads the window holds (the tab's `Data.page_size`); 0
+    // reads only the count and the first thread's id
+    page_size: usize,
 ) !Data.Window {
     if (sets.len == 0) return .empty;
-    if (sets.len > 1 or words.len != 0) return loadSearchWindow(Data, kind, hash_kind, arena, admin_moment, haxy_moment, records, sets, root_key, conflict_set, selected_id, comments_start, words, viewer);
+    if (sets.len > 1 or words.len != 0) return loadSearchWindow(Data, kind, hash_kind, arena, admin_moment, haxy_moment, records, sets, root_key, conflict_set, selected_id, comments_start, words, viewer, page_size);
     const set = sets[0];
     const aa = arena.allocator();
 
     var prev_id: ?[]const u8 = null;
     var iter = if (root_key) |key| blk: {
         const rank = try set.rank(key);
-        if (rank > 0 and rank <= Data.page_size) {
+        if (rank > 0 and rank <= page_size) {
             prev_id = "";
-        } else if (rank > Data.page_size) {
-            const pair = try set.getIndexKeyValuePair(@intCast(rank - Data.page_size)) orelse return error.NotFound;
+        } else if (rank > page_size) {
+            const pair = try set.getIndexKeyValuePair(@intCast(rank - page_size)) orelse return error.NotFound;
             var previous: OrderKey = undefined;
             _ = try pair.key_cursor.readBytes(&previous);
             prev_id = try aa.dupe(u8, &keyIdHex(&previous));
@@ -304,7 +309,7 @@ pub fn loadWindow(
         const pair = try cursor.readKeyValuePair();
         var order_key: OrderKey = undefined;
         _ = try pair.key_cursor.readBytes(&order_key);
-        if (items.items.len == Data.page_size) {
+        if (items.items.len == page_size) {
             next_id = try aa.dupe(u8, &keyIdHex(&order_key));
             break;
         }
@@ -341,6 +346,7 @@ fn loadSearchWindow(
     comments_start: usize,
     words: []const u8,
     viewer: ?ui.Viewer,
+    page_size: usize,
 ) !Data.Window {
     const DB = evt.EventDB(hash_kind);
     const aa = arena.allocator();
@@ -372,7 +378,7 @@ fn loadSearchWindow(
             const order_key = try resultKey((try listed.next()) orelse break);
             if (matches) |*found| if (!found.remove(order_key[@sizeOf(u64)..].*)) continue;
             try keys.append(aa, order_key);
-            if (windowKnown(Data, keys.items, root)) break;
+            if (windowKnown(keys.items, root, page_size)) break;
         }
     } else {
         // issues and patches list in the index's own order, so the listed sets
@@ -381,7 +387,7 @@ fn loadSearchWindow(
         for (sets) |set| try results.require(aa, set);
         while (try results.next()) |key| {
             try keys.append(aa, try resultKey(key));
-            if (windowKnown(Data, keys.items, root)) break;
+            if (windowKnown(keys.items, root, page_size)) break;
         }
     }
 
@@ -390,7 +396,7 @@ fn loadSearchWindow(
     while (first < keys.items.len and std.mem.order(u8, &keys.items[first], root) == .lt) first += 1;
 
     var items: std.ArrayList(Data.Entry) = .empty;
-    const last = @min(first + Data.page_size, keys.items.len);
+    const last = @min(first + page_size, keys.items.len);
     for (keys.items[first..last]) |*order_key| {
         const entry = (try loadEntry(Data, hash_kind, arena, admin_moment, haxy_moment, records, order_key, conflict_set, selected_id, comments_start, viewer)) orelse continue;
         try items.append(aa, entry);
@@ -399,7 +405,7 @@ fn loadSearchWindow(
     return .{
         .items = items.items,
         // the page a window back, which is the first one when it holds the root
-        .prev_id = if (first == 0) null else if (first <= Data.page_size) "" else try aa.dupe(u8, &keyIdHex(&keys.items[first - Data.page_size])),
+        .prev_id = if (first == 0) null else if (first <= page_size) "" else try aa.dupe(u8, &keyIdHex(&keys.items[first - page_size])),
         .next_id = if (last < keys.items.len) try aa.dupe(u8, &keyIdHex(&keys.items[last])) else null,
         .count = @min(keys.items.len, max_search_results),
         .more = keys.items.len > max_search_results,
@@ -408,9 +414,9 @@ fn loadSearchWindow(
 
 // whether a search pass can stop: the count is capped, and the window rooted at
 // `root` and the key after it have been collected
-fn windowKnown(comptime Data: type, keys: []const OrderKey, root: []const u8) bool {
+fn windowKnown(keys: []const OrderKey, root: []const u8, page_size: usize) bool {
     if (keys.len <= max_search_results) return false;
-    return std.mem.order(u8, &keys[keys.len - 1 - Data.page_size], root) != .lt;
+    return std.mem.order(u8, &keys[keys.len - 1 - page_size], root) != .lt;
 }
 
 // one list entry: the record `order_key` names, with its author, comments,
@@ -1604,12 +1610,11 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
         fn removeEvent(self: *This, allocator: std.mem.Allocator, event_kind: evt.EventKind, id: [evt.event_id_size]u8) !void {
             if (comptime wasm) return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
 
             if (comptime supports_drafts) {
                 const entry = self.entry orelse return;
                 if (event_kind == kind and entryDraft(entry)) {
-                    try Data.removeDraft(self.session, allocator, author, &id);
+                    try self.data.removeDraft(self.session, allocator, actor, &id);
                     const route = draftsRoute(self.data.identity) orelse return;
                     try self.session.navigate(route);
                     return;
@@ -1618,18 +1623,11 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
 
             const io = self.session.io orelse return;
             const source = self.data.repo_source orelse return;
-            if (!try source.canModify(io, allocator, actor, event_kind, &id)) return;
             const thread_id = evt.parseEventId((self.entry orelse return).id) catch return;
-
-            switch (source.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try evt.removeInThread(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, event_kind, &id, author),
-                    }
-                },
-            }
+            thread_write.remove(self.session.eventHost(), io, allocator, source, actor, kind, &thread_id, event_kind, &id) catch |err| switch (err) {
+                error.Forbidden, error.NotFound => return,
+                else => |e| return e,
+            };
 
             // back to the thread, or to its list when the thread itself was removed
             const entry = self.entry orelse return;
@@ -1645,36 +1643,19 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             const source = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
             const thread_id = try evt.parseEventId(entry.id);
-            if (!try source.canModify(io, allocator, actor, kind, &thread_id)) return;
-
-            var arena = std.heap.ArenaAllocator.init(allocator);
-            defer arena.deinit();
-            const failure: ?ui.Session.FormFeedback.AssignmentFailure = blk: {
-                const moment = if (self.session.data.host_kind == .local) null else self.session.haxy_moment;
-                const email = switch (try ui.assigneeEmail(moment, &arena, text)) {
-                    .email => |email| email,
-                    .failure => |value| break :blk value,
-                };
-                const thread_id_hex = std.fmt.bytesToHex(thread_id, .lower);
-                switch (source.repo_kind) {
-                    inline else => |repo_kind| {
-                        var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                        defer any_repo.deinit(io, allocator);
-                        switch (any_repo) {
-                            inline else => |*repo| _ = evt.Assignment.create(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id_hex, email, actor.author) catch |err| switch (err) {
-                                error.AlreadyAssigned => break :blk .already_assigned,
-                                error.InvalidFields => break :blk .not_an_email,
-                                else => |e| return e,
-                            },
-                        }
-                    },
-                }
-                break :blk null;
+            const moment = if (self.session.data.host_kind == .local) null else self.session.haxy_moment;
+            const assigned: ?thread_write.Assigned = thread_write.assign(self.session.eventHost(), io, allocator, source, actor, moment, kind, &thread_id, text) catch |err| switch (err) {
+                // a stale page; the refresh below shows the thread as it is
+                error.Forbidden, error.NotFound => null,
+                else => |e| return e,
             };
-            if (failure) |value| {
-                self.session.data.form_feedback = .{ .assignment = .{ .failure = value, .text = try self.session.arena.allocator().dupe(u8, text) } };
-                return;
-            }
+            if (assigned) |value| switch (value) {
+                .assigned => {},
+                .refused => |failure| {
+                    self.session.data.form_feedback = .{ .assignment = .{ .failure = failure, .text = try self.session.arena.allocator().dupe(u8, text) } };
+                    return;
+                },
+            };
             try self.session.navigate(ui.RoutablePage.repoThreadCommentsRoute(kind, self.data.identity, entry.id, 0) orelse return error.RouteTooLong);
         }
 
@@ -1685,21 +1666,11 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             const source = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
             const thread_id = try evt.parseEventId(entry.id);
-            if (!try source.canModify(io, allocator, actor, kind, &thread_id)) return;
-
-            switch (source.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| evt.removeInThread(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, .assign, &evt.Assignment.idOf(&thread_id, email), actor.author) catch |err| switch (err) {
-                            // a stale button; the refresh below shows the row as it is
-                            error.EventNotFound => {},
-                            else => |e| return e,
-                        },
-                    }
-                },
-            }
+            thread_write.unassign(self.session.eventHost(), io, allocator, source, actor, kind, &thread_id, &evt.Assignment.idOf(&thread_id, email)) catch |err| switch (err) {
+                // a stale button; the refresh below shows the row as it is
+                error.Forbidden, error.NotFound, error.NotAssigned => {},
+                else => |e| return e,
+            };
             try self.session.navigate(ui.RoutablePage.repoThreadCommentsRoute(kind, self.data.identity, entry.id, 0) orelse return error.RouteTooLong);
         }
 
@@ -1720,7 +1691,8 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             };
             const thread_id = try evt.parseEventId(entry.id);
             switch (mode) {
-                .subscribe => try notify.subscribe(io, allocator, users_dir, &user_id, location, &thread_id, actor.author),
+                // a full subscribed tier leaves the button as it was
+                .subscribe => _ = try notify.subscribe(io, allocator, users_dir, &user_id, location, &thread_id, actor.author),
                 .mute => try notify.mute(io, allocator, users_dir, &user_id, location, &thread_id, actor.author),
             }
             try self.session.navigate(ui.RoutablePage.repoThreadCommentsRoute(kind, self.data.identity, entry.id, 0) orelse return error.RouteTooLong);
@@ -1732,20 +1704,12 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const source = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
             const status = (statusChange(entryStatus(entry)) orelse return).status;
             const id = try evt.parseEventId(entry.id);
-            if (!try source.canModify(io, allocator, actor, kind, &id)) return;
-
-            switch (source.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id, .{ .status = status }, author),
-                    }
-                },
-            }
+            thread_write.setStatus(Event, self.session.eventHost(), io, allocator, source, actor, &id, status) catch |err| switch (err) {
+                error.Forbidden => return,
+                else => |e| return e,
+            };
 
             const route = listRoute(self.data.identity, status, entry.id) orelse return;
             try self.session.navigate(route);
@@ -1961,7 +1925,9 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                         .merge => mergeRoute(data.identity, data.selected_id),
                     } orelse return error.RouteTooLong;
                     const page_url = try route.toUrl(session.page_arena);
-                    const action = try aa.print("form:{s}", .{page_url});
+                    // a merge sends what the page shows, which it is checked against
+                    const query = if (comptime supports_merge) if (confirmation_kind == .merge) try Data.mergeQuery(aa, data.selectedThread()) else "" else "";
+                    const action = try aa.print("form:{s}{s}", .{ page_url, query });
                     const event_name = if (attachment_id.len != 0) "attachment" else if (data.comment_id.len == 0) thread_name else "comment";
                     var label_buf: ["remove ".len + @max(thread_name.len, "attachment".len)]u8 = undefined;
                     var buttons: [2]widget.ConfirmationButton = undefined;
@@ -1982,12 +1948,13 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                             buttons[1] = .{
                                 .label = "squash and merge patch",
                                 .bottom_label = mergeBottomLabel(availability.squash),
-                                .action = if (availability.squash == .clean) try aa.print("{s}{s}/squash", .{ ui.submit_action_prefix, page_url }) else "",
+                                .action = if (availability.squash == .clean) try aa.print("{s}{s}/squash{s}", .{ ui.submit_action_prefix, page_url, query }) else "",
                             };
                             button_count += 1;
                         } else unreachable;
                     }
-                    var center = try widget.initConfirmationForm(allocator, action, buttons[0..button_count]);
+                    const prompt = if (comptime supports_merge) if (confirmation_kind == .merge) Data.mergePrompt(session) else widget.confirmation_prompt else widget.confirmation_prompt;
+                    var center = try widget.initConfirmationFormPrompt(allocator, prompt, action, buttons[0..button_count]);
                     errdefer center.deinit(allocator);
                     try stack.children.put(allocator, center.getFocus().id, .{ .center = center });
                 } else if (data.view == .new_comment or data.view == .edit_comment) {
@@ -2954,7 +2921,7 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const src = self.data.repo_source orelse return;
             const entry = self.data.selectedThread() orelse return;
-            const author = ((try self.session.authorize(self.data.identity, .write, kind)) orelse return).author;
+            const actor = (try self.session.authorize(self.data.identity, .write, kind)) orelse return;
             const form = self.formBox() orelse return;
 
             // gather the inputs by name; the d<n> hunk inputs appear in chunk order
@@ -2983,29 +2950,17 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             };
 
             const id_bytes = try evt.parseEventId(entry.id);
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| {
-                            var resolution: Event.Resolve = .{
-                                .title = title,
-                                .labels = labels,
-                                .hunks = hunks.items,
-                            };
-                            if (comptime @hasField(Event.Resolve, "theirs")) resolution.theirs = self.data.theirs_picks;
-                            const change = Event.Update{ .resolve = resolution };
-                            Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, change, author) catch |err| switch (err) {
-                                // leave the form up for correction
-                                error.InvalidFields => return,
-                                else => |e| return e,
-                            };
-                        },
-                    }
-                },
-            }
+            var resolution: Event.Resolve = .{
+                .title = title,
+                .labels = labels,
+                .hunks = hunks.items,
+            };
+            if (comptime @hasField(Event.Resolve, "theirs")) resolution.theirs = self.data.theirs_picks;
+            thread_write.resolve(Event, self.session.eventHost(), io, allocator, src, actor, &id_bytes, resolution) catch |err| switch (err) {
+                // leave the form up for correction
+                error.InvalidFields => return,
+                else => |e| return e,
+            };
 
             const route = listRoute(self.data.identity, entryStatus(entry.*), entry.id) orelse return;
             try self.session.navigate(route);
@@ -3018,44 +2973,32 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const src = self.data.repo_source orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
             const form = self.formBox() orelse return;
             const body_input = try formField(form, "body");
             const body = try body_input.text(allocator);
             defer allocator.free(body);
             if (!evt.Comment.fieldsValid(body)) return;
 
-            var thread_id: [evt.event_id_size * 2]u8 = undefined;
-            @memcpy(&thread_id, self.data.selected_id);
-            const parent_id = if (self.data.comment_id.len == 0) thread_id else blk: {
-                var parent: [evt.event_id_size * 2]u8 = undefined;
-                @memcpy(&parent, self.data.comment_id);
-                break :blk parent;
-            };
-            var event_id_hex: [evt.event_id_size * 2]u8 = undefined;
-            const editing = self.data.view == .edit_comment;
-            if (editing) {
-                const comment_id = evt.parseEventId(self.data.comment_id) catch return;
-                if (!try src.canModify(io, allocator, actor, .comment, &comment_id)) return;
+            // the shared comment writes check the thread, the parent and who
+            // may change a comment
+            const thread_id = evt.parseEventId(self.data.selected_id) catch return;
+            var event_id: [evt.event_id_size]u8 = undefined;
+            if (self.data.view == .edit_comment) {
+                event_id = evt.parseEventId(self.data.comment_id) catch return;
+                thread_write.editComment(self.session.eventHost(), io, allocator, src, actor, kind, &thread_id, &event_id, body, null) catch |err| switch (err) {
+                    error.Forbidden, error.NotFound, error.Removed => return,
+                    else => |e| return e,
+                };
+            } else {
+                const parent_id: ?[evt.event_id_size]u8 = if (self.data.comment_id.len == 0) null else evt.parseEventId(self.data.comment_id) catch return;
+                io.random(&event_id);
+                try thread_write.comment(self.session.eventHost(), io, allocator, src, kind, &thread_id, if (parent_id) |*p| p else null, &event_id, body, actor.author);
             }
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| if (editing) {
-                            const comment_id = evt.parseEventId(self.data.comment_id) catch return;
-                            try evt.Comment.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, &comment_id, body, author);
-                            event_id_hex = std.fmt.bytesToHex(comment_id, .lower);
-                        } else {
-                            event_id_hex = try evt.Comment.create(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, &parent_id, body, author);
-                        },
-                    }
-                },
-            }
+            const event_id_hex = std.fmt.bytesToHex(event_id, .lower);
+            const thread_id_hex = std.fmt.bytesToHex(thread_id, .lower);
 
             body_input.clear(allocator);
-            const route = ui.RoutablePage.repoThreadCommentRoute(kind, self.data.identity, &thread_id, &event_id_hex, 0) orelse return;
+            const route = ui.RoutablePage.repoThreadCommentRoute(kind, self.data.identity, &thread_id_hex, &event_id_hex, 0) orelse return;
             try self.session.navigate(route);
         }
 
@@ -3120,27 +3063,7 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             var id_bytes: [evt.event_id_size]u8 = undefined;
             io.random(&id_bytes);
             const event_id_hex = std.fmt.bytesToHex(id_bytes, .lower);
-
-            const event = evt.EventWithId{
-                .id = event_id_hex,
-                .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-                .author = actor.author,
-                .event = @unionInit(evt.Event, @tagName(kind), Event{
-                    .title = title,
-                    .description = description,
-                    .labels = labels,
-                }),
-            };
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try evt.consume(self.session.eventHost(), .repo, repo_kind, repo.self_repo_opts, io, allocator, repo, evt.events_ref, &.{event}),
-                    }
-                },
-            }
+            try thread_write.create(self.session.eventHost(), io, allocator, src, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description }, actor.author);
 
             // wipe the form so a return visit starts fresh
             title_input.clear(allocator);
@@ -3159,7 +3082,6 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             const io = self.session.io orelse return;
             const entry = self.data.selectedThread() orelse return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
 
             const form = self.threadForm() orelse return;
             const title_input = try formField(form, "title");
@@ -3183,7 +3105,7 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
 
             if (comptime supports_drafts) {
                 if (entryDraft(entry.*)) {
-                    self.data.editDraft(self.session, allocator, author, entry.id, title, labels, description, target_branch) catch |err| {
+                    self.data.editDraft(self.session, allocator, actor, entry.id, .{ .title = title, .labels = labels, .description = description, .target_branch = target_branch }) catch |err| {
                         const failure = FeedbackFailure.fromError(err) orelse return err;
                         try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
                         return;
@@ -3195,35 +3117,14 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             }
 
             const id_bytes = try evt.parseEventId(entry.id);
-            if (!try src.canModify(io, allocator, actor, kind, &id_bytes)) return;
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| if (supports_drafts) {
-                            Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, .{ .fields = .{
-                                .title = title,
-                                .labels = labels,
-                                .description = description,
-                                .target_branch = target_branch,
-                            } }, author) catch |err| {
-                                const failure = FeedbackFailure.fromError(err) orelse return err;
-                                try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
-                                return;
-                            };
-                        } else if (has_status)
-                            try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, .{ .fields = .{
-                                .title = title,
-                                .labels = labels,
-                                .description = description,
-                            } }, author)
-                        else
-                            try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id_bytes, title, labels, description, author),
-                    }
-                },
-            }
+            thread_write.edit(self.session.eventHost(), io, allocator, src, actor, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description, .target_branch = target_branch }, null) catch |err| switch (err) {
+                error.Forbidden => return,
+                else => |e| if (comptime supports_drafts) {
+                    const failure = FeedbackFailure.fromError(e) orelse return e;
+                    try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
+                    return;
+                } else return e,
+            };
 
             const route = listRoute(self.data.identity, entryStatus(entry.*), entry.id) orelse return;
             try self.session.navigate(route);
@@ -3258,8 +3159,8 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                     if (comptime wasm) return;
                     const entry = self.data.selectedThread() orelse return;
                     if (!entryDraft(entry.*)) return;
-                    const author = ((try self.session.authorize(self.data.identity, .read, kind)) orelse return).author;
-                    try self.data.publishDraft(self.session, allocator, author, entry.id);
+                    const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
+                    try self.data.publishDraft(self.session, allocator, actor, entry.id);
                     const route = listRoute(self.data.identity, @fromBackingInt(@intCast(0)), entry.id) orelse return;
                     try self.session.navigate(route);
                 } else unreachable,
@@ -3268,15 +3169,14 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                     const entry = self.data.selectedThread() orelse return;
                     const revision: evt.Patch.MergeRevision = if (button_index > 1) .squash else .source;
                     if (!Data.canMerge(entry.*, self.session) or entry.mergeability.get(revision) != .clean) return;
-                    const author = ((try self.session.authorize(self.data.identity, .write, kind)) orelse return).author;
-                    self.data.mergePatch(self.session, allocator, author, entry.id, revision) catch |err| switch (err) {
-                        error.MergeConflict, error.MergeCheckUnavailable, error.PatchOutOfDate, error.PatchDataUnavailable => {
-                            const route = listRoute(self.data.identity, entryStatus(entry.*), entry.id) orelse return;
-                            try self.session.navigate(route);
-                            return;
-                        },
-                        else => return err,
-                    };
+                    const author = ((try self.session.authorize(self.data.identity, Data.merge_role, kind)) orelse return).author;
+                    // a refusal shows on the merge page, read again
+                    if (try self.data.mergePatch(self.session, allocator, author, entry, revision)) |refusal| {
+                        const route = mergeRoute(self.data.identity, entry.id) orelse return;
+                        try self.session.navigate(route);
+                        self.session.data.form_feedback = .{ .merge = .{ .failure = refusal } };
+                        return;
+                    }
                     const merged = std.meta.stringToEnum(Status, "merged") orelse return;
                     const route = listRoute(self.data.identity, merged, entry.id) orelse return;
                     try self.session.navigate(route);
@@ -3297,12 +3197,11 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
         fn removeEvent(self: *This, allocator: std.mem.Allocator, event_kind: evt.EventKind, id: [evt.event_id_size]u8) !void {
             if (comptime wasm) return;
             const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
 
             if (comptime supports_drafts) {
                 const selected = self.data.selectedThread() orelse return;
                 if (event_kind == kind and entryDraft(selected.*)) {
-                    try Data.removeDraft(self.session, allocator, author, &id);
+                    try self.data.removeDraft(self.session, allocator, actor, &id);
                     const route = draftsRoute(self.data.identity) orelse return;
                     try self.session.navigate(route);
                     return;
@@ -3311,18 +3210,11 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
 
             const io = self.session.io orelse return;
             const src = self.data.repo_source orelse return;
-            if (!try src.canModify(io, allocator, actor, event_kind, &id)) return;
             const thread_id = evt.parseEventId(self.data.selected_id) catch return;
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try evt.removeInThread(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, event_kind, &id, author),
-                    }
-                },
-            }
+            thread_write.remove(self.session.eventHost(), io, allocator, src, actor, kind, &thread_id, event_kind, &id) catch |err| switch (err) {
+                error.Forbidden, error.NotFound => return,
+                else => |e| return e,
+            };
 
             // back to the thread, or to its list when the thread itself was removed
             const selected = self.data.selectedThread() orelse return;

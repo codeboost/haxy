@@ -43,10 +43,13 @@ pub fn perform(
     users_dir: []const u8,
     actor: ui.Actor,
     identity: []const u8,
+    // the repo the caller authorized, by id; null resolves `identity` now
+    repo_id_maybe: ?*const [evt.event_id_size]u8,
     action: Action,
     branch: []const u8,
 ) !?ui.Session.FormFeedback.BranchesFailure {
     const owner_id = actor.repo_user_id orelse return error.NotFound;
+    const actor_id = actor.user_id orelse return error.NotFound;
     const parsed = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -54,7 +57,7 @@ pub fn perform(
         var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &owner_id)) orelse return error.NotFound;
         defer user_repo.deinit(io, allocator);
         const moment = (try evt.userMoment(&user_repo)) orelse return error.NotFound;
-        const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, parsed.name)) orelse return error.NotFound;
+        const found = (try ui.Repo.Members.readRepo(moment, &arena, parsed.name, repo_id_maybe)) orelse return error.NotFound;
         break :blk found.event_id;
     };
 
@@ -67,16 +70,28 @@ pub fn perform(
         const source = ui.RepoSource{ .path = path, .repo_kind = .xit };
         if (!try source.hasBranch(io, allocator, branch)) return .not_found;
         // the default branch is HEAD, which the repo page, the commits tab and clones follow
+        // it moves no event, so it runs while the actor still owns the repo,
+        // under the lock role changes take (evt.whileOwner)
         if (action == .default) {
-            var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = path });
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try repo.resetAdd(io, .{ .ref = .{ .kind = .head, .name = branch } }),
-            }
+            const MoveHead = struct {
+                io: std.Io,
+                allocator: std.mem.Allocator,
+                path: []const u8,
+                branch: []const u8,
+
+                pub fn run(self: @This()) !void {
+                    var any_repo = try rp.AnyRepo(.xit, .{}).open(self.io, self.allocator, .{ .path = self.path });
+                    defer any_repo.deinit(self.io, self.allocator);
+                    switch (any_repo) {
+                        inline else => |*repo| try repo.resetAdd(self.io, .{ .ref = .{ .kind = .head, .name = self.branch } }),
+                    }
+                }
+            };
+            try evt.whileOwner(io, allocator, users_dir, &owner_id, &repo_id, &actor_id, MoveHead{ .io = io, .allocator = allocator, .path = path, .branch = branch }, parsed.name);
             return null;
         }
     }
-    evt.protectBranch(io, allocator, users_dir, &owner_id, &repo_id, branch, action == .protect, actor.author) catch |err| {
+    evt.protectBranch(io, allocator, users_dir, &owner_id, &repo_id, &actor_id, branch, action == .protect, actor.author, parsed.name) catch |err| {
         if (ui.Session.FormFeedback.BranchesFailure.fromError(err)) |failure| return failure;
         return err;
     };
@@ -256,7 +271,12 @@ pub const View = struct {
         const io = self.session.io orelse return;
         const users_dir = self.session.users_dir orelse return;
         const actor = (try self.session.authorize(self.data.identity, .owner, null)) orelse return;
-        if (try perform(io, allocator, users_dir, actor, self.data.identity, action, branch)) |failure| {
+        const result = perform(io, allocator, users_dir, actor, self.data.identity, null, action, branch) catch |err| switch (err) {
+            // demoted or revoked meanwhile, like a failed authorize
+            error.NotOwner => return,
+            else => return err,
+        };
+        if (result) |failure| {
             self.session.data.form_feedback = .{ .repo_branches = .{ .failure = failure, .name = try self.session.arena.allocator().dupe(u8, branch), .default = action == .default } };
             return;
         }

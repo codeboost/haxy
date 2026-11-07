@@ -24,15 +24,40 @@ pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, user_id: *con
     const moment = session.haxy_moment orelse return .{};
     const user = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, moment, arena, user_id)) orelse return .{};
     var result: Self = .{};
-    var keys: std.ArrayList([]const u8) = .empty;
-    var lines = std.mem.splitScalar(u8, user.event.ssh_keys, '\n');
+    const parsed = try parseKeys(arena.allocator(), user.event.ssh_keys);
+    const keys = try arena.allocator().alloc([]const u8, parsed.len);
+    for (parsed, keys) |key, *line| {
+        line.* = key.line;
+        if (tab.remove_key and std.mem.eql(u8, &key.fingerprint, tab.key.slice())) result.confirm = key.line;
+    }
+    result.keys = keys;
+    return result;
+}
+
+/// one of a user's ssh keys: its authorized_keys line and its fingerprint
+pub const SshKey = struct {
+    line: []const u8,
+    fingerprint: [evt.User.fingerprint_len]u8,
+};
+
+/// the keys a user's `ssh_keys` holds, in order, skipping lines that aren't
+/// readable keys
+pub fn parseKeys(allocator: std.mem.Allocator, ssh_keys: []const u8) ![]SshKey {
+    var keys: std.ArrayList(SshKey) = .empty;
+    var lines = std.mem.splitScalar(u8, ssh_keys, '\n');
     while (lines.next()) |line| {
         const fingerprint = evt.User.fingerprintOfKey(line) orelse continue;
-        try keys.append(arena.allocator(), line);
-        if (tab.remove_key and std.mem.eql(u8, &fingerprint, tab.key.slice())) result.confirm = line;
+        try keys.append(allocator, .{ .line = line, .fingerprint = fingerprint });
     }
-    result.keys = keys.items;
-    return result;
+    return keys.toOwnedSlice(allocator);
+}
+
+/// an authorized_keys line's type and comment ("" when it has none)
+pub fn keyParts(key: []const u8) struct { type: []const u8, comment: []const u8 } {
+    var tokens = std.mem.tokenizeAny(u8, key, " \t");
+    const key_type = tokens.next() orelse return .{ .type = "", .comment = "" };
+    _ = tokens.next();
+    return .{ .type = key_type, .comment = std.mem.trim(u8, tokens.rest(), " \t") };
 }
 
 // the confirmation of removing `key`, under the user tab `route`
@@ -44,11 +69,8 @@ fn removeRoute(route: ui.RoutablePage, key: []const u8) ui.RoutablePage {
 
 // a key's comment, or its type when it has none
 fn keyLabel(key: []const u8) []const u8 {
-    var tokens = std.mem.tokenizeAny(u8, key, " \t");
-    const key_type = tokens.next() orelse return "";
-    _ = tokens.next();
-    const comment = std.mem.trim(u8, tokens.rest(), " \t");
-    return if (comment.len > 0) comment else key_type;
+    const parts = keyParts(key);
+    return if (parts.comment.len > 0) parts.comment else parts.type;
 }
 
 const add_label = " add ssh key ";

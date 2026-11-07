@@ -350,25 +350,112 @@ fn moveInFlow(flow: *WordFlow, root_focus: *Focus, right: bool) bool {
 
 // a repo tab's placeholder while the repo has no commits, with the remote to
 // push to for a viewer who can
+// a command for working with a repo locally, as the clone and remote
+// widgets show it
+pub const GitCommand = struct {
+    protocol: Protocol,
+    url: []const u8,
+    // the whole command to copy, including the host's ssh prefix
+    command: []const u8,
+
+    pub const Protocol = enum { http, ssh };
+};
+
+pub const CloneCommands = struct {
+    list: []const GitCommand,
+    // the one a viewer starts on: ssh when the host offers it, else the first
+    preferred: usize,
+};
+
+// the clone commands for the repo `handle` names, built from the host's own
+// transport urls. only a public repo clones over http; local mode has no
+// remote urls, so none.
+pub fn cloneCommands(aa: std.mem.Allocator, data: ui.Session.Data, handle: ui.RepoHandle) !CloneCommands {
+    var list: std.ArrayList(GitCommand) = .empty;
+    var ssh_index: ?usize = null;
+    switch (handle.location) {
+        .repo => |identity| {
+            const http_url = if (handle.read_access == .public) data.git_http_url else null;
+            if (http_url) |base| {
+                const url = try aa.print("{s}/{s}", .{ base, identity });
+                try list.append(aa, .{ .protocol = .http, .url = url, .command = try aa.print("git clone {s}", .{url}) });
+            }
+            if (data.git_ssh_url) |ssh_url| {
+                ssh_index = list.items.len;
+                const url = try aa.print("{s}/{s}", .{ ssh_url, identity });
+                try list.append(aa, .{ .protocol = .ssh, .url = url, .command = try aa.print("{s}git clone {s}", .{ data.git_ssh_prefix, url }) });
+            }
+        },
+        .fork => |f| if (data.git_ssh_url) |ssh_url| {
+            const url = try aa.print("{s}/{s}+{s}", .{ ssh_url, f.identity, f.id });
+            try list.append(aa, .{ .protocol = .ssh, .url = url, .command = try aa.print("{s}git clone {s}", .{ data.git_ssh_prefix, url }) });
+        },
+    }
+    return .{
+        .list = list.items,
+        .preferred = ssh_index orelse 0,
+    };
+}
+
+// the command that points an existing local repo at the server repo `handle`
+// names, so its first push fills it: shown for a repo without commits to
+// whoever may push, over ssh. null anywhere else.
+pub fn remoteCommand(aa: std.mem.Allocator, data: ui.Session.Data, handle: ui.RepoHandle) !?GitCommand {
+    if (data.host_kind != .server or !handle.canWrite()) return null;
+    const ssh_url = data.git_ssh_url orelse return null;
+    // only repo pages flag a repo without commits
+    const identity = switch (handle.location) {
+        .repo => |identity| identity,
+        .fork => return null,
+    };
+    const url = try aa.print("{s}/{s}", .{ ssh_url, identity });
+    return .{ .protocol = .ssh, .url = url, .command = try aa.print("git remote add origin {s}", .{url}) };
+}
+
+/// a git command for working with a patch's fork over ssh: `text` as shown,
+/// `command` to copy, with the host's ssh prefix
+pub const ForkCommand = struct {
+    action: Action,
+    url: []const u8,
+    text: []const u8,
+    command: []const u8,
+
+    pub const Action = enum { push, clone, merge };
+};
+
+pub const ForkCommandOptions = struct {
+    // a fork whose target is gone is fetched, never pushed to
+    target_deleted: bool = false,
+};
+
+/// the commands for the fork `fork_identity` ("forker:repo name") holds
+/// patch `id` in, built from the host's ssh url; none without one
+pub fn forkCommands(aa: std.mem.Allocator, data: ui.Session.Data, fork_identity: []const u8, id: []const u8, options: ForkCommandOptions) ![]const ForkCommand {
+    const ssh_url = data.git_ssh_url orelse return &.{};
+    const url = try aa.print("{s}/{s}+{s}", .{ ssh_url, fork_identity, id });
+    const texts = [_][]const u8{
+        try aa.print("git push {s} HEAD:patch", .{url}),
+        try aa.print("git clone {s}", .{url}),
+        try aa.print("git fetch '{s}' refs/heads/patch && git merge FETCH_HEAD", .{url}),
+    };
+    var list: std.ArrayList(ForkCommand) = .empty;
+    for (std.enums.values(ForkCommand.Action), texts) |action, text| {
+        if (action == .push and options.target_deleted) continue;
+        try list.append(aa, .{ .action = action, .url = url, .text = text, .command = try aa.print("{s}{s}", .{ data.git_ssh_prefix, text }) });
+    }
+    return list.items;
+}
+
 pub fn initNoCommits(allocator: std.mem.Allocator, session: *ui.Session, handle: ui.RepoHandle) !Center {
     var box = try wgt.Box(Widget).init(allocator, .{ .border = null, .direction = .vert });
     errdefer box.deinit(allocator);
 
     // built first so the text can center over it
-    var remote_maybe: ?CopyableText = if (session.data.host_kind == .server and handle.canWrite()) if (session.data.git_ssh_url) |ssh_url| blk: {
-        // only repo pages flag a repo without commits
-        const identity = switch (handle.location) {
-            .repo => |identity| identity,
-            .fork => unreachable,
-        };
-        const aa = session.page_arena.allocator();
-        const url = try aa.print("{s}/{s}", .{ ssh_url, identity });
-        break :blk try CopyableText.init(allocator, session, &.{.{
-            .text = url,
-            .copyable_text = try aa.print("git remote add origin {s}", .{url}),
-            .label = " git remote add origin ",
-        }}, 0);
-    } else null else null;
+    var remote_maybe: ?CopyableText = if (try remoteCommand(session.page_arena.allocator(), session.data, handle)) |remote| try CopyableText.init(allocator, session, &.{.{
+        .text = remote.url,
+        .copyable_text = remote.command,
+        .label = " git remote add origin ",
+    }}, 0) else null;
     errdefer if (remote_maybe) |*remote| remote.deinit(allocator);
 
     {
@@ -414,13 +501,20 @@ pub const ConfirmationButton = struct {
     action: []const u8 = "submit",
 };
 
+pub const confirmation_prompt = "are you sure?";
+
 // "are you sure?" over the buttons, in a form posting to `action`
 pub fn initConfirmationForm(allocator: std.mem.Allocator, action: []const u8, buttons: []const ConfirmationButton) !Center {
+    return initConfirmationFormPrompt(allocator, confirmation_prompt, action, buttons);
+}
+
+// `prompt_text` over the buttons, in a form posting to `action`
+pub fn initConfirmationFormPrompt(allocator: std.mem.Allocator, prompt_text: []const u8, action: []const u8, buttons: []const ConfirmationButton) !Center {
     var box = try wgt.Box(Widget).init(allocator, .{ .border = null, .round_corners = true, .direction = .vert });
     errdefer box.deinit(allocator);
     box.getFocus().kind = .{ .custom = action };
 
-    var prompt = try wgt.Text.init(allocator, "are you sure?");
+    var prompt = try wgt.Text.init(allocator, prompt_text);
     errdefer prompt.deinit(allocator);
     try box.children.put(allocator, prompt.getFocus().id, .{ .widget = .{ .text = prompt }, .rect = null, .min_size = null });
 
@@ -2172,46 +2266,17 @@ pub const CopyableText = struct {
 
     pub fn initClone(allocator: std.mem.Allocator, session: *ui.Session, handle: ui.RepoHandle) !?CopyableText {
         const aa = session.page_arena.allocator();
-        var choices: [2]Choice = undefined;
-        var count: usize = 0;
-        var ssh_index: ?usize = null;
-        switch (handle.location) {
-            .repo => |identity| {
-                const http_url = if (handle.read_access == .public) session.data.git_http_url else null;
-                if (http_url) |base| {
-                    const url = try aa.print("{s}/{s}", .{ base, identity });
-                    choices[count] = .{
-                        .selector = "http",
-                        .text = url,
-                        .copyable_text = try aa.print("git clone {s}", .{url}),
-                        .label = " clone ",
-                    };
-                    count += 1;
-                }
-                if (session.data.git_ssh_url) |ssh_url| {
-                    ssh_index = count;
-                    const url = try aa.print("{s}/{s}", .{ ssh_url, identity });
-                    choices[count] = .{
-                        .selector = "ssh",
-                        .text = url,
-                        .copyable_text = try aa.print("{s}git clone {s}", .{ session.data.git_ssh_prefix, url }),
-                        .label = " clone ",
-                    };
-                    count += 1;
-                }
-            },
-            .fork => |f| if (session.data.git_ssh_url) |ssh_url| {
-                const url = try aa.print("{s}/{s}+{s}", .{ ssh_url, f.identity, f.id });
-                choices[count] = .{
-                    .text = url,
-                    .copyable_text = try aa.print("{s}git clone {s}", .{ session.data.git_ssh_prefix, url }),
-                    .label = " clone ",
-                };
-                count += 1;
-            },
-        }
-        if (count == 0) return null;
-        return @as(?CopyableText, try init(allocator, session, choices[0..count], ssh_index orelse 0));
+        const commands = try cloneCommands(aa, session.data, handle);
+        if (commands.list.len == 0) return null;
+        const choices = try aa.alloc(Choice, commands.list.len);
+        for (commands.list, choices) |command, *choice| choice.* = .{
+            // a fork's single url needs no selector
+            .selector = if (handle.location == .repo) @tagName(command.protocol) else "",
+            .text = command.url,
+            .copyable_text = command.command,
+            .label = " clone ",
+        };
+        return @as(?CopyableText, try init(allocator, session, choices, commands.preferred));
     }
 
     pub fn minWidth(self: *const CopyableText) usize {

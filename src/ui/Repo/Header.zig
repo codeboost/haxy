@@ -225,7 +225,7 @@ pub const View = struct {
         }
 
         // discuss tab, unless it is off
-        if (page.repo.event.discuss_role != null) {
+        if (ui.Repo.hasSection(.discussions, page.repo.event, page.handle, session.data.host_kind, .xit)) {
             var text_box = try wgt.TextBox.init(allocator, discuss_tab_label, .{ .border = .single, .round_corners = true, .wrap_kind = .none });
             errdefer text_box.deinit(allocator);
             text_box.getFocus().mode = .all;
@@ -240,7 +240,7 @@ pub const View = struct {
         }
 
         // issues tab, unless it is off
-        if (page.repo.event.issue_role != null) {
+        if (ui.Repo.hasSection(.issues, page.repo.event, page.handle, session.data.host_kind, .xit)) {
             var text_box = try wgt.TextBox.init(allocator, issues_tab_label, .{ .border = .single, .round_corners = true, .wrap_kind = .none });
             errdefer text_box.deinit(allocator);
             text_box.getFocus().mode = .all;
@@ -255,7 +255,7 @@ pub const View = struct {
         }
 
         // patches tab, unless it is off
-        if (page.repo.event.patch_role != null) {
+        if (ui.Repo.hasSection(.patches, page.repo.event, page.handle, session.data.host_kind, .xit)) {
             var text_box = try wgt.TextBox.init(allocator, patches_tab_label, .{ .border = .single, .round_corners = true, .wrap_kind = .none });
             errdefer text_box.deinit(allocator);
             text_box.getFocus().mode = .all;
@@ -270,7 +270,7 @@ pub const View = struct {
         }
 
         // events, which a server only shows to whoever it shows undo to
-        if (page.handle.canWrite()) {
+        if (ui.Repo.hasSection(.events, page.repo.event, page.handle, session.data.host_kind, .xit)) {
             var text_box = try wgt.TextBox.init(allocator, events_tab_label, .{ .border = .single, .round_corners = true, .wrap_kind = .none });
             errdefer text_box.deinit(allocator);
             text_box.getFocus().mode = .all;

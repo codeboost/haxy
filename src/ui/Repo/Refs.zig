@@ -79,20 +79,7 @@ pub fn init(
         [_]*Column{ &result.branches, &result.tags },
     ) |col_kind, column| {
         const col_from: []const u8 = if (kind == col_kind) decoded else "";
-        // an unreadable listing leaves the column empty. the names are sorted,
-        // so those with the prefix are contiguous from the prefix itself.
-        var iter = listRefs(repo_kind, repo_opts, repo, io, gpa, col_kind, iterStart(laterKey(prefix, col_from))) catch continue;
-        defer iter.deinit();
-        var names = try std.ArrayListUnmanaged([]const u8).initCapacity(aa, page_size);
-        while (try iter.next()) |ref| {
-            if (!std.mem.startsWith(u8, ref.name, prefix)) break;
-            if (names.items.len == page_size) {
-                column.next = try aa.dupe(u8, ref.name);
-                break;
-            }
-            names.appendAssumeCapacity(try aa.dupe(u8, ref.name));
-        }
-        column.names = names.items;
+        column.* = try readWindow(repo_kind, repo_opts, repo, io, gpa, aa, col_kind, prefix, col_from, page_size);
         if (col_from.len != 0) {
             var prev_iter = listRefs(repo_kind, repo_opts, repo, io, gpa, col_kind, iterStart(prefix)) catch continue;
             defer prev_iter.deinit();
@@ -100,6 +87,40 @@ pub fn init(
         }
     }
     return result;
+}
+
+/// one window of `kind`'s names that start with `prefix` (raw bytes; "" =
+/// all), from the first at or after `from` (raw; "" = the first): up to
+/// `limit` names, and the name the next window starts from. the names are
+/// duped into `aa`. an unreadable listing is empty.
+pub fn readWindow(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    aa: std.mem.Allocator,
+    kind: ui.RoutablePage.RefKind,
+    prefix: []const u8,
+    from: []const u8,
+    limit: usize,
+) !Column {
+    // the names are sorted, so those with the prefix are contiguous from the
+    // prefix itself
+    var iter = listRefs(repo_kind, repo_opts, repo, io, gpa, kind, iterStart(laterKey(prefix, from))) catch return .{};
+    defer iter.deinit();
+    var column: Column = .{};
+    var names = try std.ArrayListUnmanaged([]const u8).initCapacity(aa, @min(limit, page_size));
+    while (try iter.next()) |ref| {
+        if (!std.mem.startsWith(u8, ref.name, prefix)) break;
+        if (names.items.len == limit) {
+            column.next = try aa.dupe(u8, ref.name);
+            break;
+        }
+        try names.append(aa, try aa.dupe(u8, ref.name));
+    }
+    column.names = names.items;
+    return column;
 }
 
 fn listRefs(

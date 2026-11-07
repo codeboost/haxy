@@ -31,6 +31,155 @@ quit: Quit,
 
 const Self = @This();
 
+/// the fork a route names, as a viewer may see it
+pub const Resolved = struct {
+    forker_id: [evt.event_id_size]u8,
+    id: [evt.event_id_size]u8,
+    record: evt.Fork.Record,
+    // the viewer is its forker
+    forker: bool,
+    // null once its target, or the target's owner, is gone
+    target: ?evt.Repo.RepoWithRole,
+    // what the viewer may do, which the fork shares with its target
+    target_role: evt.Repo.Role,
+    target_id: [evt.event_id_size]u8,
+    owner_id: [evt.event_id_size]u8,
+    // "owner:name" of its target, by the target's current name
+    target_identity: []const u8,
+};
+
+/// the role a viewer has in a fork whose target is `target` (null once it is
+/// gone), or null when the fork is hidden from them
+pub fn roleIn(target: ?evt.Repo.RepoWithRole, forker: bool) ?evt.Repo.Role {
+    // a deleted target, or one whose owner was deleted, leaves the fork to its forker
+    const found = target orelse return if (forker) .read else null;
+    // patches that are off take their drafts with them
+    if (found.repo.event.patch_role == null) return null;
+    // a draft is as readable as the repo it targets
+    return found.role;
+}
+
+/// the fork `forker_name` made of a repo named `repo_name`, with id
+/// `id_text`, or null when it is missing, removed or hidden from `viewer`
+pub fn resolve(
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    users_dir: []const u8,
+    haxy_moment: evt.AdminDB.HashMap(.read_only),
+    viewer: ?[evt.event_id_size]u8,
+    forker_name: []const u8,
+    repo_name: []const u8,
+    id_text: []const u8,
+) !?Resolved {
+    const gpa = arena.child_allocator;
+    const id = evt.parseEventId(id_text) catch return null;
+    const forker_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, haxy_moment, forker_name)) orelse return null;
+    const record = (try evt.readForkById(io, gpa, arena, users_dir, &forker_id, &id)) orelse return null;
+    if (record.removed) return null;
+    const forker = if (viewer) |user_id| std.mem.eql(u8, &user_id, &forker_id) else false;
+    const target_id = try evt.parseEventId(&record.event.repo_id);
+    const owner_id = try evt.parseEventId(&record.event.repo_user_id);
+    const target = try evt.readRepoById(io, gpa, arena, users_dir, &owner_id, &target_id, viewer);
+    const target_role = roleIn(target, forker) orelse return null;
+    // the url keeps the name the fork was made under, even after a rename
+    if (!std.mem.eql(u8, record.event.repo_name, repo_name)) return null;
+    const owner = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, haxy_moment, arena, &owner_id)) orelse return null;
+    return .{
+        .forker_id = forker_id,
+        .id = id,
+        .record = record,
+        .forker = forker,
+        .target = target,
+        .target_role = target_role,
+        .target_id = target_id,
+        .owner_id = owner_id,
+        .target_identity = try arena.allocator().print("{s}:{s}", .{ owner.event.name, if (target) |found| found.repo.event.name else repo_name }),
+    };
+}
+
+/// what a fork holds: its patch branch's tip, the base its commits and diff
+/// start from, and its patch as the fork page shows it
+pub fn Contents(comptime hex_len: usize) type {
+    return struct {
+        head: [hex_len]u8,
+        // the newest revision's base, else the tip itself
+        base: [hex_len]u8,
+        commit_count: ?u64,
+        // its patch: the target's draft or patch while readable there (with
+        // `repo_source` set), else what the fork itself retains
+        patch: Patches,
+    };
+}
+
+/// reads `fork_repo`, the fork `resolved` names, as `viewer` (the fork's
+/// viewer, which is the target's) sees it
+pub fn readContents(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    session: *ui.Session,
+    resolved: Resolved,
+    identity: []const u8,
+    fork_repo: *rp.Repo(.xit, repo_opts),
+    viewer: ?ui.Viewer,
+) !Contents(xit.hash.hexLen(repo_opts.hash)) {
+    const haxy_moment = session.haxy_moment orelse return error.NoMoment;
+    const users_dir = session.users_dir orelse return error.NotFound;
+    const aa = arena.allocator();
+    const id = resolved.id;
+    const id_hex = std.fmt.bytesToHex(id, .lower);
+    const fork_moment = try evt.currentMoment(repo_opts, fork_repo);
+    const retained_patch = (try evt.Patch.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, arena, &id)) orelse return error.NotFound;
+    const fork_oid = (try fork_repo.readRef(io, fork.ref)) orelse return error.NotFound;
+    const newest_revision = try evt.PatchRev.readNewest(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, arena);
+    var commits_base_oid = fork_oid;
+    if (newest_revision) |revision| {
+        if (revision.record.event.base_oid.len != commits_base_oid.len) return error.NotFound;
+        @memcpy(&commits_base_oid, revision.record.event.base_oid);
+    }
+
+    const target_path = try evt.repoPath(aa, users_dir, &resolved.owner_id, &resolved.target_id);
+    const target_source = ui.RepoSource{ .path = target_path, .repo_kind = .xit };
+    var target_repo_maybe: ?rp.Repo(.xit, repo_opts) = if (resolved.target != null)
+        rp.Repo(.xit, repo_opts).open(io, arena.child_allocator, target_source.localInitOpts()) catch null
+    else
+        null;
+    defer if (target_repo_maybe) |*target_repo| target_repo.deinit(io, arena.child_allocator);
+
+    const retained_entry = Patches.PatchWithId{
+        .id = try aa.dupe(u8, &id_hex),
+        .record = retained_patch,
+        .author = try ui.Author.initFromEmail(haxy_moment, arena, retained_patch.author_email),
+        .draft = resolved.record.event.stage == .draft,
+        .revision_oid = try aa.dupe(u8, &fork_oid),
+        .fork_exists = true,
+        .fork_identity = try aa.dupe(u8, identity),
+        .target_deleted = resolved.target == null,
+    };
+    var patch_data = try Patches.detailResult(aa, resolved.target_identity, retained_entry);
+
+    if (target_repo_maybe) |*target_repo| switch (resolved.record.event.stage) {
+        .draft => if (try Patches.loadDraftEntry(.xit, repo_opts, arena, io, haxy_moment, fork_repo, target_repo, id, identity)) |entry| {
+            patch_data = try Patches.detailResult(aa, resolved.target_identity, entry);
+            patch_data.repo_source = target_source;
+        },
+        .publish => {
+            patch_data = Patches.init(.xit, repo_opts, arena, target_repo, io, haxy_moment, session, resolved.target_id, resolved.target_identity, retained_patch.event.target_branch, "", &id_hex, "", 0, "", .open, viewer, .{}) catch |err| switch (err) {
+                error.NotFound => patch_data,
+                else => |other| return other,
+            };
+            if (patch_data.selectedThread() != null) patch_data.repo_source = target_source;
+        },
+    };
+    patch_data.repo_id = resolved.target_id;
+    return .{
+        .head = fork_oid,
+        .base = commits_base_oid,
+        .commit_count = if (newest_revision) |revision| revision.record.commit_count else 0,
+        .patch = patch_data,
+    };
+}
+
 pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, route: ui.RoutablePage) !Self {
     const io = session.io orelse return error.NotFound;
     const users_dir = session.users_dir orelse return error.NotFound;
@@ -38,89 +187,28 @@ pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, route: ui.Rou
     const route_fork = route.forkRoute() orelse return error.UnexpectedRoute;
     // the route's identity names the forker and the repo name the fork was made under
     const identity = ui.RoutablePage.RepoIdentity.parse(route_fork.name.slice()) orelse return error.NotFound;
-    const id = evt.parseEventId(route_fork.id.slice()) catch return error.NotFound;
-    const gpa = arena.child_allocator;
-    const forker_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, haxy_moment, identity.owner)) orelse return error.NotFound;
-    const fork_record = (try evt.readForkById(io, gpa, arena, users_dir, &forker_id, &id)) orelse return error.NotFound;
-    if (fork_record.removed) return error.NotFound;
-    const forker = if (session.userId()) |user_id| std.mem.eql(u8, &user_id, &forker_id) else false;
+    const resolved = (try resolve(arena, io, users_dir, haxy_moment, session.userId(), identity.owner, identity.name, route_fork.id.slice())) orelse return error.NotFound;
+    const forker = resolved.forker;
     if (route == .fork_delete and !forker) return error.NotFound;
-    const target_id = try evt.parseEventId(&fork_record.event.repo_id);
-    const owner_id = try evt.parseEventId(&fork_record.event.repo_user_id);
-
-    // a deleted target, or one whose owner was deleted, leaves the fork to its forker
-    const target = try evt.readRepoById(io, gpa, arena, users_dir, &owner_id, &target_id, session.userId());
-    // a draft is as readable as the repo it targets
-    const target_role: evt.Repo.Role = if (target) |found| role: {
-        // patches that are off take their drafts with them
-        if (found.repo.event.patch_role == null) return error.NotFound;
-        break :role found.role orelse return error.NotFound;
-    } else if (forker) .read else return error.NotFound;
-    // the url keeps the name the fork was made under, even after a rename
-    if (!std.mem.eql(u8, fork_record.event.repo_name, identity.name)) return error.NotFound;
-    const owner = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, haxy_moment, arena, &owner_id)) orelse return error.NotFound;
 
     const aa = arena.allocator();
-    const target_identity = try aa.print("{s}:{s}", .{ owner.event.name, if (target) |found| found.repo.event.name else identity.name });
-    const id_hex = std.fmt.bytesToHex(id, .lower);
+    const id_hex = std.fmt.bytesToHex(resolved.id, .lower);
     // the fork's viewer is the target repo's
     const handle = ui.RepoHandle{
         .location = .{ .fork = .{ .identity = identity.identity, .id = &id_hex } },
-        .viewer = try ui.Viewer.init(session, arena, target_role),
+        .viewer = try ui.Viewer.init(session, arena, resolved.target_role),
     };
-    const fork_path = try fork.forkPath(aa, users_dir, &forker_id, &id);
+    const fork_path = try fork.forkPath(aa, users_dir, &resolved.forker_id, &resolved.id);
     // a fork shares its target's hash kind
     var any_fork = try rp.AnyRepo(.xit, .{}).open(io, arena.child_allocator, .{ .path = fork_path, .require_repo_root = true });
     defer any_fork.deinit(io, arena.child_allocator);
     switch (any_fork) {
         inline else => |*fork_repo| {
             const repo_opts = fork_repo.self_repo_opts;
-            const fork_moment = try evt.currentMoment(repo_opts, fork_repo);
-            const retained_patch = (try evt.Patch.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, arena, &id)) orelse return error.NotFound;
-            const fork_oid = (try fork_repo.readRef(io, fork.ref)) orelse return error.NotFound;
-            const newest_revision = try evt.PatchRev.readNewest(evt.EventDB(repo_opts.hash), repo_opts.hash, fork_moment, arena);
-            var commits_base_oid = fork_oid;
-            if (newest_revision) |revision| {
-                if (revision.record.event.base_oid.len != commits_base_oid.len) return error.NotFound;
-                @memcpy(&commits_base_oid, revision.record.event.base_oid);
-            }
-
-            const target_path = try evt.repoPath(aa, users_dir, &owner_id, &target_id);
-            const target_source = ui.RepoSource{ .path = target_path, .repo_kind = .xit };
-            var target_repo_maybe: ?rp.Repo(.xit, repo_opts) = if (target != null)
-                rp.Repo(.xit, repo_opts).open(io, arena.child_allocator, target_source.localInitOpts()) catch null
-            else
-                null;
-            defer if (target_repo_maybe) |*target_repo| target_repo.deinit(io, arena.child_allocator);
-
-            const target_branch = retained_patch.event.target_branch;
-
-            const retained_entry = Patches.PatchWithId{
-                .id = try aa.dupe(u8, &id_hex),
-                .record = retained_patch,
-                .author = try ui.Author.initFromEmail(haxy_moment, arena, retained_patch.author_email),
-                .draft = fork_record.event.stage == .draft,
-                .revision_oid = try aa.dupe(u8, &fork_oid),
-                .fork_exists = true,
-                .fork_identity = try aa.dupe(u8, identity.identity),
-                .target_deleted = target == null,
-            };
-            var patch_data = try Patches.detailResult(aa, target_identity, retained_entry);
-
-            if (target_repo_maybe) |*target_repo| switch (fork_record.event.stage) {
-                .draft => if (try Patches.loadDraftEntry(.xit, repo_opts, arena, io, haxy_moment, fork_repo, target_repo, id, identity.identity)) |entry| {
-                    patch_data = try Patches.detailResult(aa, target_identity, entry);
-                    patch_data.repo_source = target_source;
-                },
-                .publish => {
-                    patch_data = Patches.init(.xit, repo_opts, arena, target_repo, io, haxy_moment, session, target_id, target_identity, target_branch, "", &id_hex, "", 0, "", .open, handle.viewer) catch |err| switch (err) {
-                        error.NotFound => patch_data,
-                        else => |other| return other,
-                    };
-                    if (patch_data.selectedThread() != null) patch_data.repo_source = target_source;
-                },
-            };
-            patch_data.repo_id = target_id;
+            const contents = try readContents(repo_opts, arena, io, session, resolved, identity.identity, fork_repo, handle.viewer);
+            const fork_oid = contents.head;
+            const commits_base_oid = contents.base;
+            const patch_data = contents.patch;
 
             const requested_ref: ?ui.RoutablePage.RefOrOid = switch (route) {
                 .fork_files => |f| if (f.oid.len == 0) null else .object,
@@ -147,7 +235,7 @@ pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, route: ui.Rou
             const commits_message = route == .fork_commits and route.fork_commits.message;
             const files = try Files.init(.xit, repo_opts, arena, fork_repo, io, arena.child_allocator, handle, requested_ref, requested_value, files_path, files_line, files_find);
             var commits = try Commits.init(.xit, repo_opts, arena, fork_repo, io, arena.child_allocator, haxy_moment, handle, requested_ref, requested_value, commits_message, &commits_base_oid, "", "");
-            commits.commit_count = if (newest_revision) |revision| revision.record.commit_count else 0;
+            commits.commit_count = contents.commit_count;
             const diff_start: usize = switch (route) {
                 .fork_diff => |d| d.start,
                 else => 0,
@@ -176,7 +264,7 @@ pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, route: ui.Rou
                 .diff = .{
                     .route = .{ .fork = .{ .identity = try aa.dupe(u8, identity.identity), .id = try aa.dupe(u8, &id_hex), .oid = diff_oid, .base_oid = diff_base_oid, .patch_base_oid = try aa.dupe(u8, &commits_base_oid) } },
                     .path = diff_path,
-                    .window = try Diff.render(.xit, repo_opts, io, arena.child_allocator, aa, fork_repo, if (diff_base) |*base| base else null, diff_head, diff_start, diff_path),
+                    .window = try Diff.render(.xit, repo_opts, io, arena.child_allocator, aa, fork_repo, if (diff_base) |*base| base else null, diff_head, .{ .start = diff_start, .path = diff_path }),
                 },
                 .delete = if (forker) .{ .target = .{ .fork = .{ .identity = try aa.dupe(u8, identity.identity), .id = id_hex } } } else null,
                 .user_notifications = try ui.UserNotifications.init(arena, session, route.userTab()),

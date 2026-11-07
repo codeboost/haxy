@@ -52,13 +52,8 @@ pub fn init(
     forks_start: usize,
     user_tab: ui.RoutablePage.UserTab,
 ) !Self {
-    // admin and user repos share one db type
-    const DB = evt.AdminDB;
-    const hash_kind = evt.admin_repo_opts.hash;
-
     // a route identifies a user by name, which everything below keys off of
-    const user_id = (try evt.User.readIdByName(DB, hash_kind, haxy_moment, name.slice())) orelse return error.NotFound;
-    const user = (try evt.User.readById(DB, hash_kind, haxy_moment, arena, &user_id)) orelse return error.NotFound;
+    const user_id, const user = (try readUser(arena, haxy_moment, name.slice())) orelse return error.NotFound;
 
     const io = session.io orelse return error.NoMoment;
     const users_dir = session.users_dir orelse return error.NoMoment;
@@ -70,121 +65,248 @@ pub fn init(
     const user_moment = if (user_repo_maybe) |*user_repo| try evt.userMoment(user_repo) else null;
 
     const search: ?[]const u8 = if (repos_search.len == 0) null else std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, repos_search));
+    const repos_window = if (user_repo_maybe) |*user_repo| try readRepos(arena, user_repo, session.userId(), search, repos_start, page_size, .entries) else ReposWindow.empty;
+    const repos = repos_window.repos;
+    const repos_next_start = repos_window.next_start;
 
-    var repos: std.ArrayList(evt.Repo.Record) = .empty;
-    var repos_next_start: ?usize = null;
-    if (user_moment) |moment| {
-        if (search) |prefix| {
-            if (try moment.getCursor(hash.hashInt(hash_kind, evt.Repo.name_index_key))) |index_cursor| {
-                const index = try DB.SortedMap(.read_only).init(index_cursor);
-
-                // the names with the prefix are contiguous from its rank, so the
-                // window is one seek then a walk that stops at the first name without it
-                var taken: usize = 0;
-                var repos_iter = try index.iteratorFromIndex(try index.rank(prefix) +| repos_start);
-                while (try repos_iter.next()) |cursor| {
-                    const pair = try cursor.readKeyValuePair();
-                    const repo_name = try pair.key_cursor.readBytesAlloc(arena.allocator(), null);
-                    if (!std.mem.startsWith(u8, repo_name, prefix)) break;
-                    if (taken == page_size) {
-                        repos_next_start = repos_start + page_size;
-                        break;
-                    }
-                    taken += 1;
-                    var event_id: [evt.event_id_size]u8 = undefined;
-                    _ = try pair.value_cursor.readBytes(&event_id);
-                    const repo_event = (try evt.Repo.readById(DB, hash_kind, moment, arena, &event_id)) orelse continue;
-                    // unreadable repos leave their window short rather than shifting the others
-                    if (try evt.Repo.roleOf(DB, hash_kind, moment, arena, repo_event, &event_id, session.userId()) == null) continue;
-                    try repos.append(arena.allocator(), repo_event);
-                }
-            }
-        } else {
-            // unsearched, the newest activity comes first. its index sits beside the events.
-            const user_repo = if (user_repo_maybe) |*user_repo| user_repo else unreachable;
-            if (try (try user_repo.core.latestMoment()).getCursor(hash.hashInt(hash_kind, evt.recent_repo_id_set_key))) |recent_cursor| {
-                const recent = try DB.SortedSet(.read_only).init(recent_cursor);
-                const count = try recent.count();
-                const end = @min(repos_start +| page_size, count);
-                var iter = try recent.iteratorFromIndex(repos_start);
-                var i = repos_start;
-                while (i < end) : (i += 1) {
-                    const kv_cursor = (try iter.next()) orelse break;
-                    const repo_id = try evt.readOrderKeyId(DB, kv_cursor);
-                    const repo_event = (try evt.Repo.readById(DB, hash_kind, moment, arena, &repo_id)) orelse continue;
-                    if (try evt.Repo.roleOf(DB, hash_kind, moment, arena, repo_event, &repo_id, session.userId()) == null) continue;
-                    try repos.append(arena.allocator(), repo_event);
-                }
-                repos_next_start = if (end < count) end else null;
-            }
-        }
-    }
-
-    var forks: std.ArrayList(ForkItem) = .empty;
-    var forks_next_start: ?usize = null;
-    if (user_moment) |moment| {
-        if (try moment.getCursor(hash.hashInt(hash_kind, evt.Fork.active_id_set_key))) |user_forks_cursor| {
-            const user_forks = try DB.SortedSet(.read_only).init(user_forks_cursor);
-            const count = try user_forks.count();
-            const end = @min(forks_start +| page_size, count);
-            var iter = try user_forks.iteratorFromIndex(forks_start);
-            var i = forks_start;
-            while (i < end) : (i += 1) {
-                const kv_cursor = (try iter.next()) orelse break;
-                const fork_id = try evt.readOrderKeyId(DB, kv_cursor);
-                const fork_id_hex = std.fmt.bytesToHex(fork_id, .lower);
-                const record = (try evt.Fork.readById(DB, hash_kind, moment, arena, &fork_id)) orelse continue;
-
-                // the target lives in its owner's user repo
-                const owner_id = try evt.parseEventId(&record.event.repo_user_id);
-                // a deleted target, or one whose owner was deleted, leaves the fork to its forker
-                const target = try evt.readRepoById(io, gpa, arena, users_dir, &owner_id, &try evt.parseEventId(&record.event.repo_id), session.userId());
-                if (target) |value| {
-                    if (value.role == null) continue;
-                    // patches that are off take their drafts with them
-                    if (value.repo.event.patch_role == null) continue;
-                } else {
-                    const viewer_id = session.userId() orelse continue;
-                    if (!std.mem.eql(u8, &viewer_id, &user_id)) continue;
-                }
-
-                var title: []const u8 = "(unavailable)";
-                const path = try fork.forkPath(arena.allocator(), users_dir, &user_id, &fork_id);
-                if (rp.AnyRepo(.xit, .{}).open(io, gpa, .{ .path = path, .require_repo_root = true })) |opened| {
-                    var any_fork = opened;
-                    defer any_fork.deinit(io, gpa);
-                    switch (any_fork) {
-                        inline else => |*fork_repo| if (evt.currentMoment(fork_repo.self_repo_opts, fork_repo)) |fork_moment| {
-                            const kind = fork_repo.self_repo_opts.hash;
-                            if (try evt.Patch.readById(evt.EventDB(kind), kind, fork_moment, arena, &fork_id)) |patch| title = patch.event.title;
-                        } else |_| {},
-                    }
-                } else |_| {}
-                try forks.append(arena.allocator(), .{
-                    .id = try arena.allocator().dupe(u8, &fork_id_hex),
-                    .repo_name = record.event.repo_name,
-                    .access = if (target) |value| value.repo.event.read_access else null,
-                    .title = title,
-                });
-            }
-            forks_next_start = if (end < count) end else null;
-        }
-    }
+    const forks_window = if (user_moment) |moment| try readForks(arena, io, users_dir, user_id, moment, session.userId(), forks_start, page_size, .entries) else ForksWindow.empty;
 
     return .{
         .header = try Header.init(arena, user.event.name),
         .user = evt.project(evt.User.Public, user.event),
-        .repos = repos.items,
+        .repos = repos,
         .repos_start = repos_start,
         .repos_next_start = repos_next_start,
         .repos_search = search,
-        .forks = forks.items,
+        .forks = forks_window.forks,
         .forks_start = forks_start,
-        .forks_next_start = forks_next_start,
+        .forks_next_start = forks_window.next_start,
         .user_notifications = try ui.UserNotifications.init(arena, session, user_tab),
         .quit = Quit.init(),
     };
 }
+
+// the active user a route's name identifies, with their id, or null when no
+// active user has that name
+pub fn readUser(
+    arena: *std.heap.ArenaAllocator,
+    haxy_moment: evt.AdminDB.HashMap(.read_only),
+    name: []const u8,
+) !?struct { [evt.event_id_size]u8, evt.User.Record } {
+    const DB = evt.AdminDB;
+    const hash_kind = evt.admin_repo_opts.hash;
+    const user_id = (try evt.User.readIdByName(DB, hash_kind, haxy_moment, name)) orelse return null;
+    const user = (try evt.User.readById(DB, hash_kind, haxy_moment, arena, &user_id)) orelse return null;
+    return .{ user_id, user };
+}
+
+pub const ReposWindow = struct {
+    repos: []const evt.Repo.Record,
+    // the `start` of the following window, or null when this is the last
+    next_start: ?usize,
+
+    pub const empty: ReposWindow = .{ .repos = &.{}, .next_start = null };
+
+    // how a window's bounds are drawn
+    pub const Bounds = enum {
+        // a window spans `limit` index entries, and unreadable repos leave it
+        // short rather than shifting the others. the TUI's windows, whose
+        // "previous" row steps back by `limit` entries.
+        entries,
+        // a window holds up to `limit` readable repos, and another follows
+        // only when another readable repo does, so paging never reveals how
+        // many repos the viewer can't read. the JSON API's pages.
+        readable,
+    };
+};
+
+// one window of the repos in `user_repo` that `viewer` may read: by name from
+// the `start`th name with the `search` prefix, else newest activity first.
+pub fn readRepos(
+    arena: *std.heap.ArenaAllocator,
+    user_repo: *rp.Repo(.xit, evt.user_repo_opts),
+    // null when logged out
+    viewer: ?[evt.event_id_size]u8,
+    search: ?[]const u8,
+    start: usize,
+    limit: usize,
+    bounds: ReposWindow.Bounds,
+) !ReposWindow {
+    // admin and user repos share one db type
+    const DB = evt.AdminDB;
+    const hash_kind = evt.admin_repo_opts.hash;
+    const moment = (try evt.userMoment(user_repo)) orelse return .empty;
+
+    var window: Window = .{ .arena = arena, .moment = moment, .viewer = viewer, .start = start, .limit = limit, .bounds = bounds };
+    if (search) |prefix| {
+        if (try moment.getCursor(hash.hashInt(hash_kind, evt.Repo.name_index_key))) |index_cursor| {
+            const index = try DB.SortedMap(.read_only).init(index_cursor);
+
+            // the names with the prefix are contiguous from its rank, so the
+            // window is one seek then a walk that stops at the first name without it
+            var repos_iter = try index.iteratorFromIndex(try index.rank(prefix) +| start);
+            while (try repos_iter.next()) |cursor| {
+                const pair = try cursor.readKeyValuePair();
+                const repo_name = try pair.key_cursor.readBytesAlloc(arena.allocator(), null);
+                if (!std.mem.startsWith(u8, repo_name, prefix)) break;
+                var event_id: [evt.event_id_size]u8 = undefined;
+                _ = try pair.value_cursor.readBytes(&event_id);
+                if (!try window.add(&event_id)) break;
+            }
+        }
+    } else {
+        // unsearched, the newest activity comes first. its index sits beside the events.
+        if (try (try user_repo.core.latestMoment()).getCursor(hash.hashInt(hash_kind, evt.recent_repo_id_set_key))) |recent_cursor| {
+            const recent = try DB.SortedSet(.read_only).init(recent_cursor);
+            var iter = try recent.iteratorFromIndex(start);
+            while (try iter.next()) |kv_cursor| {
+                const repo_id = try evt.readOrderKeyId(DB, kv_cursor);
+                if (!try window.add(&repo_id)) break;
+            }
+        }
+    }
+    return .{ .repos = window.repos.items, .next_start = window.next_start };
+}
+
+// collects one window from the index entries `readRepos` walks
+const Window = struct {
+    arena: *std.heap.ArenaAllocator,
+    moment: evt.AdminDB.HashMap(.read_only),
+    viewer: ?[evt.event_id_size]u8,
+    start: usize,
+    limit: usize,
+    bounds: ReposWindow.Bounds,
+    repos: std.ArrayList(evt.Repo.Record) = .empty,
+    // index entries walked so far
+    walked: usize = 0,
+    // the entries up to and including the last repo taken
+    taken_through: usize = 0,
+    next_start: ?usize = null,
+
+    // considers the next entry, returning false once the window is complete
+    fn add(self: *Window, repo_id: *const [evt.event_id_size]u8) !bool {
+        if (self.bounds == .entries and self.walked == self.limit) {
+            self.next_start = self.start +| self.walked;
+            return false;
+        }
+        self.walked += 1;
+        const DB = evt.AdminDB;
+        const hash_kind = evt.admin_repo_opts.hash;
+        const repo_event = (try evt.Repo.readById(DB, hash_kind, self.moment, self.arena, repo_id)) orelse return true;
+        if (try evt.Repo.roleOf(DB, hash_kind, self.moment, self.arena, repo_event, repo_id, self.viewer) == null) return true;
+        if (self.repos.items.len == self.limit) {
+            // only reached with readable bounds: a readable repo beyond the
+            // window, which the next one starts at
+            self.next_start = self.start +| self.taken_through;
+            return false;
+        }
+        try self.repos.append(self.arena.allocator(), repo_event);
+        self.taken_through = self.walked;
+        return true;
+    }
+};
+
+pub const ForksWindow = struct {
+    forks: []const ForkItem,
+    // the `start` of the following window, or null when this is the last
+    next_start: ?usize,
+
+    pub const empty: ForksWindow = .{ .forks = &.{}, .next_start = null };
+};
+
+// one window of `user_id`'s forks that `viewer` may see, newest first, from
+// the `start`th fork, its bounds drawn as a repos window's are
+pub fn readForks(
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    users_dir: []const u8,
+    user_id: [evt.event_id_size]u8,
+    moment: evt.AdminDB.HashMap(.read_only),
+    viewer: ?[evt.event_id_size]u8,
+    start: usize,
+    limit: usize,
+    bounds: ReposWindow.Bounds,
+) !ForksWindow {
+    const DB = evt.AdminDB;
+    const forks_cursor = (try moment.getCursor(hash.hashInt(evt.admin_repo_opts.hash, evt.Fork.active_id_set_key))) orelse return .empty;
+    const user_forks = try DB.SortedSet(.read_only).init(forks_cursor);
+    var window: ForkWindow = .{ .arena = arena, .io = io, .users_dir = users_dir, .user_id = user_id, .moment = moment, .viewer = viewer, .start = start, .limit = limit, .bounds = bounds };
+    var iter = try user_forks.iteratorFromIndex(start);
+    while (try iter.next()) |kv_cursor| {
+        if (!try window.add(try evt.readOrderKeyId(DB, kv_cursor))) break;
+    }
+    return .{ .forks = window.forks.items, .next_start = window.next_start };
+}
+
+// collects one window from the forks `readForks` walks
+const ForkWindow = struct {
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    users_dir: []const u8,
+    user_id: [evt.event_id_size]u8,
+    moment: evt.AdminDB.HashMap(.read_only),
+    viewer: ?[evt.event_id_size]u8,
+    start: usize,
+    limit: usize,
+    bounds: ReposWindow.Bounds,
+    forks: std.ArrayList(ForkItem) = .empty,
+    walked: usize = 0,
+    taken_through: usize = 0,
+    next_start: ?usize = null,
+
+    // considers the next fork, returning false once the window is complete
+    fn add(self: *ForkWindow, fork_id: [evt.event_id_size]u8) !bool {
+        if (self.bounds == .entries and self.walked == self.limit) {
+            self.next_start = self.start +| self.walked;
+            return false;
+        }
+        self.walked += 1;
+        const item = (try self.visible(fork_id)) orelse return true;
+        if (self.forks.items.len == self.limit) {
+            self.next_start = self.start +| self.taken_through;
+            return false;
+        }
+        try self.forks.append(self.arena.allocator(), item);
+        self.taken_through = self.walked;
+        return true;
+    }
+
+    // the fork as its list shows it, or null when the viewer may not see it
+    fn visible(self: *ForkWindow, fork_id: [evt.event_id_size]u8) !?ForkItem {
+        const arena = self.arena;
+        const gpa = arena.child_allocator;
+        const record = (try evt.Fork.readById(evt.AdminDB, evt.admin_repo_opts.hash, self.moment, arena, &fork_id)) orelse return null;
+        // the target lives in its owner's user repo
+        const owner_id = try evt.parseEventId(&record.event.repo_user_id);
+        const target = try evt.readRepoById(self.io, gpa, arena, self.users_dir, &owner_id, &try evt.parseEventId(&record.event.repo_id), self.viewer);
+        const forker = if (self.viewer) |viewer_id| std.mem.eql(u8, &viewer_id, &self.user_id) else false;
+        _ = ui.Fork.roleIn(target, forker) orelse return null;
+        return .{
+            .id = try arena.allocator().dupe(u8, &std.fmt.bytesToHex(fork_id, .lower)),
+            .repo_name = record.event.repo_name,
+            .access = if (target) |value| value.repo.event.read_access else null,
+            .title = try self.title(fork_id),
+        };
+    }
+
+    // the fork's patch title, which only the fork itself holds
+    fn title(self: *ForkWindow, fork_id: [evt.event_id_size]u8) ![]const u8 {
+        const gpa = self.arena.child_allocator;
+        const path = try fork.forkPath(self.arena.allocator(), self.users_dir, &self.user_id, &fork_id);
+        var any_fork = rp.AnyRepo(.xit, .{}).open(self.io, gpa, .{ .path = path, .require_repo_root = true }) catch return unavailable_title;
+        defer any_fork.deinit(self.io, gpa);
+        switch (any_fork) {
+            inline else => |*fork_repo| {
+                const kind = fork_repo.self_repo_opts.hash;
+                const fork_moment = evt.currentMoment(fork_repo.self_repo_opts, fork_repo) catch return unavailable_title;
+                const patch = (try evt.Patch.readById(evt.EventDB(kind), kind, fork_moment, self.arena, &fork_id)) orelse return unavailable_title;
+                return patch.event.title;
+            },
+        }
+    }
+};
+
+const unavailable_title = "(unavailable)";
 
 // a first repos window without repos, which shows the empty message
 fn reposEmpty(self: *const Self) bool {

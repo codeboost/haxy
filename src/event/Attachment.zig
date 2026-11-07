@@ -1,7 +1,6 @@
 const std = @import("std");
 const evt = @import("../event.zig");
 const xit = @import("xit");
-const rp = xit.repo;
 const hash = xit.hash;
 
 target_id: [evt.event_id_size * 2]u8,
@@ -110,39 +109,6 @@ pub fn consume(
     const target_attachments_cursor = try target_id_to_attachment_id_set.putCursor(hash.hashInt(hash_kind, &target_id));
     const target_attachments = try DB.SortedSet(.read_write).init(target_attachments_cursor);
     try target_attachments.put(&evt.orderKey(record_to_write.created_order, event_id));
-}
-
-// attach `blob` to a target event and return the event id. `repo` must be
-// writable.
-pub fn create(
-    host: evt.Host,
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    target_kind: evt.EventKind,
-    target_id: *const [evt.event_id_size * 2]u8,
-    blob: evt.Blob,
-    author: evt.CommitAuthor,
-) ![evt.event_id_size * 2]u8 {
-    if (!nameValid(blob.name)) return error.InvalidFields;
-    if (blob.size == 0 or blob.size > max_size) return error.InvalidFields;
-
-    const target_id_bytes = evt.parseEventId(target_id) catch return error.InvalidFields;
-    if (!try evt.threadHolds(repo_kind, repo_opts, io, allocator, repo, target_kind, &target_id_bytes, null)) return error.TargetNotFound;
-
-    var id_bytes: [evt.event_id_size]u8 = undefined;
-    io.random(&id_bytes);
-    const event_id = std.fmt.bytesToHex(id_bytes, .lower);
-    try evt.consume(host, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{.{
-        .id = event_id,
-        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        .author = author,
-        .tree_entries = &.{.{ .blob = blob }},
-        .event = .{ .attach = .{ .target_id = target_id.* } },
-    }});
-    return event_id;
 }
 
 // read an attachment by event id, or null if the id isn't a known attachment.

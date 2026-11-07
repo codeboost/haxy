@@ -4,22 +4,48 @@ const rp = xit.repo;
 const obj = xit.object;
 const hash = xit.hash;
 const evt = @import("./event.zig");
+const api = @import("./api.zig");
+const api_account = @import("./api/account.zig");
+const api_assignees = @import("./api/assignees.zig");
+const api_conflicts = @import("./api/conflicts.zig");
+const api_commits = @import("./api/commits.zig");
+const api_discovery = @import("./api/discovery.zig");
+const api_forks = @import("./api/forks.zig");
+const api_events = @import("./api/events.zig");
+const api_undo = @import("./api/undo.zig");
+const api_sync = @import("./api/sync.zig");
+const api_issues = @import("./api/issues.zig");
+const api_patch_drafts = @import("./api/patch_drafts.zig");
+const api_patches = @import("./api/patches.zig");
+const api_discussions = @import("./api/discussions.zig");
+const api_notifications = @import("./api/notifications.zig");
+const api_repo = @import("./api/repo.zig");
+const api_repo_admin = @import("./api/repo_admin.zig");
+const api_repo_create = @import("./api/repo_create.zig");
+const api_session = @import("./api/session.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
 const ui = @import("./ui.zig");
-const fork = @import("./fork.zig");
+const draft = @import("./draft.zig");
 const pch = @import("./patch.zig");
 const notify = @import("./notify.zig");
+const thread_write = @import("./thread_write.zig");
+const patch_merge = @import("./patch_merge.zig");
+const query_params = @import("./api/query.zig");
+const shared_attachment = @import("./attachment.zig");
+const same_origin = @import("./origin.zig");
 const xitui = xit.xitui;
 const wgt = xitui.widget;
 const Focus = xitui.focus.Focus;
 const Grid = xitui.grid.Grid;
 
-const cookie_name = "haxy_session";
+pub const cookie_name = "haxy_session";
 // the session cookie a login or a claimed auto-login sets; both must scope
 // it the same way. lax so links from other sites arrive logged in, and a
 // max-age (chrome's 400 day cap) so it outlives the browser.
-const session_cookie_fmt = cookie_name ++ "={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000";
+pub const session_cookie_fmt = cookie_name ++ "={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000";
+// the header that ends a browser's session, on logout and account deletion
+pub const session_cookie_clear = cookie_name ++ "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
 const form_flash_cookie = "haxy_form_flash";
 const local_flash_cookie = "haxy_local_flash";
 const local_required_title_prefix = "required_title:";
@@ -143,7 +169,9 @@ pub fn handleConnection(
         };
 
         switch (host) {
-            .server => |server| if (serve_http.isGitRequest(&request.head)) {
+            // the API namespace is reserved even for paths that end like
+            // git's smart http, so every /api/ response is JSON
+            .server => |server| if (!isApiTarget(request.head.target) and serve_http.isGitRequest(&request.head)) {
                 try server.serve_git(io, allocator, server.users_dir, server.admin_repo_path, &http_server, &request, err);
                 // git's responses end with "Connection: close"
                 break;
@@ -164,6 +192,145 @@ pub fn handleConnection(
     }
 }
 
+fn isApiPath(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/api") or std.mem.startsWith(u8, path, "/api/");
+}
+
+fn isApiTarget(target: []const u8) bool {
+    const uri = std.Uri.parseAfterScheme("", target) catch return false;
+    return isApiPath(uri.path.percent_encoded);
+}
+
+// the JSON API under /api/. see api.zig for the shared response shapes.
+fn handleApiRequest(
+    io: std.Io,
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    host: Host,
+    path: []const u8,
+    // the still-encoded query string, "" when absent
+    query: []const u8,
+    error_writer: *std.Io.Writer,
+) void {
+    routeApiRequest(io, request, allocator, host, path, query) catch |err| {
+        // the details go to the log; the client gets the generic envelope,
+        // never the text/plain fallback. a failed write means the connection
+        // is gone, so there is no one to answer.
+        serve_common.logError(io, error_writer, "api request failed: {s} {s}: {s}\n", .{ @tagName(request.head.method), path, @errorName(err) });
+        if (err == error.WriteFailed) return;
+        api.respondError(request, allocator, .{ .code = .internal, .message = "Haxy couldn't complete this request. Try again later." }, .{ .keep_alive = false }) catch {};
+    };
+}
+
+fn routeApiRequest(
+    io: std.Io,
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    host: Host,
+    path: []const u8,
+    // the still-encoded query string, "" when absent
+    query: []const u8,
+) !void {
+    // every state-changing request passes the same-origin and CSRF check
+    // before routing, so no write route can skip it
+    if (!try api_session.guardWrite(io, request, allocator, host)) return;
+    if (std.mem.eql(u8, path, api_session.path))
+        return api_session.handle(io, request, allocator, host);
+    if (api_account.route(path)) |route| {
+        const server: ?api_account.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .session_store = server.session_store },
+            .local => null,
+        };
+        return api_account.handle(io, request, allocator, server, route);
+    }
+    if (api_repo_create.route(path)) {
+        const server: ?api_repo_create.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .session_store = server.session_store },
+            .local => null,
+        };
+        return api_repo_create.handle(io, request, allocator, server);
+    }
+    if (api_discovery.route(path)) |route| {
+        const server: ?api_discovery.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir },
+            .local => null,
+        };
+        return api_discovery.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
+    if (api_forks.route(path)) |route| {
+        const server: ?api_forks.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix },
+            .local => null,
+        };
+        return api_forks.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
+    if (api_repo_admin.route(path, request.head.method)) |route| {
+        const server: ?api_repo_admin.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .session_store = server.session_store },
+            .local => null,
+        };
+        return api_repo_admin.handle(io, request, allocator, server, route, query);
+    }
+    if (api_notifications.route(path)) |route| {
+        const server: ?api_notifications.Server = switch (host) {
+            .server => |server| .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir },
+            .local => null,
+        };
+        return api_notifications.handle(io, request, allocator, server, apiViewerId(request, host), route, query);
+    }
+    if (api_notifications.threadRoute(path, "issues")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_issues.comment_kind);
+    if (api_notifications.threadRoute(path, "discussions")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_discussions.comment_kind);
+    if (api_notifications.threadRoute(path, "patches")) |route| return api_notifications.handleThread(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, api_patches.comment_kind);
+    if (api_conflicts.route(path)) |route| return api_conflicts.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_assignees.route(path)) |route| return api_assignees.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route);
+    if (api_issues.route(path)) |route|
+        return api_issues.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_patch_drafts.route(path)) |route| return api_patch_drafts.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_patches.route(path)) |route| return api_patches.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_discussions.route(path)) |route| return api_discussions.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_undo.route(path)) |route| return api_undo.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_sync.route(path)) return api_sync.handle(io, request, allocator, apiRepoHost(host));
+    if (api_events.route(path)) |route| return api_events.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_commits.route(path)) |route| return api_commits.handle(io, request, allocator, apiRepoHost(host), apiViewerId(request, host), route, query);
+    if (api_repo.route(path)) |route| {
+        const repo_host: api_repo.Host = switch (host) {
+            .server => |server| .{ .server = .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .web_url = server.web_url, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix } },
+            .local => |source| .{ .local = source },
+        };
+        return api_repo.handle(io, request, allocator, repo_host, apiViewerId(request, host), route, query);
+    }
+    if (!std.mem.eql(u8, path, "/api/v1/status"))
+        return api.respondError(request, allocator, .{ .code = .not_found, .message = "No API route matches this path." }, .{});
+    const method = request.head.method;
+    if (method != .GET and method != .HEAD)
+        return api.respondError(request, allocator, .{ .code = .unsupported, .message = "This route only supports GET and HEAD." }, .{ .allow = "GET, HEAD" });
+
+    var body: std.Io.Writer.Allocating = .init(allocator);
+    defer body.deinit();
+    try api.writeStatus(&body.writer, host);
+    return api.respondJson(request, body.written(), .{});
+}
+
+// what the repo-scoped API routes are given of the host
+fn apiRepoHost(host: Host) api_repo.Host {
+    return switch (host) {
+        .server => |server| .{ .server = .{ .admin_repo_path = server.admin_repo_path, .users_dir = server.users_dir, .web_url = server.web_url, .ssh_url = server.ssh_url, .git_ssh_prefix = server.git_ssh_prefix } },
+        .local => |source| .{ .local = source },
+    };
+}
+
+// the viewer an API request's session cookie names, or null when anonymous.
+// unlike page loads, API reads never claim a seeded auto-login.
+fn apiViewerId(request: *std.http.Server.Request, host: Host) ?[evt.event_id_size]u8 {
+    const server = switch (host) {
+        .server => |server| server,
+        .local => return null,
+    };
+    const token = getCookieValue(request, cookie_name) orelse return null;
+    var user_id: [evt.event_id_size]u8 = undefined;
+    return if (server.session_store.lookup(token, &user_id)) user_id else null;
+}
+
 fn handleRequest(
     io: std.Io,
     request: *std.http.Server.Request,
@@ -172,10 +339,20 @@ fn handleRequest(
     error_writer: *std.Io.Writer,
 ) !void {
     const method = request.head.method;
-    const owned_target = if (method == .POST) try allocator.dupe(u8, request.head.target) else null;
+    // reading a body invalidates the head's strings, so a request that may
+    // carry one keeps its own copy of the target
+    const owned_target = if (method != .GET and method != .HEAD) try allocator.dupe(u8, request.head.target) else null;
     defer if (owned_target) |target| allocator.free(target);
     const uri = try std.Uri.parseAfterScheme("", owned_target orelse request.head.target);
     const path = uri.path.percent_encoded;
+
+    // Reserve the API namespace before matching page/form routes.
+    if (isApiPath(path))
+        return handleApiRequest(io, request, allocator, host, path, if (uri.query) |query| query.percent_encoded else "", error_writer);
+
+    // every other state-changing request must come from this host's own
+    // pages, checked before any form route is matched
+    if (!try same_origin.guardForm(request)) return;
 
     // POST routes can be scoped by any page, so they can redirect using
     // the base of the URL. this allows logging in to keep you on the page
@@ -192,7 +369,7 @@ fn handleRequest(
                         const base = path[0 .. path.len - suffix.len];
                         return switch (@field(PostRoute, name)) {
                             .login => handleLogin(io, request, allocator, base, server.admin_repo_path, server.session_store),
-                            .logout => handleLogout(request, allocator, base, server.session_store),
+                            .logout => handleLogout(io, request, allocator, base, server.session_store),
                             .@"repo/new" => handleRepoNew(io, request, allocator, path, server.admin_repo_path, server.users_dir, server.session_store),
                             .@"user/new" => handleUserNew(io, request, allocator, path, server.admin_repo_path, server.users_dir, server.session_store, error_writer),
                             .user => handleUserSettings(io, request, allocator, base, server.admin_repo_path, server.users_dir, server.session_store),
@@ -317,9 +494,10 @@ fn handleRequest(
         var sync_failure: ?[]const u8 = null;
         var sync_failure_allocated: ?[]u8 = null;
         defer if (sync_failure_allocated) |value| allocator.free(value);
-        // backs the cookie a claimed auto-login sets
+        // backs the cookies a claimed auto-login sets
         var cookie_buf: [256]u8 = undefined;
         var session_cookie: ?[]const u8 = null;
+        var auto_login_nonce: ?api_session.CsrfNonce = null;
         switch (host) {
             .server => |server| {
                 user_id = blk: {
@@ -333,6 +511,8 @@ fn handleRequest(
                     if (user_id == null) {
                         if (server.session_store.autoLogin(&token_buf) and server.session_store.lookup(&token_buf, &user_id_buf)) {
                             session_cookie = try std.fmt.bufPrint(&cookie_buf, session_cookie_fmt, .{token_buf});
+                            // claiming it starts a session, as a login does
+                            auto_login_nonce = api_session.CsrfNonce.rotate(io);
                             session_token = &token_buf;
                             user_id = user_id_buf[0..evt.event_id_size];
                         }
@@ -400,7 +580,7 @@ fn handleRequest(
         else
             null;
         defer if (expired_form_cookie) |cookie| allocator.free(cookie);
-        var header_buf: [6]std.http.Header = undefined;
+        var header_buf: [7]std.http.Header = undefined;
         var headers: std.ArrayList(std.http.Header) = .initBuffer(&header_buf);
         headers.appendAssumeCapacity(.{ .name = "content-type", .value = if (json_page != null) "application/json" else "text/html; charset=utf-8" });
         if (json_page != null) {
@@ -411,6 +591,7 @@ fn handleRequest(
         if (expired_form_cookie) |cookie| headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = cookie });
         if (local_flash_seen) headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = local_flash_cookie ++ "=; Path=/; Max-Age=0" });
         if (session_cookie) |cookie| headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = cookie });
+        if (auto_login_nonce) |*nonce| headers.appendAssumeCapacity(.{ .name = "set-cookie", .value = nonce.setCookie() });
         try request.respond(body, .{
             .status = if (session_data.current_page == .not_found) .not_found else .ok,
             .extra_headers = headers.items,
@@ -454,11 +635,14 @@ fn handleLogin(
             const token = try session_store.create(&user_id);
             var cookie_buf: [256]u8 = undefined;
             const cookie = try std.fmt.bufPrint(&cookie_buf, session_cookie_fmt, .{token});
+            // a token issued under the previous session must stop passing
+            const nonce = api_session.CsrfNonce.rotate(io);
             try request.respond("", .{
                 .status = .see_other,
                 .extra_headers = &.{
                     .{ .name = "location", .value = success_location },
                     .{ .name = "set-cookie", .value = cookie },
+                    .{ .name = "set-cookie", .value = nonce.setCookie() },
                 },
             });
         },
@@ -547,7 +731,7 @@ fn userTabPageRoot(arena: *std.heap.ArenaAllocator, base: []const u8) ![]const u
     return route.pageRoot().toUrl(arena);
 }
 
-fn handleLogout(request: *std.http.Server.Request, allocator: std.mem.Allocator, base: []const u8, session_store: SessionStore) !void {
+fn handleLogout(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.Allocator, base: []const u8, session_store: SessionStore) !void {
     // revoke the session server-side so the cookie is dead for anyone holding
     // a copy, not just this browser.
     if (getCookieValue(request, cookie_name)) |token| session_store.remove(token);
@@ -560,12 +744,15 @@ fn handleLogout(request: *std.http.Server.Request, allocator: std.mem.Allocator,
     // discard it — which asserts on a bodyless POST that carries no
     // content-length, and would block on one with no framing at all. a logout
     // is just a redirect, so the browser reconnects for the follow-up GET.
+    // a token issued under the ended session must stop passing.
+    const nonce = api_session.CsrfNonce.rotate(io);
     try request.respond("", .{
         .status = .see_other,
         .keep_alive = false,
         .extra_headers = &.{
             .{ .name = "location", .value = location },
-            .{ .name = "set-cookie", .value = cookie_name ++ "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" },
+            .{ .name = "set-cookie", .value = session_cookie_clear },
+            .{ .name = "set-cookie", .value = nonce.setCookie() },
         },
     });
 }
@@ -636,7 +823,7 @@ fn mayRead(
 }
 
 // the logged-in user the request's session cookie names
-fn requestUserId(request: *std.http.Server.Request, session_store: SessionStore) ?[evt.event_id_size]u8 {
+pub fn requestUserId(request: *std.http.Server.Request, session_store: SessionStore) ?[evt.event_id_size]u8 {
     const token = getCookieValue(request, cookie_name) orelse return null;
     var user_id: [evt.event_id_size]u8 = undefined;
     return if (session_store.lookup(token, &user_id)) user_id else null;
@@ -728,19 +915,16 @@ fn handleRepoNew(
     const copy = (try parseFormField(allocator, body, "copy")) orelse try allocator.dupe(u8, "");
     defer allocator.free(copy);
     const bad_request: std.http.Server.Request.RespondOptions = .{ .status = .bad_request, .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }} };
-    const hash_kind = std.meta.stringToEnum(hash.HashKind, hash_value) orelse return request.respond("invalid hash", bad_request);
-    const access = std.meta.stringToEnum(evt.Repo.Access, access_value) orelse return request.respond("invalid access", bad_request);
-
-    _ = evt.createRepo(io, allocator, users_dir, &user_id, .{ .name = user.event.name, .email = user.event.email }, name, description, access, hash_kind, if (copy.len == 0) null else .{ .admin_moment = moment, .path = copy }) catch |err| {
-        const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
-        return respondFormFailure(request, allocator, session_store, form_location, .{ .repo = .{ .failure = failure, .fields = .{
-            .name = name,
-            .description = description,
-            .hash = hash_kind,
-            .access = access,
-            .copy = copy,
-        } } });
+    const fields: ui.NewRepo.Fields = .{
+        .name = name,
+        .description = description,
+        .hash = ui.NewRepo.parseHash(hash_value) orelse return request.respond("invalid hash", bad_request),
+        .access = ui.NewRepo.parseAccess(access_value) orelse return request.respond("invalid access", bad_request),
+        .copy = copy,
     };
+
+    if (try ui.NewRepo.create(io, allocator, users_dir, moment, user_id, user, fields)) |failure|
+        return respondFormFailure(request, allocator, session_store, form_location, .{ .repo = .{ .failure = failure, .fields = fields } });
 
     const location = try allocator.print("/{s}:{s}", .{ user.event.name, name });
     defer allocator.free(location);
@@ -788,8 +972,9 @@ fn handleRepoSettings(
     }
     const discuss_role, const issue_role, const patch_role = roles;
 
-    const updated = ui.Repo.Settings.update(io, allocator, server.users_dir, actor, route.repo_settings.slice(), name, description, access, discuss_role, issue_role, patch_role) catch |err| switch (err) {
+    const updated = ui.Repo.Settings.update(io, allocator, server.users_dir, actor, route.repo_settings.slice(), name, description, access, discuss_role, issue_role, patch_role, null, null) catch |err| switch (err) {
         error.NotFound => return respondRepoNotFound(request),
+        error.NotOwner => return respondForbidden(request),
         else => {
             const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
             return respondFormFailure(request, allocator, server.session_store, form_location, .{ .repo_settings = .{ .failure = failure, .fields = .{
@@ -838,8 +1023,11 @@ fn handleMembers(io: std.Io, request: *std.http.Server.Request, allocator: std.m
         var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
         defer admin_repo.deinit(io, allocator);
         const moment = try evt.currentMoment(evt.admin_repo_opts, &admin_repo);
-        break :blk ui.Repo.Members.perform(io, allocator, moment, server.users_dir, actor, identity, action, name) catch |err| switch (err) {
-            error.NotFound, error.EventNotFound => return respondRepoNotFound(request),
+        break :blk ui.Repo.Members.perform(io, allocator, moment, server.users_dir, actor, identity, null, action, name) catch |err| switch (err) {
+            error.NotFound, error.EventNotFound, error.MainOwner => return respondRepoNotFound(request),
+            // another owner changed the row meanwhile: the list shows it as it is now
+            error.RoleChanged => null,
+            error.NotOwner => return respondForbidden(request),
             else => return err,
         };
     };
@@ -877,8 +1065,9 @@ fn handleBranches(io: std.Io, request: *std.http.Server.Request, allocator: std.
         .unprotect => if (target.branch.len != 0) std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, target.branch.slice())) else return respondRepoNotFound(request),
     };
 
-    const failure = ui.Repo.Branches.perform(io, allocator, server.users_dir, actor, identity, action, branch) catch |err| switch (err) {
+    const failure = ui.Repo.Branches.perform(io, allocator, server.users_dir, actor, identity, null, action, branch) catch |err| switch (err) {
         error.NotFound => return respondRepoNotFound(request),
+        error.NotOwner => return respondForbidden(request),
         else => return err,
     };
     const location = try (ui.RoutablePage.repoBranchesRoute(identity) orelse return error.RouteTooLong).toUrl(&arena);
@@ -933,6 +1122,8 @@ fn handleUserNew(
     const token = try session_store.create(&user_id);
     var cookie_buf: [256]u8 = undefined;
     const cookie = try std.fmt.bufPrint(&cookie_buf, session_cookie_fmt, .{token});
+    // signing up logs in: a token issued before must stop passing
+    const nonce = api_session.CsrfNonce.rotate(io);
     const location = try allocator.print("/{s}", .{name});
     defer allocator.free(location);
     try request.respond("", .{
@@ -940,6 +1131,7 @@ fn handleUserNew(
         .extra_headers = &.{
             .{ .name = "location", .value = location },
             .{ .name = "set-cookie", .value = cookie },
+            .{ .name = "set-cookie", .value = nonce.setCookie() },
         },
     });
 }
@@ -1080,7 +1272,7 @@ fn handleDelete(io: std.Io, request: *std.http.Server.Request, allocator: std.me
     const confirm = (try parseFormField(arena.allocator(), body, "confirm")) orelse "";
     const password = (try parseFormField(arena.allocator(), body, "password")) orelse "";
 
-    const failure = ui.Delete.perform(io, allocator, server.users_dir, &admin_repo, user_id, target, confirm, password) catch |err| switch (err) {
+    const failure = ui.Delete.perform(io, allocator, server.users_dir, &admin_repo, user_id, target, confirm, password, null) catch |err| switch (err) {
         error.NotFound => return respondDeleteNotFound(request),
         else => return err,
     };
@@ -1094,12 +1286,14 @@ fn handleDelete(io: std.Io, request: *std.http.Server.Request, allocator: std.me
         // log the deleted user out, as a logout does
         .user => {
             if (token) |value| server.session_store.remove(value);
+            const nonce = api_session.CsrfNonce.rotate(io);
             try request.respond("", .{
                 .status = .see_other,
                 .keep_alive = false,
                 .extra_headers = &.{
                     .{ .name = "location", .value = "/" },
-                    .{ .name = "set-cookie", .value = cookie_name ++ "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" },
+                    .{ .name = "set-cookie", .value = session_cookie_clear },
+                    .{ .name = "set-cookie", .value = nonce.setCookie() },
                 },
             });
         },
@@ -1191,63 +1385,29 @@ fn handleThreadNew(
             .server => |server| server,
             .local => return respondRemoveNotFound(request),
         };
-        const user_id = actor.user_id orelse return respondLoginRequired(request);
-        if (!evt.Patch.branchValid(target_branch) or !try request_repo.source.hasBranch(io, allocator, target_branch)) {
+        if (actor.user_id == null) return respondLoginRequired(request);
+        const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
+        const identity = ui.RoutablePage.RepoIdentity.parse(repoBaseIdentity(base) orelse return respondRemoveNotFound(request)) orelse return respondRemoveNotFound(request);
+        draft.start(server.users_dir, io, allocator, .{ .source = source, .repo_id = repo_id }, identity.name, actor, &id_bytes, .{
+            .title = title,
+            .labels = labels,
+            .description = description,
+            .target_branch = target_branch,
+        }) catch |err| {
+            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
             const form_location = try allocator.print("{s}/patches/new", .{base});
             defer allocator.free(form_location);
-            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(.invalid_target_branch, title, labels, description, target_branch, null));
-        }
-        const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
-        const repo_user_id = actor.repo_user_id orelse unreachable;
-        const identity = ui.RoutablePage.RepoIdentity.parse(repoBaseIdentity(base) orelse return respondRemoveNotFound(request)) orelse return respondRemoveNotFound(request);
-        const fork_path = try fork.create(.{}, io, allocator, server.users_dir, .{
-            .id = event_id_hex,
-            .user_id = user_id,
-            .repo_id = repo_id,
-            .repo_user_id = repo_user_id,
-            .repo_name = identity.name,
-            .title = title,
-            .description = description,
-            .labels = labels,
-            .target_branch = target_branch,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        });
-        defer allocator.free(fork_path);
-    } else {
-        const event = evt.EventWithId{
-            .id = event_id_hex,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-            .author = author,
-            .event = switch (kind) {
-                .issue => .{ .issue = .{ .title = title, .description = description, .labels = labels } },
-                .patch => .{ .patch = .{ .title = title, .description = description, .labels = labels, .target_branch = target_branch, .source_branch = source_branch } },
-                .discuss => .{ .discuss = .{ .title = title, .description = description, .labels = labels } },
-                else => unreachable,
-            },
+            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, null));
         };
-
-        switch (source.repo_kind) {
-            inline else => |repo_kind| {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                switch (any_repo) {
-                    inline else => |*repo| {
-                        const result = if (kind == .patch)
-                            pch.writeBranchPatch(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, event_id_hex, event.event.patch orelse unreachable, null, author)
-                        else
-                            evt.consume(host.event(), .repo, repo_kind, repo.self_repo_opts, io, allocator, repo, evt.events_ref, &.{event});
-                        result catch |err| {
-                            if (kind != .patch) return err;
-                            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
-                            const form_location = try allocator.print("{s}/patches/new", .{base});
-                            defer allocator.free(form_location);
-                            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, source_branch));
-                        };
-                    },
-                }
-            },
-        }
+    } else if (kind == .patch) {
+        thread_write.createBranchPatch(host.event(), io, allocator, source, &id_bytes, .{ .title = title, .labels = labels, .description = description, .target_branch = target_branch }, source_branch.?, author) catch |err| {
+            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
+            const form_location = try allocator.print("{s}/patches/new", .{base});
+            defer allocator.free(form_location);
+            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, source_branch));
+        };
+    } else {
+        try thread_write.create(host.event(), io, allocator, source, kind, &id_bytes, .{ .title = title, .labels = labels, .description = description }, author);
     }
 
     const location = try allocator.print("{s}/{s}:{s}", .{ base, @tagName(kind), &event_id_hex });
@@ -1296,26 +1456,17 @@ fn handlePatchPublish(
     defer author_arena.deinit();
     // only the draft's author may publish it, which publish checks
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, .patch)) orelse return;
-    const user_id = actor.user_id orelse return respondLoginRequired(request);
-    const author = actor.author;
+    if (actor.user_id == null) return respondLoginRequired(request);
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
     const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
-    var target_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, request_repo.source.localInitOpts());
-    defer target_repo.deinit(io, allocator);
     var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
     defer admin_repo.deinit(io, allocator);
-    const id = std.fmt.bytesToHex(parts.thread_id, .lower);
-    switch (target_repo) {
-        inline else => |*repo| try pch.publish(repo.self_repo_opts, io, allocator, host.event().server, &admin_repo, repo, .{
-            .id = id,
-            .user_id = user_id,
-            .repo_id = repo_id,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        }),
-    }
+    draft.publish(host.event().server, io, allocator, &admin_repo, .{ .source = request_repo.source, .repo_id = repo_id }, actor, &parts.thread_id) catch |err| switch (err) {
+        error.NotFound => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
     try request.respond("", .{
         .status = .see_other,
         .extra_headers = &.{.{ .name = "location", .value = base }},
@@ -1332,45 +1483,47 @@ fn handlePatchMerge(
 ) !void {
     const parts = commentBaseParts(host, base) orelse return respondRemoveNotFound(request);
     if (parts.thread_kind != .patch or parts.comment_id != null) return respondRemoveNotFound(request);
-    const server = switch (host.event()) {
+    const server = switch (host) {
         .server => |server| server,
         .local => return respondRemoveNotFound(request),
     };
-    var author_arena = std.heap.ArenaAllocator.init(allocator);
-    defer author_arena.deinit();
-    const author = ((try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .write, .patch)) orelse return).author;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const author = ((try authorizeWrite(io, allocator, &arena, request, host, parts.repo_base, patch_merge.min_role, .patch)) orelse return).author;
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
-    var target_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, request_repo.source.localInitOpts());
-    defer target_repo.deinit(io, allocator);
 
+    // the form posts what its page showed; a merge checks it again
+    const reviewed = try mergeFormReviewed(arena.allocator(), request.head.target);
     const id = std.fmt.bytesToHex(parts.thread_id, .lower);
-    const merged = switch (target_repo) {
-        inline else => |*repo| pch.mergeAndRemoveFork(repo.self_repo_opts, io, allocator, server, repo, .{
-            .id = id,
-            .revision = revision,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        }),
-    };
-    merged catch |err| switch (err) {
-        error.MergeConflict => return request.respond("merge conflict", .{
-            .status = .conflict,
-            .keep_alive = false,
-            .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
-        }),
-        error.MergeCheckUnavailable, error.PatchOutOfDate, error.PatchDataUnavailable => {},
-        else => return err,
-    };
+    const refusal = try patch_merge.merge(host.event().server, io, allocator, request_repo.source, author, &parts.thread_id, revision, reviewed);
+    if (refusal) |failure| {
+        const merge_page = try arena.allocator().print("{s}/patch:{s}/merge", .{ parts.repo_base, &id });
+        return respondFormFailure(request, allocator, server.session_store, merge_page, .{ .merge = .{ .failure = failure } });
+    }
 
-    const location = try allocator.print("{s}/patch:{s}", .{ parts.repo_base, &id });
-    defer allocator.free(location);
+    const location = try arena.allocator().print("{s}/patch:{s}", .{ parts.repo_base, &id });
     try request.respond("", .{
         .status = .see_other,
         .keep_alive = false,
         .extra_headers = &.{.{ .name = "location", .value = location }},
     });
+}
+
+// what a merge form's page showed, from its query; a form without it
+// names nothing a merge can match
+fn mergeFormReviewed(aa: std.mem.Allocator, target: []const u8) !patch_merge.Reviewed {
+    const query = if (std.mem.indexOfScalar(u8, target, '?')) |start| target[start + 1 ..] else "";
+    const read = struct {
+        fn param(arena: std.mem.Allocator, text: []const u8, name: []const u8) ![]const u8 {
+            return (query_params.param(arena, text, name) catch |err| switch (err) {
+                error.InvalidPercentEncoding => null,
+                else => |e| return e,
+            }) orelse "";
+        }
+    };
+    return .{ .revision = try read.param(aa, query, "revision"), .target_commit = try read.param(aa, query, "target") };
 }
 
 // create a reply and redirect to its permalink.
@@ -1412,7 +1565,6 @@ fn handleCommentNew(
     }
 
     const thread_id_hex = std.fmt.bytesToHex(parts.thread_id, .lower);
-    const parent_id_hex = std.fmt.bytesToHex(parts.comment_id orelse parts.thread_id, .lower);
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse {
         try request.respond(not_found, .{
@@ -1422,24 +1574,17 @@ fn handleCommentNew(
         return;
     };
     defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    var event_id_hex: [evt.event_id_size * 2]u8 = undefined;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| event_id_hex = evt.Comment.create(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &thread_id_hex, &parent_id_hex, body, author) catch |err| switch (err) {
-                    // the url's thread or parent comment isn't what it claims
-                    error.NotFound => return request.respond(not_found, .{
-                        .status = .not_found,
-                        .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
-                    }),
-                    else => |e| return e,
-                },
-            }
-        },
-    }
+    var event_id: [evt.event_id_size]u8 = undefined;
+    io.random(&event_id);
+    thread_write.comment(host.event(), io, allocator, request_repo.source, parts.thread_kind, &parts.thread_id, if (parts.comment_id) |*parent| parent else null, &event_id, body, author) catch |err| switch (err) {
+        // the url's thread or parent comment isn't what it claims
+        error.NotFound => return request.respond(not_found, .{
+            .status = .not_found,
+            .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
+        }),
+        else => |e| return e,
+    };
+    const event_id_hex = std.fmt.bytesToHex(event_id, .lower);
 
     const location = try allocator.print("{s}/{s}:{s}/comment:{s}", .{ parts.repo_base, @tagName(parts.thread_kind), &thread_id_hex, &event_id_hex });
     defer allocator.free(location);
@@ -1480,82 +1625,12 @@ fn serveAttachment(
             var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
             defer any_repo.deinit(io, allocator);
             switch (any_repo) {
-                inline else => |*repo| try sendAttachment(repo_kind, repo.self_repo_opts, io, request, allocator, repo, &attachment.id),
+                // the shared read check and headers (`attachment.send`), as
+                // the JSON API serves them
+                inline else => |*repo| if (!try shared_attachment.send(repo_kind, repo.self_repo_opts, io, request, allocator, repo, &attachment.id, null)) return respondAttachmentNotFound(request),
             }
         },
     }
-}
-
-fn sendAttachment(
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    io: std.Io,
-    request: *std.http.Server.Request,
-    allocator: std.mem.Allocator,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    id: *const [evt.event_id_size]u8,
-) !void {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const DB = evt.EventDB(repo_opts.hash);
-    var event_db_maybe: ?evt.LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, allocator, repo.core.repo_dir) else null;
-    defer if (event_db_maybe) |*event_db| event_db.deinit(io, allocator);
-    const haxy_moment = (if (event_db_maybe) |*event_db|
-        evt.currentMomentFromDb(repo_opts.hash, event_db.db)
-    else if (repo_kind == .git)
-        return respondAttachmentNotFound(request)
-    else
-        evt.currentMoment(repo_opts, repo)) catch return respondAttachmentNotFound(request);
-
-    const record = (try evt.Attachment.readById(DB, repo_opts.hash, haxy_moment, &arena, id)) orelse return respondAttachmentNotFound(request);
-    if (record.removed) return respondAttachmentNotFound(request);
-    if (record.blob_oid.len != hash.hexLen(repo_opts.hash)) return respondAttachmentNotFound(request);
-    const blob_oid: *const [hash.hexLen(repo_opts.hash)]u8 = @ptrCast(record.blob_oid.ptr);
-
-    var moment = repo.core.latestMoment() catch return respondAttachmentNotFound(request);
-    const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
-    var object_reader = obj.ObjectReader(repo_kind, repo_opts).init(state, io, allocator, blob_oid) catch return respondAttachmentNotFound(request);
-    defer object_reader.deinit();
-    if (object_reader.header().kind != .blob) return respondAttachmentNotFound(request);
-
-    const content_type = attachmentContentType(record.name);
-    const encoded_name = try ui.urlEncodeRef(allocator, record.name);
-    defer allocator.free(encoded_name);
-    const disposition = try allocator.print("{s}; filename*=UTF-8''{s}", .{ if (content_type == null) "attachment" else "inline", encoded_name });
-    defer allocator.free(disposition);
-
-    var send_buf: [8192]u8 = undefined;
-    var body = try request.respondStreaming(&send_buf, .{
-        .content_length = object_reader.header().size,
-        .respond_options = .{
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = content_type orelse "application/octet-stream" },
-                .{ .name = "content-disposition", .value = disposition },
-                // uploaded bytes are never sniffed into a type that could run
-                // as script on this origin
-                .{ .name = "x-content-type-options", .value = "nosniff" },
-            },
-        },
-    });
-    _ = try object_reader.interface.streamRemaining(&body.writer);
-    try body.end();
-}
-
-// the images a browser renders safely inline. anything else downloads as
-// opaque bytes, so an uploaded page can't run on this origin.
-fn attachmentContentType(name: []const u8) ?[]const u8 {
-    const types = [_]struct { ext: []const u8, value: []const u8 }{
-        .{ .ext = ".png", .value = "image/png" },
-        .{ .ext = ".jpg", .value = "image/jpeg" },
-        .{ .ext = ".jpeg", .value = "image/jpeg" },
-        .{ .ext = ".gif", .value = "image/gif" },
-        .{ .ext = ".webp", .value = "image/webp" },
-    };
-    for (types) |entry| {
-        if (name.len > entry.ext.len and std.ascii.eqlIgnoreCase(name[name.len - entry.ext.len ..], entry.ext)) return entry.value;
-    }
-    return null;
 }
 
 fn respondAttachmentNotFound(request: *std.http.Server.Request) !void {
@@ -1608,38 +1683,31 @@ fn handleAttach(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.kind)) orelse return;
-    const author = actor.author;
-    // an attachment changes the event it hangs off
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondAttachmentTargetNotFound(request);
     defer request_repo.deinit(allocator);
     const source = request_repo.source;
-    if (!try source.canModify(io, allocator, actor, parts.kind, &parts.id_bytes)) return respondForbidden(request);
 
-    const name = (try attachmentName(allocator, request)) orelse return respondUploadError(request, .bad_request, "attachment needs a name");
-    defer allocator.free(name);
-    if (!evt.Attachment.nameValid(name)) return respondUploadError(request, .bad_request, "invalid attachment name");
+    const name = try attachmentName(allocator, request);
+    defer if (name) |value| allocator.free(value);
+    // the shared upload rules, as the JSON API checks them
+    const length = shared_attachment.declaredLength(request.head.content_length, request.head.transfer_encoding);
+    if (shared_attachment.checkUpload(name, length)) |failure| return switch (failure) {
+        .name_required => respondUploadError(request, .bad_request, "attachment needs a name"),
+        .invalid_name => respondUploadError(request, .bad_request, "invalid attachment name"),
+        .length_required => respondUploadError(request, .length_required, "attachments must declare a content length"),
+        .empty => respondUploadError(request, .bad_request, "attachment is empty"),
+        .too_large => respondUploadError(request, .payload_too_large, "attachment is too large"),
+    };
 
-    const size = request.head.content_length orelse return respondUploadError(request, .length_required, "attachments must declare a content length");
-    if (size == 0) return respondUploadError(request, .bad_request, "attachment is empty");
-    if (size > evt.Attachment.max_size) return respondUploadError(request, .payload_too_large, "attachment is too large");
-
-    const target_id_hex = std.fmt.bytesToHex(parts.id_bytes, .lower);
-
+    var id: [evt.event_id_size]u8 = undefined;
+    io.random(&id);
     var body_buf: [4096]u8 = undefined;
-    const blob: evt.Blob = .{ .name = name, .size = size, .reader = try request.readerExpectContinue(&body_buf) };
-
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| _ = evt.Attachment.create(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.kind, &target_id_hex, blob, author) catch |err| switch (err) {
-                    error.TargetNotFound => return respondAttachmentTargetNotFound(request),
-                    else => return err,
-                },
-            }
-        },
-    }
+    const blob: evt.Blob = .{ .name = name.?, .size = length.?, .reader = try request.readerExpectContinue(&body_buf) };
+    thread_write.attach(host.event(), io, allocator, source, actor, parts.kind, &parts.id_bytes, &id, blob) catch |err| switch (err) {
+        error.NotFound => return respondAttachmentTargetNotFound(request),
+        error.Forbidden => return respondForbidden(request),
+        else => return err,
+    };
 
     // the client reloads the page itself
     try request.respond("", .{ .status = .no_content, .keep_alive = false });
@@ -1662,45 +1730,27 @@ fn handleAssign(
     const actor = (try authorizeWrite(io, allocator, &arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    if (!try source.canModify(io, allocator, actor, parts.thread_kind, &parts.thread_id)) return respondForbidden(request);
 
     const text = blk: {
         const body = try readFormBody(request, allocator);
         defer allocator.free(body);
         break :blk (try parseFormField(arena.allocator(), body, "assignee")) orelse "";
     };
-    const failure: ?ui.Session.FormFeedback.AssignmentFailure = blk: {
-        const lookup = switch (host) {
-            .local => try ui.assigneeEmail(null, &arena, text),
-            .server => |server| server: {
-                var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
-                defer admin_repo.deinit(io, allocator);
-                break :server try ui.assigneeEmail(try evt.currentMoment(evt.admin_repo_opts, &admin_repo), &arena, text);
-            },
-        };
-        const email = switch (lookup) {
-            .email => |email| email,
-            .failure => |value| break :blk value,
-        };
-        const thread_id_hex = std.fmt.bytesToHex(parts.thread_id, .lower);
-        switch (source.repo_kind) {
-            inline else => |repo_kind| {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                switch (any_repo) {
-                    inline else => |*repo| _ = evt.Assignment.create(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &thread_id_hex, email, actor.author) catch |err| switch (err) {
-                        error.AlreadyAssigned => break :blk .already_assigned,
-                        error.InvalidFields => break :blk .not_an_email,
-                        error.NotFound => return respondRemoveNotFound(request),
-                        else => |e| return e,
-                    },
-                }
-            },
-        }
-        break :blk null;
+    var admin_repo_maybe: ?rp.Repo(.xit, evt.admin_repo_opts) = switch (host) {
+        .local => null,
+        .server => |server| try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path }),
     };
-    if (failure) |value| return respondThreadFormFailure(request, allocator, host, base, .{ .assignment = .{ .failure = value, .text = text } });
+    defer if (admin_repo_maybe) |*admin_repo| admin_repo.deinit(io, allocator);
+    const admin_moment = if (admin_repo_maybe) |*admin_repo| try evt.currentMoment(evt.admin_repo_opts, admin_repo) else null;
+    const assigned = thread_write.assign(host.event(), io, allocator, request_repo.source, actor, admin_moment, parts.thread_kind, &parts.thread_id, text) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
+        error.NotFound => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
+    switch (assigned) {
+        .assigned => {},
+        .refused => |failure| return respondThreadFormFailure(request, allocator, host, base, .{ .assignment = .{ .failure = failure, .text = text } }),
+    }
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = base }} });
 }
 
@@ -1725,21 +1775,12 @@ fn handleUnassign(
     const actor = (try authorizeWrite(io, allocator, &arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    if (!try source.canModify(io, allocator, actor, parts.thread_kind, &parts.thread_id)) return respondForbidden(request);
 
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| evt.removeInThread(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &parts.thread_id, .assign, &evt.Assignment.idOf(&parts.thread_id, email), actor.author) catch |err| switch (err) {
-                    error.EventNotFound => return respondRemoveNotFound(request),
-                    else => |e| return e,
-                },
-            }
-        },
-    }
+    thread_write.unassign(host.event(), io, allocator, request_repo.source, actor, parts.thread_kind, &parts.thread_id, &evt.Assignment.idOf(&parts.thread_id, email)) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
+        error.NotFound, error.NotAssigned => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = thread_url }} });
 }
 
@@ -1769,7 +1810,8 @@ fn handleNotify(
     };
 
     switch (mode) {
-        .subscribe => try notify.subscribe(io, allocator, users_dir, &user_id, location, &parts.thread_id, actor.author),
+        // a full subscribed tier leaves the page as it was; only the JSON API reports it
+        .subscribe => _ = try notify.subscribe(io, allocator, users_dir, &user_id, location, &parts.thread_id, actor.author),
         .mute => try notify.mute(io, allocator, users_dir, &user_id, location, &parts.thread_id, actor.author),
     }
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = base }} });
@@ -1789,32 +1831,6 @@ fn respondUploadError(request: *std.http.Server.Request, status: std.http.Status
         .keep_alive = false,
         .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
     });
-}
-
-// re-emit the comment `parts` names with a new body, in the repo the host
-// resolves the base to.
-fn updateComment(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    host: Host,
-    parts: CommentBaseParts,
-    body: []const u8,
-    author: evt.CommitAuthor,
-) !void {
-    const comment_id = parts.comment_id orelse return error.NotFound;
-    const thread_id = std.fmt.bytesToHex(parts.thread_id, .lower);
-    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return error.NotFound;
-    defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try evt.Comment.update(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &thread_id, &comment_id, body, author),
-            }
-        },
-    }
 }
 
 // edit actions share a suffix; the base identifies the event being edited.
@@ -1843,14 +1859,11 @@ fn handleCommentEdit(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
     // edits only reach here for a comment
     const comment_id = parts.comment_id orelse unreachable;
-    {
-        const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
-        defer request_repo.deinit(allocator);
-        if (!try request_repo.source.canModify(io, allocator, actor, .comment, &comment_id)) return respondForbidden(request);
-    }
+    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
+    defer request_repo.deinit(allocator);
+    if (!try request_repo.source.canModify(io, allocator, actor, .comment, &comment_id)) return respondForbidden(request);
 
     const form_body = try readFormBody(request, allocator);
     defer allocator.free(form_body);
@@ -1869,15 +1882,16 @@ fn handleCommentEdit(
         return;
     }
 
-    const not_found = "comment not found";
-    updateComment(io, allocator, host, parts, body, author) catch |err| switch (err) {
-        error.NotFound => {
-            try request.respond(not_found, .{
+    // the form replaces the body as it is, without a revision, as before
+    thread_write.editComment(host.event(), io, allocator, request_repo.source, actor, parts.thread_kind, &parts.thread_id, &comment_id, body, null) catch |err| switch (err) {
+        error.NotFound, error.Removed => {
+            try request.respond("comment not found", .{
                 .status = .not_found,
                 .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
             });
             return;
         },
+        error.Forbidden => return respondForbidden(request),
         else => |e| return e,
     };
 
@@ -1885,30 +1899,6 @@ fn handleCommentEdit(
         .status = .see_other,
         .extra_headers = &.{.{ .name = "location", .value = base }},
     });
-}
-
-fn updateThread(
-    comptime Event: type,
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    host: Host,
-    repo_base: []const u8,
-    id: *const [evt.event_id_size]u8,
-    update: Event.Update,
-    author: evt.CommitAuthor,
-) !void {
-    const request_repo = (try requestRepoSource(io, allocator, host, repo_base)) orelse return error.NotFound;
-    defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try Event.update(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, id, update, author),
-            }
-        },
-    }
 }
 
 const RemoveParts = struct {
@@ -1955,7 +1945,6 @@ fn handleRemove(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
 
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
@@ -1963,44 +1952,29 @@ fn handleRemove(
 
     if (parts.kind == .patch) switch (host) {
         .server => |server| {
-            const user_id = actor.user_id orelse return respondLoginRequired(request);
-
-            // a draft lives in its author's user repo
-            if (try evt.readForkById(io, allocator, &author_arena, server.users_dir, &user_id, &parts.id)) |fork_record| {
-                const repo_id = evt.parseEventId(std.Io.Dir.path.basename(source.path)) catch return respondRemoveNotFound(request);
-                if (!fork_record.removed and fork_record.event.stage == .draft and std.mem.eql(u8, &fork_record.event.repo_id, &std.fmt.bytesToHex(repo_id, .lower))) {
-                    const id = std.fmt.bytesToHex(parts.id, .lower);
-                    try fork.remove(io, allocator, server.users_dir, &user_id, &id, author);
-
-                    const location = try allocator.print("{s}/patches/drafts", .{parts.repo_base});
-                    defer allocator.free(location);
-                    try request.respond("", .{
-                        .status = .see_other,
-                        .keep_alive = false,
-                        .extra_headers = &.{.{ .name = "location", .value = location }},
-                    });
-                    return;
-                }
-            }
+            if (actor.user_id == null) return respondLoginRequired(request);
+            const repo_id = evt.parseEventId(std.Io.Dir.path.basename(source.path)) catch return respondRemoveNotFound(request);
+            // the actor's own draft, or else a published patch
+            if (draft.remove(server.users_dir, io, allocator, &repo_id, actor, &parts.id)) {
+                const location = try allocator.print("{s}/patches/drafts", .{parts.repo_base});
+                defer allocator.free(location);
+                try request.respond("", .{
+                    .status = .see_other,
+                    .keep_alive = false,
+                    .extra_headers = &.{.{ .name = "location", .value = location }},
+                });
+                return;
+            } else |err| if (err != error.NotFound) return err;
         },
         .local => {},
     };
 
     // a draft is its author's alone, which its removal above checks
-    if (!try source.canModify(io, allocator, actor, parts.kind, &parts.id)) return respondForbidden(request);
-
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| evt.removeInThread(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &parts.thread_id, parts.kind, &parts.id, author) catch |err| switch (err) {
-                    error.EventNotFound => return respondRemoveNotFound(request),
-                    else => |e| return e,
-                },
-            }
-        },
-    }
+    thread_write.remove(host.event(), io, allocator, source, actor, parts.thread_kind, &parts.thread_id, parts.kind, &parts.id) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
+        error.NotFound => return respondRemoveNotFound(request),
+        else => |e| return e,
+    };
 
     // back to the thread a comment or attachment was on, or to the list a thread left
     const location = if (parts.kind == parts.thread_kind)
@@ -2032,31 +2006,6 @@ fn respondRemoveNotFound(request: *std.http.Server.Request) !void {
     });
 }
 
-fn updateDiscussion(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    host: Host,
-    repo_base: []const u8,
-    id: *const [evt.event_id_size]u8,
-    title: []const u8,
-    labels: []const u8,
-    description: []const u8,
-    author: evt.CommitAuthor,
-) !void {
-    const request_repo = (try requestRepoSource(io, allocator, host, repo_base)) orelse return error.NotFound;
-    defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try evt.Discussion.update(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, id, title, labels, description, author),
-            }
-        },
-    }
-}
-
 // set the status of the issue the url names (base is
 // "/<owner>:<name>/issue:<id>", identity elided in local mode) by
 // re-emitting its event, then redirect back to it
@@ -2080,18 +2029,15 @@ fn handleThreadStatus(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
-    {
-        const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
-        defer request_repo.deinit(allocator);
-        if (!try request_repo.source.canModify(io, allocator, actor, parts.thread_kind, &parts.thread_id)) return respondForbidden(request);
-    }
+    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
+    defer request_repo.deinit(allocator);
 
     (switch (parts.thread_kind) {
-        .issue => updateThread(evt.Issue, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .status = if (open) .open else .closed }, author),
-        .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .status = if (open) .open else .closed }, author),
+        .issue => thread_write.setStatus(evt.Issue, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, if (open) .open else .closed),
+        .patch => thread_write.setStatus(evt.Patch, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, if (open) .open else .closed),
         else => return respondRemoveNotFound(request),
     }) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
         error.NotFound => {
             try request.respond(not_found, .{
                 .status = .not_found,
@@ -2123,7 +2069,6 @@ fn handleThreadEdit(
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
@@ -2164,37 +2109,31 @@ fn handleThreadEdit(
     const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
     defer request_repo.deinit(allocator);
 
-    const draft_user_id = if (parts.thread_kind == .patch) actor.user_id else null;
-    if (draft_user_id) |user_id| {
+    if (parts.thread_kind == .patch and actor.user_id != null) {
         const server = switch (host) {
             .server => |server| server,
             .local => unreachable,
         };
-        if (!evt.Patch.branchValid(target_branch) or !try request_repo.source.hasBranch(io, allocator, target_branch)) {
-            const form_location = try allocator.print("{s}/edit", .{base});
-            defer allocator.free(form_location);
-            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(.invalid_target_branch, title, labels, description, target_branch, null));
-        }
         const repo_id = evt.parseEventId(std.Io.Dir.path.basename(request_repo.source.path)) catch return respondRemoveNotFound(request);
         var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
         defer admin_repo.deinit(io, allocator);
-        const id = std.fmt.bytesToHex(parts.thread_id, .lower);
-        if (try pch.editDraft(.{}, io, allocator, server.users_dir, &admin_repo, .{
-            .id = id,
-            .user_id = user_id,
-            .repo_id = repo_id,
+        // the actor's own draft, or else a published patch
+        if (draft.edit(server.users_dir, io, allocator, &admin_repo, .{ .source = request_repo.source, .repo_id = repo_id }, actor, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .description = description,
             .target_branch = target_branch,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        })) {
+        }, null)) {
             try request.respond("", .{
                 .status = .see_other,
                 .extra_headers = &.{.{ .name = "location", .value = base }},
             });
             return;
+        } else |err| if (err != error.NotFound) {
+            const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
+            const form_location = try allocator.print("{s}/edit", .{base});
+            defer allocator.free(form_location);
+            return respondThreadFormFailure(request, allocator, host, form_location, patchFeedback(failure, title, labels, description, target_branch, null));
         }
     }
 
@@ -2208,20 +2147,25 @@ fn handleThreadEdit(
         else => unreachable,
     };
     (switch (parts.thread_kind) {
-        .issue => updateThread(evt.Issue, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .fields = .{
+        .issue => thread_write.edit(host.event(), io, allocator, request_repo.source, actor, .issue, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .description = description,
-        } }, author),
-        .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .fields = .{
+        }, null),
+        .patch => thread_write.edit(host.event(), io, allocator, request_repo.source, actor, .patch, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .description = description,
             .target_branch = target_branch,
-        } }, author),
-        .discuss => updateDiscussion(io, allocator, host, parts.repo_base, &parts.thread_id, title, labels, description, author),
+        }, null),
+        .discuss => thread_write.edit(host.event(), io, allocator, request_repo.source, actor, .discuss, &parts.thread_id, .{
+            .title = title,
+            .labels = labels,
+            .description = description,
+        }, null),
         else => unreachable,
     }) catch |err| switch (err) {
+        error.Forbidden => return respondForbidden(request),
         error.NotFound => {
             try request.respond(not_found, .{
                 .status = .not_found,
@@ -2262,7 +2206,7 @@ fn handleThreadResolve(
 
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
-    const author = ((try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .write, parts.thread_kind)) orelse return).author;
+    const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .write, parts.thread_kind)) orelse return;
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
@@ -2304,18 +2248,20 @@ fn handleThreadResolve(
     };
     const not_found = if (parts.thread_kind == .patch) "patch not found" else "issue not found";
 
+    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRepoNotFound(request);
+    defer request_repo.deinit(allocator);
     (switch (parts.thread_kind) {
-        .issue => updateThread(evt.Issue, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .resolve = .{
+        .issue => thread_write.resolve(evt.Issue, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .hunks = hunks.items,
-        } }, author),
-        .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .resolve = .{
+        }),
+        .patch => thread_write.resolve(evt.Patch, host.event(), io, allocator, request_repo.source, actor, &parts.thread_id, .{
             .title = title,
             .labels = labels,
             .hunks = hunks.items,
             .theirs = theirs,
-        } }, author),
+        }),
         else => unreachable,
     }) catch |err| switch (err) {
         error.NotFound => {
@@ -2325,8 +2271,10 @@ fn handleThreadResolve(
             });
             return;
         },
-        // invalid fields send the user back to the resolve form
-        error.InvalidFields => {
+        error.Forbidden => return respondForbidden(request),
+        // invalid fields, or a patch that changed meanwhile, send the user
+        // back to the resolve form
+        error.InvalidFields, error.Stale => {
             const form_location = try allocator.print("{s}/resolve", .{base});
             defer allocator.free(form_location);
             try request.respond("", .{
@@ -2356,7 +2304,7 @@ fn handleUndo(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.
     _ = (try authorizeWrite(io, allocator, &arena, request, host, repo_base, .owner, null)) orelse return;
     const resolved = (try requestRepoSource(io, allocator, host, repo_base)) orelse return respondRepoNotFound(request);
     defer resolved.deinit(allocator);
-    ui.Repo.Undo.execute(io, allocator, resolved.source, target.index orelse return respondRepoNotFound(request)) catch |err| switch (err) {
+    _ = ui.Repo.Undo.execute(io, allocator, resolved.source, target.index orelse return respondRepoNotFound(request), null, null) catch |err| switch (err) {
         error.NotFound, error.InvalidHistoryIndex, error.TransactionNotFound => return respondRepoNotFound(request),
         else => return err,
     };
@@ -3079,7 +3027,7 @@ fn isSameOrigin(request: *std.http.Server.Request) bool {
     return std.ascii.eqlIgnoreCase(origin[scheme_end + "://".len ..], host);
 }
 
-fn getCookieValue(request: *std.http.Server.Request, name: []const u8) ?[]const u8 {
+pub fn getCookieValue(request: *std.http.Server.Request, name: []const u8) ?[]const u8 {
     var iter = request.iterateHeaders();
     while (iter.next()) |header| {
         if (!std.ascii.eqlIgnoreCase(header.name, "cookie")) continue;

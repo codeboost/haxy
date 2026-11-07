@@ -363,7 +363,7 @@ pub const GitCommand = struct {
 
 pub const CloneCommands = struct {
     list: []const GitCommand,
-    // the one a viewer starts on: ssh for whoever can push, else the first
+    // the one a viewer starts on: ssh when the host offers it, else the first
     preferred: usize,
 };
 
@@ -393,7 +393,7 @@ pub fn cloneCommands(aa: std.mem.Allocator, data: ui.Session.Data, handle: ui.Re
     }
     return .{
         .list = list.items,
-        .preferred = if (handle.canWrite()) ssh_index orelse 0 else 0,
+        .preferred = ssh_index orelse 0,
     };
 }
 

@@ -2215,6 +2215,11 @@ pub const RepoSource = struct {
     // read whoever runs the server.
     global_config_path: ?[]const u8 = null,
 
+    // snapshots can be read from any website, so they must not reveal where repos live on disk
+    pub fn jsonStringify(self: RepoSource, jw: anytype) !void {
+        try jw.write(.{ .path = "", .repo_kind = self.repo_kind });
+    }
+
     pub fn localInitOpts(self: RepoSource) rp.InitOpts {
         return .{ .path = self.path, .global_config_path = self.global_config_path };
     }

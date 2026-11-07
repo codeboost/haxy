@@ -34,7 +34,7 @@ fn handle(access: evt.Repo.Access, role: ?evt.Repo.Role) ui.RepoHandle {
     };
 }
 
-test "clone commands use the host's own urls; only a public repo clones over http, and pushers start on ssh" {
+test "clone commands use the host's own urls; only a public repo clones over http, and everyone starts on ssh" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const aa = arena.allocator();
@@ -45,7 +45,7 @@ test "clone commands use the host's own urls; only a public repo clones over htt
     try std.testing.expectEqualStrings("http://haxy.test/bobby:linux", public.list[0].url);
     try std.testing.expectEqualStrings("git clone http://haxy.test/bobby:linux", public.list[0].command);
     try std.testing.expectEqualStrings("GIT_SSH_COMMAND='ssh -p 2222' git clone ssh://haxy.test:2222/bobby:linux", public.list[1].command);
-    try std.testing.expectEqual(0, public.preferred);
+    try std.testing.expectEqual(1, public.preferred);
     try std.testing.expectEqual(1, (try ui.widget.cloneCommands(aa, data(.server, "ssh://haxy.test:2222"), handle(.public, .write))).preferred);
 
     const private = try ui.widget.cloneCommands(aa, data(.server, "ssh://haxy.test:2222"), handle(.private, .read));

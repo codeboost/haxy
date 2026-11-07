@@ -131,6 +131,9 @@ pub const Context = struct {
     admin_moment: ?evt.AdminDB.HashMap(.read_only) = null,
     handle: ui.RepoHandle,
     host_kind: evt.HostKind,
+    // where a branch's, tag's or commit's history stops (a fork's base), ""
+    // for its root
+    base_oid: []const u8 = "",
 };
 
 /// a commit as the history lists it
@@ -311,7 +314,7 @@ pub fn writeListAt(
                     .commit => resolved.ref.commit,
                     .revision => unreachable,
                 },
-                "",
+                context.base_oid,
             };
         },
     };

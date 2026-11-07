@@ -28,6 +28,7 @@ pub const Route = union(enum) {
     // the user name, still percent-encoded
     user: []const u8,
     user_repos: []const u8,
+    user_forks: []const u8,
 };
 
 /// the discovery route `path` names, or null when it names none
@@ -40,8 +41,10 @@ pub fn route(path: []const u8) ?Route {
     if (std.mem.startsWith(u8, rest, "users/")) {
         const tail = rest["users/".len..];
         const slash = std.mem.indexOfScalar(u8, tail, '/') orelse return if (tail.len > 0) .{ .user = tail } else null;
-        if (slash == 0 or !std.mem.eql(u8, tail[slash..], "/repos")) return null;
-        return .{ .user_repos = tail[0..slash] };
+        if (slash == 0) return null;
+        if (std.mem.eql(u8, tail[slash..], "/repos")) return .{ .user_repos = tail[0..slash] };
+        if (std.mem.eql(u8, tail[slash..], "/forks")) return .{ .user_forks = tail[0..slash] };
+        return null;
     }
     return null;
 }
@@ -125,9 +128,47 @@ pub fn handle(
             // no count: counting would reveal repos the viewer can't read
             try api.writePage(&body.writer, items, .{ .next_cursor = try query_params.Page.nextCursor(aa, found.next_start), .count = .unknown });
         },
+        .user_forks => |encoded_name| {
+            const haxy_moment = session.haxy_moment orelse return error.NoMoment;
+            const user_id, _ = (try ui.User.readUser(&arena, haxy_moment, try decodeSegment(aa, encoded_name))) orelse
+                return respondUserNotFound(request, allocator);
+            const page = switch (try query_params.Page.parse(aa, query, .{ .default = ui.User.page_size, .max = max_page_size })) {
+                .ok => |page| page,
+                .invalid => |err| return api.respondError(request, allocator, err, .{}),
+            };
+            // a user with no user repo has no forks
+            var user_repo_maybe = try evt.openUserRepo(io, allocator, server.users_dir, &user_id);
+            defer if (user_repo_maybe) |*user_repo| user_repo.deinit(io, allocator);
+            const moment = if (user_repo_maybe) |*user_repo| try evt.userMoment(user_repo) else null;
+            const found = if (moment) |value|
+                try ui.User.readForks(&arena, io, server.users_dir, user_id, value, session.userId(), page.start, page.limit, .readable)
+            else
+                ui.User.ForksWindow.empty;
+            const items = try aa.alloc(ForkItem, found.forks.len);
+            for (found.forks, items) |fork_item, *item| item.* = .{
+                .id = fork_item.id,
+                .name = fork_item.repo_name,
+                .title = fork_item.title,
+                .access = fork_item.access,
+                .target_deleted = fork_item.access == null,
+            };
+            // no count: counting would reveal forks the viewer can't see
+            try api.writePage(&body.writer, items, .{ .next_cursor = try query_params.Page.nextCursor(aa, found.next_start), .count = .unknown });
+        },
     }
     return api.respondJson(request, body.written(), .{});
 }
+
+// a fork as a user's fork list shows it
+const ForkItem = struct {
+    id: []const u8,
+    // the name of the repo it was made from
+    name: []const u8,
+    title: []const u8,
+    // its target's, which it shares; null once the target is gone
+    access: ?evt.Repo.Access,
+    target_deleted: bool,
+};
 
 // the decoded `search` parameter ("" when absent), or null after answering
 // with a validation error

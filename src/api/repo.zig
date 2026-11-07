@@ -227,7 +227,7 @@ fn writeOverview(
     return null;
 }
 
-fn writeFiles(
+pub fn writeFiles(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     io: std.Io,

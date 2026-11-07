@@ -52,10 +52,6 @@ pub fn init(
     forks_start: usize,
     user_tab: ui.RoutablePage.UserTab,
 ) !Self {
-    // admin and user repos share one db type
-    const DB = evt.AdminDB;
-    const hash_kind = evt.admin_repo_opts.hash;
-
     // a route identifies a user by name, which everything below keys off of
     const user_id, const user = (try readUser(arena, haxy_moment, name.slice())) orelse return error.NotFound;
 
@@ -73,56 +69,7 @@ pub fn init(
     const repos = repos_window.repos;
     const repos_next_start = repos_window.next_start;
 
-    var forks: std.ArrayList(ForkItem) = .empty;
-    var forks_next_start: ?usize = null;
-    if (user_moment) |moment| {
-        if (try moment.getCursor(hash.hashInt(hash_kind, evt.Fork.active_id_set_key))) |user_forks_cursor| {
-            const user_forks = try DB.SortedSet(.read_only).init(user_forks_cursor);
-            const count = try user_forks.count();
-            const end = @min(forks_start +| page_size, count);
-            var iter = try user_forks.iteratorFromIndex(forks_start);
-            var i = forks_start;
-            while (i < end) : (i += 1) {
-                const kv_cursor = (try iter.next()) orelse break;
-                const fork_id = try evt.readOrderKeyId(DB, kv_cursor);
-                const fork_id_hex = std.fmt.bytesToHex(fork_id, .lower);
-                const record = (try evt.Fork.readById(DB, hash_kind, moment, arena, &fork_id)) orelse continue;
-
-                // the target lives in its owner's user repo
-                const owner_id = try evt.parseEventId(&record.event.repo_user_id);
-                // a deleted target, or one whose owner was deleted, leaves the fork to its forker
-                const target = try evt.readRepoById(io, gpa, arena, users_dir, &owner_id, &try evt.parseEventId(&record.event.repo_id), session.userId());
-                if (target) |value| {
-                    if (value.role == null) continue;
-                    // patches that are off take their drafts with them
-                    if (value.repo.event.patch_role == null) continue;
-                } else {
-                    const viewer_id = session.userId() orelse continue;
-                    if (!std.mem.eql(u8, &viewer_id, &user_id)) continue;
-                }
-
-                var title: []const u8 = "(unavailable)";
-                const path = try fork.forkPath(arena.allocator(), users_dir, &user_id, &fork_id);
-                if (rp.AnyRepo(.xit, .{}).open(io, gpa, .{ .path = path, .require_repo_root = true })) |opened| {
-                    var any_fork = opened;
-                    defer any_fork.deinit(io, gpa);
-                    switch (any_fork) {
-                        inline else => |*fork_repo| if (evt.currentMoment(fork_repo.self_repo_opts, fork_repo)) |fork_moment| {
-                            const kind = fork_repo.self_repo_opts.hash;
-                            if (try evt.Patch.readById(evt.EventDB(kind), kind, fork_moment, arena, &fork_id)) |patch| title = patch.event.title;
-                        } else |_| {},
-                    }
-                } else |_| {}
-                try forks.append(arena.allocator(), .{
-                    .id = try arena.allocator().dupe(u8, &fork_id_hex),
-                    .repo_name = record.event.repo_name,
-                    .access = if (target) |value| value.repo.event.read_access else null,
-                    .title = title,
-                });
-            }
-            forks_next_start = if (end < count) end else null;
-        }
-    }
+    const forks_window = if (user_moment) |moment| try readForks(arena, io, users_dir, user_id, moment, session.userId(), forks_start, page_size, .entries) else ForksWindow.empty;
 
     return .{
         .header = try Header.init(arena, user.event.name),
@@ -131,9 +78,9 @@ pub fn init(
         .repos_start = repos_start,
         .repos_next_start = repos_next_start,
         .repos_search = search,
-        .forks = forks.items,
+        .forks = forks_window.forks,
         .forks_start = forks_start,
-        .forks_next_start = forks_next_start,
+        .forks_next_start = forks_window.next_start,
         .user_notifications = try ui.UserNotifications.init(arena, session, user_tab),
         .quit = Quit.init(),
     };
@@ -258,6 +205,108 @@ const Window = struct {
         return true;
     }
 };
+
+pub const ForksWindow = struct {
+    forks: []const ForkItem,
+    // the `start` of the following window, or null when this is the last
+    next_start: ?usize,
+
+    pub const empty: ForksWindow = .{ .forks = &.{}, .next_start = null };
+};
+
+// one window of `user_id`'s forks that `viewer` may see, newest first, from
+// the `start`th fork, its bounds drawn as a repos window's are
+pub fn readForks(
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    users_dir: []const u8,
+    user_id: [evt.event_id_size]u8,
+    moment: evt.AdminDB.HashMap(.read_only),
+    viewer: ?[evt.event_id_size]u8,
+    start: usize,
+    limit: usize,
+    bounds: ReposWindow.Bounds,
+) !ForksWindow {
+    const DB = evt.AdminDB;
+    const forks_cursor = (try moment.getCursor(hash.hashInt(evt.admin_repo_opts.hash, evt.Fork.active_id_set_key))) orelse return .empty;
+    const user_forks = try DB.SortedSet(.read_only).init(forks_cursor);
+    var window: ForkWindow = .{ .arena = arena, .io = io, .users_dir = users_dir, .user_id = user_id, .moment = moment, .viewer = viewer, .start = start, .limit = limit, .bounds = bounds };
+    var iter = try user_forks.iteratorFromIndex(start);
+    while (try iter.next()) |kv_cursor| {
+        if (!try window.add(try evt.readOrderKeyId(DB, kv_cursor))) break;
+    }
+    return .{ .forks = window.forks.items, .next_start = window.next_start };
+}
+
+// collects one window from the forks `readForks` walks
+const ForkWindow = struct {
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    users_dir: []const u8,
+    user_id: [evt.event_id_size]u8,
+    moment: evt.AdminDB.HashMap(.read_only),
+    viewer: ?[evt.event_id_size]u8,
+    start: usize,
+    limit: usize,
+    bounds: ReposWindow.Bounds,
+    forks: std.ArrayList(ForkItem) = .empty,
+    walked: usize = 0,
+    taken_through: usize = 0,
+    next_start: ?usize = null,
+
+    // considers the next fork, returning false once the window is complete
+    fn add(self: *ForkWindow, fork_id: [evt.event_id_size]u8) !bool {
+        if (self.bounds == .entries and self.walked == self.limit) {
+            self.next_start = self.start +| self.walked;
+            return false;
+        }
+        self.walked += 1;
+        const item = (try self.visible(fork_id)) orelse return true;
+        if (self.forks.items.len == self.limit) {
+            self.next_start = self.start +| self.taken_through;
+            return false;
+        }
+        try self.forks.append(self.arena.allocator(), item);
+        self.taken_through = self.walked;
+        return true;
+    }
+
+    // the fork as its list shows it, or null when the viewer may not see it
+    fn visible(self: *ForkWindow, fork_id: [evt.event_id_size]u8) !?ForkItem {
+        const arena = self.arena;
+        const gpa = arena.child_allocator;
+        const record = (try evt.Fork.readById(evt.AdminDB, evt.admin_repo_opts.hash, self.moment, arena, &fork_id)) orelse return null;
+        // the target lives in its owner's user repo
+        const owner_id = try evt.parseEventId(&record.event.repo_user_id);
+        const target = try evt.readRepoById(self.io, gpa, arena, self.users_dir, &owner_id, &try evt.parseEventId(&record.event.repo_id), self.viewer);
+        const forker = if (self.viewer) |viewer_id| std.mem.eql(u8, &viewer_id, &self.user_id) else false;
+        _ = ui.Fork.roleIn(target, forker) orelse return null;
+        return .{
+            .id = try arena.allocator().dupe(u8, &std.fmt.bytesToHex(fork_id, .lower)),
+            .repo_name = record.event.repo_name,
+            .access = if (target) |value| value.repo.event.read_access else null,
+            .title = try self.title(fork_id),
+        };
+    }
+
+    // the fork's patch title, which only the fork itself holds
+    fn title(self: *ForkWindow, fork_id: [evt.event_id_size]u8) ![]const u8 {
+        const gpa = self.arena.child_allocator;
+        const path = try fork.forkPath(self.arena.allocator(), self.users_dir, &self.user_id, &fork_id);
+        var any_fork = rp.AnyRepo(.xit, .{}).open(self.io, gpa, .{ .path = path, .require_repo_root = true }) catch return unavailable_title;
+        defer any_fork.deinit(self.io, gpa);
+        switch (any_fork) {
+            inline else => |*fork_repo| {
+                const kind = fork_repo.self_repo_opts.hash;
+                const fork_moment = evt.currentMoment(fork_repo.self_repo_opts, fork_repo) catch return unavailable_title;
+                const patch = (try evt.Patch.readById(evt.EventDB(kind), kind, fork_moment, self.arena, &fork_id)) orelse return unavailable_title;
+                return patch.event.title;
+            },
+        }
+    }
+};
+
+const unavailable_title = "(unavailable)";
 
 // a first repos window without repos, which shows the empty message
 fn reposEmpty(self: *const Self) bool {

@@ -721,10 +721,14 @@ pub fn consume(
         .git => {
             try commitEvents(.git, repo_opts, .{ .core = &repo.core, .extra = .{} }, io, allocator, ref, events, first_parent_oids);
 
-            var event_db = try LocalEventDB(repo_opts.hash).open(io, allocator, repo.core.repo_dir);
-            defer event_db.deinit(io, allocator);
-
-            try event_db.consume(repo_kind, repo_opts, io, allocator, repo, resolved_ref);
+            // the events are committed now, so a failure from here on must not
+            // read as nothing written: a retry would write them again. the next
+            // consume (a local page build or refresh) picks them up.
+            consumeLocal(repo_opts, io, allocator, repo, resolved_ref) catch |err| {
+                if (events.len == 0) return err;
+                std.log.warn("events committed to {s} but not consumed: {t}", .{ ref.name, err });
+                return error.CommittedUnconsumed;
+            };
         },
         .xit => {
             const DB = rp.Repo(.xit, repo_opts).DB;
@@ -785,6 +789,19 @@ pub fn consume(
         if (repo_kind == .xit) notify.deliverTransaction(io, allocator, host.server, repo_opts, repo, moment_index orelse unreachable, null, null);
         bumpRepoActivityAt(io, allocator, host.server, repo.core.work_path);
     }
+}
+
+// consume a git repo's `ref` into the event db next to it
+fn consumeLocal(
+    comptime repo_opts: rp.RepoOpts(.git),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo: *rp.Repo(.git, repo_opts),
+    ref: rf.Ref,
+) !void {
+    var event_db = try LocalEventDB(repo_opts.hash).open(io, allocator, repo.core.repo_dir);
+    defer event_db.deinit(io, allocator);
+    try event_db.consume(.git, repo_opts, io, allocator, repo, ref);
 }
 
 // merge the remote events ref into the local events ref without touching head,

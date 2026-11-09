@@ -18,6 +18,7 @@ const ansi_art = if (builtin.target.cpu.arch == .wasm32) struct {
     const not_found: []const u8 = "";
 } else @import("ansi_art");
 const evt = @import("./event.zig");
+const domain = @import("./domain.zig");
 const inp = @import("./ui/input.zig");
 const serve_common = @import("./serve_common.zig");
 
@@ -2222,93 +2223,16 @@ pub const RepoHandle = struct {
     }
 };
 
-// where a repo page reads its on-disk repo from
-pub const RepoSource = struct {
-    path: []const u8,
-    repo_kind: rp.RepoKind,
-    // the user's global git config, so local mode picks up their identity and
-    // their signing and ssh settings. null on the server paths, which must not
-    // read whoever runs the server.
-    global_config_path: ?[]const u8 = null,
+// moved to domain.zig; kept here so the widgets need no change
+pub const RepoSource = domain.RepoSource;
 
-    // snapshots can be read from any website, so they must not reveal where repos live on disk
-    pub fn jsonStringify(self: RepoSource, jw: anytype) !void {
-        try jw.write(.{ .path = "", .repo_kind = self.repo_kind });
-    }
-
-    pub fn localInitOpts(self: RepoSource) rp.InitOpts {
-        return .{ .path = self.path, .global_config_path = self.global_config_path };
-    }
-
-    pub fn hasBranch(self: RepoSource, io: std.Io, allocator: std.mem.Allocator, branch: []const u8) !bool {
-        if (!xit.ref.validateName(branch)) return false;
-        return switch (self.repo_kind) {
-            inline else => |repo_kind| blk: {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, self.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                break :blk switch (any_repo) {
-                    inline else => |*repo| (try repo.readRef(io, .{ .kind = .head, .name = branch })) != null,
-                };
-            },
-        };
-    }
-
-    // whether the actor may change the event `id` names
-    pub fn canModify(
-        self: RepoSource,
-        io: std.Io,
-        allocator: std.mem.Allocator,
-        actor: Actor,
-        kind: evt.EventKind,
-        id: *const [evt.event_id_size]u8,
-    ) !bool {
-        // a role that may change an event with no author needs no read
-        if (actor.role.canModify(actor.author.email, null)) return true;
-
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        defer arena.deinit();
-        return switch (self.repo_kind) {
-            inline else => |repo_kind| blk: {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, self.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                break :blk switch (any_repo) {
-                    inline else => |*repo| actor.role.canModify(actor.author.email, try evt.readAuthorEmail(repo_kind, repo.self_repo_opts, io, allocator, &arena, repo, kind, id)),
-                };
-            },
-        };
-    }
-};
-
-// who a write acts as and the role they hold in its repo
 // the thread button that changes the viewer's notifications, named by its label
 pub const NotifyAction = enum { subscribe, mute };
 
-pub const Actor = struct {
-    author: evt.CommitAuthor,
-    // local mode has no accounts, so it has no user id
-    user_id: ?[evt.event_id_size]u8 = null,
-    role: evt.Repo.Role,
-    // the repo owner's id, which local mode lacks
-    repo_user_id: ?[evt.event_id_size]u8 = null,
-};
-
-pub const Authorization = union(enum) {
-    actor: Actor,
-    login_required,
-    repo_not_found,
-    forbidden,
-};
-
-// the account `user_id` names, or null once it has been removed. a user id is
-// checked here wherever one enters, so the role lookups can trust theirs.
-pub fn activeUser(
-    moment: evt.AdminDB.HashMap(.read_only),
-    arena: *std.heap.ArenaAllocator,
-    user_id: [evt.event_id_size]u8,
-) !?evt.User.Record {
-    const user = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, moment, arena, &user_id)) orelse return null;
-    return if (user.removed) null else user;
-}
+// moved to domain.zig; kept here so the widgets need no change
+pub const Actor = domain.Actor;
+pub const Authorization = domain.Authorization;
+pub const activeUser = domain.activeUser;
 
 // what the typed assignee resolves to
 pub const AssigneeLookup = union(enum) {
@@ -2327,70 +2251,10 @@ pub fn assigneeEmail(moment_maybe: ?evt.AdminDB.HashMap(.read_only), arena: *std
     return .{ .email = user.event.email };
 }
 
-// whether the user may write to the repo `identity` names with at least
-// `min_role`, and to the `thread_kind` tab when there is one
-pub fn authorizeUser(
-    io: std.Io,
-    moment: evt.AdminDB.HashMap(.read_only),
-    arena: *std.heap.ArenaAllocator,
-    users_dir: []const u8,
-    user_id: [evt.event_id_size]u8,
-    identity: []const u8,
-    min_role: evt.Repo.Role,
-    thread_kind: ?evt.EventKind,
-) !Authorization {
-    const user = (try activeUser(moment, arena, user_id)) orelse return .login_required;
+pub const authorizeUser = domain.authorizeUser;
 
-    const owner_repo = evt.parseOwnerRepoPath(identity) orelse return .repo_not_found;
-    const repo = (try evt.readRepoByOwnerAndName(io, arena.child_allocator, arena, moment, users_dir, owner_repo.owner, owner_repo.name, user_id)) orelse return .repo_not_found;
-    // a repo the user can't read doesn't exist to them
-    const role = repo.role orelse return .repo_not_found;
-    if (!role.atLeast(min_role)) return .forbidden;
-    if (thread_kind) |kind| {
-        // a tab that is off doesn't exist
-        const tab_role = repo.repo.event.threadRole(kind) orelse return .repo_not_found;
-        if (!role.atLeast(tab_role)) return .forbidden;
-    }
-    return .{ .actor = .{
-        .author = .{ .name = user.event.name, .email = user.event.email },
-        .user_id = user_id,
-        .role = role,
-        .repo_user_id = try evt.parseEventId(&repo.repo.event.user_id),
-    } };
-}
-
-// events created in local mode have no account behind them, so the commit
-// author comes from the repo's config, which the global config feeds into.
-pub const local_author_fallback = evt.CommitAuthor{ .name = "haxy", .email = "user@haxy" };
-
-pub fn localAuthor(
-    src: RepoSource,
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    arena: *std.heap.ArenaAllocator,
-) !evt.CommitAuthor {
-    switch (src.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts()) catch return local_author_fallback;
-            defer any_repo.deinit(io, allocator);
-
-            switch (any_repo) {
-                inline else => |*repo| {
-                    var config = try repo.listConfig(io, allocator);
-                    defer config.deinit();
-
-                    const user = config.sections.get("user") orelse return local_author_fallback;
-                    const name = user.get("name") orelse return local_author_fallback;
-                    const email = user.get("email") orelse return local_author_fallback;
-                    return .{
-                        .name = try arena.allocator().dupe(u8, name),
-                        .email = try arena.allocator().dupe(u8, email),
-                    };
-                },
-            }
-        },
-    }
-}
+pub const local_author_fallback = domain.local_author_fallback;
+pub const localAuthor = domain.localAuthor;
 
 // per-connection mutable state. each SSH session / web session / local TUI
 // run gets its own.
@@ -2453,7 +2317,17 @@ pub const Session = struct {
 
     pub const FormFeedback = union(enum) {
         pub const LoginFailure = enum { unknown_user, wrong_password };
-        pub const ThreadFailure = enum { required_title };
+        pub const ThreadFailure = enum {
+            required_title,
+
+            // the form failure a domain error is, or null for one the form doesn't show
+            pub fn fromError(err: anyerror) ?ThreadFailure {
+                return switch (err) {
+                    domain.Error.InvalidTitle => .required_title,
+                    else => null,
+                };
+            }
+        };
         pub const PatchFailure = enum {
             required_title,
             invalid_target_branch,
@@ -2461,12 +2335,14 @@ pub const Session = struct {
             same_branch,
             unrelated_branches,
 
+            // the form failure a domain error is, or null for one the form doesn't show
             pub fn fromError(err: anyerror) ?PatchFailure {
                 return switch (err) {
-                    error.InvalidTargetBranch => .invalid_target_branch,
-                    error.InvalidSourceBranch => .invalid_source_branch,
-                    error.SameBranch => .same_branch,
-                    error.UnrelatedBranches => .unrelated_branches,
+                    domain.Error.InvalidTitle => .required_title,
+                    domain.Error.InvalidTargetBranch => .invalid_target_branch,
+                    domain.Error.InvalidSourceBranch => .invalid_source_branch,
+                    domain.Error.SameBranch => .same_branch,
+                    domain.Error.UnrelatedBranches => .unrelated_branches,
                     else => null,
                 };
             }
@@ -2478,12 +2354,13 @@ pub const Session = struct {
             name_taken,
             invalid_copy,
 
+            // the form failure a domain error is, or null for one the form doesn't show
             pub fn fromError(err: anyerror) ?RepoFailure {
                 return switch (err) {
-                    error.NameEmpty => .required_name,
-                    error.NameTooLong, error.InvalidName => .invalid_name,
-                    error.NameTaken => .name_taken,
-                    error.InvalidCopySource => .invalid_copy,
+                    domain.Error.NameEmpty => .required_name,
+                    domain.Error.NameTooLong, domain.Error.InvalidName => .invalid_name,
+                    domain.Error.NameTaken => .name_taken,
+                    domain.Error.InvalidCopySource => .invalid_copy,
                     else => null,
                 };
             }
@@ -2497,10 +2374,11 @@ pub const Session = struct {
             too_many,
             too_long,
 
+            // the form failure a domain error is, or null for one the form doesn't show
             pub fn fromError(err: anyerror) ?BranchesFailure {
                 return switch (err) {
-                    error.BranchProtected => .already_added,
-                    error.TooManyProtectedBranches => .too_many,
+                    domain.Error.BranchProtected => .already_added,
+                    domain.Error.TooManyProtectedBranches => .too_many,
                     else => null,
                 };
             }
@@ -2516,12 +2394,13 @@ pub const Session = struct {
             already_added,
             too_many,
 
+            // the form failure a domain error is, or null for one the form doesn't show
             pub fn fromError(err: anyerror) ?KeyFailure {
                 return switch (err) {
-                    error.InvalidKey => .invalid,
-                    error.UnsupportedKey => .unsupported,
-                    error.KeyAdded => .already_added,
-                    error.TooManyKeys => .too_many,
+                    domain.Error.InvalidKey => .invalid,
+                    domain.Error.UnsupportedKey => .unsupported,
+                    domain.Error.KeyAdded => .already_added,
+                    domain.Error.TooManyKeys => .too_many,
                     else => null,
                 };
             }
@@ -2537,16 +2416,17 @@ pub const Session = struct {
             password_mismatch,
             wrong_password,
 
+            // the form failure a domain error is, or null for one the form doesn't show
             pub fn fromError(err: anyerror) ?UserFailure {
                 return switch (err) {
-                    error.NameEmpty => .required_name,
-                    error.NameTooShort, error.NameTooLong, error.InvalidName => .invalid_name,
-                    error.NameTaken => .name_taken,
-                    error.EmailEmpty => .required_email,
-                    error.EmailTaken => .email_taken,
-                    error.PasswordEmpty => .required_password,
-                    error.PasswordMismatch => .password_mismatch,
-                    error.WrongPassword => .wrong_password,
+                    domain.Error.NameEmpty => .required_name,
+                    domain.Error.NameTooShort, domain.Error.NameTooLong, domain.Error.InvalidName => .invalid_name,
+                    domain.Error.NameTaken => .name_taken,
+                    domain.Error.EmailEmpty => .required_email,
+                    domain.Error.EmailTaken => .email_taken,
+                    domain.Error.PasswordEmpty => .required_password,
+                    domain.Error.PasswordMismatch => .password_mismatch,
+                    domain.Error.WrongPassword => .wrong_password,
                     else => null,
                 };
             }
@@ -2822,6 +2702,27 @@ pub const Session = struct {
         return switch (try authorizeUser(io, moment, self.page_arena, users_dir, user_id, identity, min_role, thread_kind)) {
             .actor => |actor| actor,
             .login_required, .repo_not_found, .forbidden => null,
+        };
+    }
+
+    // the context for an operation a widget runs, acting as the session's
+    // logged-in user. results land in `arena`. the admin repo is the
+    // session's, which outlives the context. a session with no filesystem
+    // (wasm) or no repo to write to has no context.
+    pub fn ctx(self: *Self, arena: *std.heap.ArenaAllocator) !domain.Ctx {
+        const io = self.io orelse return error.UnavailableHere;
+        const now = try self.nowSeconds();
+        return switch (self.data.host_kind) {
+            .local => domain.Ctx.initLocal(io, arena.child_allocator, arena, self.local orelse return error.UnavailableHere, now),
+            .server => try domain.Ctx.initServer(
+                io,
+                arena.child_allocator,
+                arena,
+                self.admin_repo orelse return error.UnavailableHere,
+                self.users_dir orelse return error.UnavailableHere,
+                self.userId(),
+                now,
+            ),
         };
     }
 

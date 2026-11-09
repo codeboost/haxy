@@ -4,6 +4,7 @@ const srv = @import("./serve.zig");
 pub const CommandKind = enum {
     serve,
     delete_user,
+    mcp,
 };
 
 const Help = struct {
@@ -34,6 +35,18 @@ fn commandHelp(command_kind: CommandKind) Help {
             .example =
             \\haxy delete-user alice --data-dir /srv/git
             \\safe to run while the server is up.
+            ,
+        },
+        .mcp => .{
+            .name = "mcp",
+            .descrip =
+            \\an mcp server on stdin and stdout, serving issues and discussions as tools.
+            ,
+            .example =
+            \\haxy mcp
+            \\    inside a repo, as its owner, like the bare haxy command.
+            \\haxy mcp --data-dir /srv/git --user alice
+            \\    against server data, acting as the named user. both flags go together.
             ,
         },
     };
@@ -102,6 +115,7 @@ pub const CommandArgs = struct {
         .{"--ssh-url"},
         .{"--max-repo-size"},
         .{"--data-dir"},
+        .{"--user"},
     });
 
     pub fn init(allocator: std.mem.Allocator, args: []const []const u8) !CommandArgs {
@@ -194,6 +208,7 @@ pub const CommandArgs = struct {
 pub const Command = union(CommandKind) {
     serve: srv.Options,
     delete_user: srv.DeleteUserOptions,
+    mcp: McpOptions,
 
     pub fn initMaybe(cmd_args: *CommandArgs) !?Command {
         const command_kind = cmd_args.command_kind orelse return null;
@@ -207,9 +222,36 @@ pub const Command = union(CommandKind) {
                 if (cmd_args.get("--data-dir")) |value_maybe| options.data_dir = value_maybe orelse return error.DataDirNeedsValue;
                 return .{ .delete_user = options };
             },
+            .mcp => {
+                // mcp takes no positional arguments, so the first is reported
+                // with the unread flags
+                if (cmd_args.positional_args.len != 0) try cmd_args.unused_args.put(cmd_args.arena.allocator(), cmd_args.positional_args[0], {});
+                return .{ .mcp = mcpOptions(cmd_args) };
+            },
         }
     }
 };
+
+// where `haxy mcp` runs its tools
+pub const McpOptions = union(enum) {
+    // the repo it was started in
+    local,
+    // server data, acting as one account
+    server: struct {
+        data_dir: []const u8,
+        user: []const u8,
+    },
+};
+
+// the mode the flags ask for. both server flags go together, each with a
+// value; a flag left unread is reported as an invalid argument.
+fn mcpOptions(cmd_args: *CommandArgs) McpOptions {
+    const data_dir = (cmd_args.map_args.get("--data-dir") orelse return .local) orelse return .local;
+    const user = (cmd_args.map_args.get("--user") orelse return .local) orelse return .local;
+    _ = cmd_args.get("--data-dir");
+    _ = cmd_args.get("--user");
+    return .{ .server = .{ .data_dir = data_dir, .user = user } };
+}
 
 pub fn parseServeOptions(allocator: std.mem.Allocator, args: []const []const u8) !srv.Options {
     var cmd_args = try CommandArgs.init(allocator, args);

@@ -267,7 +267,12 @@ pub fn mute(
     author: evt.CommitAuthor,
 ) !void {
     try writeMode(io, allocator, users_dir, user_id, &location, thread_id, .muted, author);
-    try dismiss(io, allocator, users_dir, user_id, &idOf(&location.repo_id, thread_id));
+    // the mute is committed now, so a failure from here on must not read as
+    // nothing written
+    dismiss(io, allocator, users_dir, user_id, &idOf(&location.repo_id, thread_id)) catch |err| {
+        std.log.warn("thread muted but its notification not dismissed: {t}", .{err});
+        return error.MutedNotDismissed;
+    };
 }
 
 // write the user's notify event for a thread, then move them to its tier in the owner's index

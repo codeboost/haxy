@@ -914,6 +914,10 @@ pub fn publish(
         if (record.removed or !std.mem.eql(u8, record.author_email orelse "", input.author.email)) return error.InvalidPatch;
     }
 
+    // whether this call wrote the patch to the target, after which a failure
+    // must not read as nothing published
+    var target_written = false;
+
     // publish the selected revision unless the draft was already consumed
     if (local_patch.removed) {
         if (existing == null) return error.PatchDataUnavailable;
@@ -984,29 +988,36 @@ pub fn publish(
                 else => |e| return e,
             };
         }
+        target_written = true;
         notify.subscribeParticipants(io, allocator, server, target_repo.core.work_path, events);
         evt.bumpRepoActivityAt(io, allocator, server, target_repo.core.work_path);
 
         // remove the consumed draft from the fork
-        try evt.consume(.{ .server = server }, .fork, .xit, repo_opts, io, allocator, &fork_repo, evt.events_ref, &.{.{
+        evt.consume(.{ .server = server }, .fork, .xit, repo_opts, io, allocator, &fork_repo, evt.events_ref, &.{.{
             .id = input.id,
             .timestamp = input.timestamp,
             .author = input.author,
             .event = .{ .patch = null },
-        }});
+        }}) catch |err| return forkKept(&input.id, err);
     }
 
     // mark the fork as published in the forker's user repo
     if (fork_record.event.stage == .draft) {
         var published = fork_record.event;
         published.stage = .publish;
-        try evt.consume(.{ .server = server }, .user, .xit, evt.user_repo_opts, io, allocator, &user_repo, evt.events_ref, &.{.{
+        evt.consume(.{ .server = server }, .user, .xit, evt.user_repo_opts, io, allocator, &user_repo, evt.events_ref, &.{.{
             .id = input.id,
             .timestamp = input.timestamp,
             .author = input.author,
             .event = .{ .fork = published },
-        }});
+        }}) catch |err| return if (target_written) forkKept(&input.id, err) else err;
     }
+}
+
+// a publish that wrote the target but failed to settle the draft's fork
+fn forkKept(id: *const [evt.event_id_size * 2]u8, err: anyerror) error{PublishedForkKept} {
+    std.log.warn("patch {s} published but its draft not settled: {t}", .{ id, err });
+    return error.PublishedForkKept;
 }
 
 pub fn editDraft(
@@ -1250,6 +1261,24 @@ pub fn mergeAndRemoveFork(
     input: MergeInput,
 ) !void {
     try merge(repo_opts, io, allocator, server, target_repo, input);
+
+    // the merge is committed now, so a failure from here on must not read as
+    // nothing merged: a retry would find the patch merged already
+    removeMergedFork(repo_opts, io, allocator, server, target_repo, input) catch |err| {
+        std.log.warn("patch {s} merged but its fork not removed: {t}", .{ &input.id, err });
+        return error.MergedForkKept;
+    };
+}
+
+// remove the fork behind a merged patch, if it has one here
+fn removeMergedFork(
+    comptime repo_opts: rp.RepoOpts(.xit),
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    server: evt.Host.Server,
+    target_repo: *rp.Repo(.xit, repo_opts),
+    input: MergeInput,
+) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 

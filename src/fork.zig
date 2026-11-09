@@ -254,7 +254,14 @@ pub fn remove(
     const record = (try evt.Fork.readById(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, &fork_id)) orelse return error.InvalidPatchDraft;
     if (!record.removed) try evt.remove(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, evt.user_repo_opts, io, allocator, &user_repo, &fork_id, .fork, author);
 
-    const path = try forkPath(allocator, users_dir, forker_id, &fork_id);
+    // the fork is tombstoned now, so a failure from here on must not read as
+    // nothing removed
+    const path = forkPath(allocator, users_dir, forker_id, &fork_id) catch |err| return dirKept(id, err);
     defer allocator.free(path);
-    try std.Io.Dir.cwd().deleteTree(io, path);
+    std.Io.Dir.cwd().deleteTree(io, path) catch |err| return dirKept(id, err);
+}
+
+fn dirKept(id: *const [evt.event_id_size * 2]u8, err: anyerror) error{ForkRemovedDirKept} {
+    std.log.warn("fork {s} removed but its directory kept: {t}", .{ id, err });
+    return error.ForkRemovedDirKept;
 }

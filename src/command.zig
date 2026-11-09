@@ -40,13 +40,15 @@ fn commandHelp(command_kind: CommandKind) Help {
         .mcp => .{
             .name = "mcp",
             .descrip =
-            \\an mcp server on stdin and stdout, serving issues and discussions as tools.
+            \\an mcp server on stdin and stdout, serving issues, patches and discussions as tools.
             ,
             .example =
             \\haxy mcp
             \\    inside a repo, as its owner, like the bare haxy command.
             \\haxy mcp --data-dir /srv/git --user alice
             \\    against server data, acting as the named user. both flags go together.
+            \\haxy mcp --allow-destructive
+            \\    also serves the tools that remove threads, comments, attachments and forks.
             ,
         },
     };
@@ -232,20 +234,30 @@ pub const Command = union(CommandKind) {
     }
 };
 
-// where `haxy mcp` runs its tools
-pub const McpOptions = union(enum) {
-    // the repo it was started in
-    local,
-    // server data, acting as one account
-    server: struct {
-        data_dir: []const u8,
-        user: []const u8,
-    },
+pub const McpOptions = struct {
+    mode: Mode,
+    // --allow-destructive: serve the removal tools too
+    allow_destructive: bool = false,
+
+    // where `haxy mcp` runs its tools
+    pub const Mode = union(enum) {
+        // the repo it was started in
+        local,
+        // server data, acting as one account
+        server: struct {
+            data_dir: []const u8,
+            user: []const u8,
+        },
+    };
 };
 
-// the mode the flags ask for. both server flags go together, each with a
+// the options the flags ask for. both server flags go together, each with a
 // value; a flag left unread is reported as an invalid argument.
 fn mcpOptions(cmd_args: *CommandArgs) McpOptions {
+    return .{ .mode = mcpMode(cmd_args), .allow_destructive = cmd_args.contains("--allow-destructive") };
+}
+
+fn mcpMode(cmd_args: *CommandArgs) McpOptions.Mode {
     const data_dir = (cmd_args.map_args.get("--data-dir") orelse return .local) orelse return .local;
     const user = (cmd_args.map_args.get("--user") orelse return .local) orelse return .local;
     _ = cmd_args.get("--data-dir");

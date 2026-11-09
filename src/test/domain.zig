@@ -13,6 +13,16 @@ comptime {
     _ = @import("domain/create_comment.zig");
     _ = @import("domain/set_thread_status.zig");
     _ = @import("domain/thread_widget.zig");
+    _ = @import("domain/get_discussion.zig");
+    _ = @import("domain/edit_thread.zig");
+    _ = @import("domain/edit_comment.zig");
+    _ = @import("domain/remove.zig");
+    _ = @import("domain/assign.zig");
+    _ = @import("domain/notifications.zig");
+    _ = @import("domain/patches.zig");
+    _ = @import("domain/resolve_conflict.zig");
+    _ = @import("domain/delete_fork.zig");
+    _ = @import("domain/attach.zig");
 }
 
 const io = std.testing.io;
@@ -280,6 +290,23 @@ test "domain: classify sorts every expected failure and leaves the rest internal
         .{ error.UnsupportedKey, .invalid_input },
         .{ error.KeyAdded, .conflict },
         .{ error.TooManyKeys, .limit_reached },
+        // assignments
+        .{ error.UnknownAssignee, .invalid_input },
+        .{ error.NotAnEmail, .invalid_input },
+        .{ error.AlreadyAssigned, .conflict },
+        // merges and publishing
+        .{ error.MergeConflict, .conflict },
+        .{ error.PatchOutOfDate, .conflict },
+        .{ error.PatchClosed, .conflict },
+        .{ error.PatchAlreadyMerged, .conflict },
+        .{ error.PatchNotPushed, .conflict },
+        .{ error.MergeCheckUnavailable, .internal },
+        .{ error.PatchDataUnavailable, .internal },
+        // deletes and attachments
+        .{ error.WrongConfirm, .invalid_input },
+        .{ error.InvalidAttachmentName, .invalid_input },
+        .{ error.AttachmentEmpty, .invalid_input },
+        .{ error.AttachmentTooLarge, .limit_reached },
         // authorization and capability
         .{ error.NotFound, .not_found },
         .{ error.LoginRequired, .login_required },
@@ -292,6 +319,15 @@ test "domain: classify sorts every expected failure and leaves the rest internal
         try std.testing.expectEqual(case[1], failure.kind);
         try std.testing.expect(!failure.retryable);
         try std.testing.expect(!failure.changed);
+    }
+
+    // a write that committed before what follows it failed
+    for ([_]anyerror{ error.CommittedUnconsumed, error.MergedForkKept, error.PublishedForkKept, error.ForkRemovedDirKept, error.MutedNotDismissed }) |err| {
+        const failure = domain.classify(err);
+        errdefer std.debug.print("classify(error.{t})\n", .{err});
+        try std.testing.expectEqual(.internal, failure.kind);
+        try std.testing.expect(!failure.retryable);
+        try std.testing.expect(failure.changed);
     }
 
     // anything else is the host failing. nothing is retried automatically.
@@ -316,6 +352,11 @@ test "domain: form feedback still reads the domain errors" {
     try std.testing.expectEqual(null, FormFeedback.UserFailure.fromError(error.OutOfMemory));
     try std.testing.expectEqual(.required_title, FormFeedback.ThreadFailure.fromError(error.InvalidTitle).?);
     try std.testing.expectEqual(.required_title, FormFeedback.PatchFailure.fromError(error.InvalidTitle).?);
+    try std.testing.expectEqual(.not_found, FormFeedback.AssignmentFailure.fromError(error.UnknownAssignee).?);
+    try std.testing.expectEqual(.not_an_email, FormFeedback.AssignmentFailure.fromError(error.NotAnEmail).?);
+    try std.testing.expectEqual(.already_assigned, FormFeedback.AssignmentFailure.fromError(error.AlreadyAssigned).?);
+    // a missing thread is no assignment failure
+    try std.testing.expectEqual(null, FormFeedback.AssignmentFailure.fromError(error.NotFound));
     // an overlong label has no form feedback
     try std.testing.expectEqual(null, FormFeedback.ThreadFailure.fromError(error.InvalidLabels));
 }

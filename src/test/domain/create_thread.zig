@@ -69,15 +69,6 @@ test "domain: CreateThread needs a login, the tab's role and a repo the user can
     try std.testing.expectEqual(1, (try (domain.ListIssues{ .repo = "alice:open" }).run(&bob)).count);
 }
 
-test "domain: CreateThread leaves patches for later" {
-    var local = try fixture.Local(.git, .sha1).init();
-    defer local.deinit();
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    var ctx = local.ctx(&arena);
-    try std.testing.expectError(error.UnavailableHere, (domain.CreateThread{ .repo = "", .kind = .patch, .title = "a patch" }).run(&ctx));
-}
-
 fn expectLocalCreate(comptime kind: hx.xit.repo.RepoKind, comptime hash_kind: hx.xit.hash.HashKind) !void {
     var local = try fixture.Local(kind, hash_kind).init();
     defer local.deinit();

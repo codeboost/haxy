@@ -10,14 +10,33 @@ const evt = @import("./event.zig");
 const reads = @import("./domain/reads.zig");
 pub const ListIssues = reads.ListIssues;
 pub const GetIssue = reads.GetIssue;
+pub const GetDiscussion = reads.GetDiscussion;
+pub const ListPatches = reads.ListPatches;
+pub const GetPatch = reads.GetPatch;
 const repos = @import("./domain/repos.zig");
 pub const RefreshLocal = repos.RefreshLocal;
+const notifications = @import("./domain/notifications.zig");
+pub const Subscribe = notifications.Subscribe;
+pub const Mute = notifications.Mute;
 const threads = @import("./domain/threads.zig");
 pub const ThreadKind = threads.ThreadKind;
 pub const repo_note = threads.repo_note;
 pub const CreateThread = threads.CreateThread;
 pub const CreateComment = threads.CreateComment;
 pub const SetThreadStatus = threads.SetThreadStatus;
+pub const EditThread = threads.EditThread;
+pub const ResolveConflict = threads.ResolveConflict;
+pub const EditComment = threads.EditComment;
+pub const RemoveThread = threads.RemoveThread;
+pub const RemoveComment = threads.RemoveComment;
+pub const RemoveAttachment = threads.RemoveAttachment;
+pub const Attach = threads.Attach;
+pub const Assign = threads.Assign;
+pub const Unassign = threads.Unassign;
+const patches = @import("./domain/patches.zig");
+pub const PublishPatch = patches.PublishPatch;
+pub const MergePatch = patches.MergePatch;
+pub const DeleteFork = patches.DeleteFork;
 
 // where a context's repos live
 pub const Host = union(evt.HostKind) {
@@ -349,6 +368,18 @@ fn authorizeActive(
     } };
 }
 
+// the email `text` assigns: itself when it holds an @, else the email of the
+// active user it names. a null moment is local mode, which has no users to
+// look up.
+pub fn assigneeEmail(moment_maybe: ?evt.AdminDB.HashMap(.read_only), arena: *std.heap.ArenaAllocator, text: []const u8) ![]const u8 {
+    const trimmed = std.mem.trim(u8, text, " \t\r\n");
+    if (std.mem.indexOfScalar(u8, trimmed, '@') != null) return trimmed;
+    const moment = moment_maybe orelse return error.NotAnEmail;
+    const user_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, moment, trimmed)) orelse return error.UnknownAssignee;
+    const user = (try activeUser(moment, arena, user_id)) orelse return error.UnknownAssignee;
+    return user.event.email;
+}
+
 // whether the actor may change the event `id` names in the resolved repo: any
 // event with the write role, otherwise only one they authored
 pub fn canModify(ctx: *Ctx, resolved: Resolved, actor: Actor, kind: evt.EventKind, id: *const [evt.event_id_size]u8) !bool {
@@ -369,6 +400,16 @@ pub const Error = error{
     InvalidSourceBranch,
     SameBranch,
     UnrelatedBranches,
+    // merges: the patch conflicts with its target, or changed since its check
+    MergeConflict,
+    PatchOutOfDate,
+    // merges and publishing: the patch's state doesn't allow it
+    PatchClosed,
+    PatchAlreadyMerged,
+    PatchNotPushed,
+    // merges: the cached check or the fork's data isn't there to merge from
+    MergeCheckUnavailable,
+    PatchDataUnavailable,
     // repo and user names, emails and passwords
     NameEmpty,
     NameTooShort,
@@ -381,6 +422,8 @@ pub const Error = error{
     PasswordEmpty,
     PasswordMismatch,
     WrongPassword,
+    // a delete's typed confirmation doesn't match what it deletes
+    WrongConfirm,
     // protected branches
     BranchProtected,
     TooManyProtectedBranches,
@@ -389,6 +432,14 @@ pub const Error = error{
     UnsupportedKey,
     KeyAdded,
     TooManyKeys,
+    // attachments
+    InvalidAttachmentName,
+    AttachmentEmpty,
+    AttachmentTooLarge,
+    // assignments
+    UnknownAssignee,
+    NotAnEmail,
+    AlreadyAssigned,
     // authorization and capability
     NotFound,
     LoginRequired,
@@ -396,6 +447,10 @@ pub const Error = error{
     UnavailableHere,
     // the write committed, but what follows it failed
     CommittedUnconsumed,
+    MergedForkKept,
+    PublishedForkKept,
+    ForkRemovedDirKept,
+    MutedNotDismissed,
 };
 
 // what kind of failure an error is, for an adapter to word or map
@@ -426,7 +481,11 @@ pub const Failure = struct {
 // is retried automatically, so no failure is retryable yet.
 pub fn classify(err: anyerror) Failure {
     const expected = asExpected(err) orelse return .{ .kind = .internal };
-    return .{ .changed = expected == error.CommittedUnconsumed, .kind = switch (expected) {
+    const changed = switch (expected) {
+        error.CommittedUnconsumed, error.MergedForkKept, error.PublishedForkKept, error.ForkRemovedDirKept, error.MutedNotDismissed => true,
+        else => false,
+    };
+    return .{ .changed = changed, .kind = switch (expected) {
         error.InvalidTitle,
         error.InvalidLabels,
         error.InvalidBody,
@@ -442,17 +501,37 @@ pub fn classify(err: anyerror) Failure {
         error.EmailEmpty,
         error.PasswordEmpty,
         error.PasswordMismatch,
+        error.WrongConfirm,
         error.InvalidKey,
         error.UnsupportedKey,
+        error.UnknownAssignee,
+        error.NotAnEmail,
+        error.InvalidAttachmentName,
+        error.AttachmentEmpty,
         => .invalid_input,
-        error.NameTaken, error.EmailTaken, error.BranchProtected, error.KeyAdded => .conflict,
-        error.TooManyProtectedBranches, error.TooManyKeys => .limit_reached,
+        error.NameTaken, error.EmailTaken, error.BranchProtected, error.KeyAdded, error.AlreadyAssigned => .conflict,
+        // the patch's code clashes with its target, or the patch moved under
+        // the merge: both are the repo's state, which a person resolves
+        error.MergeConflict, error.PatchOutOfDate => .conflict,
+        // the patch is closed, merged already or has no revision yet: its
+        // state, not the input, stands in the way
+        error.PatchClosed, error.PatchAlreadyMerged, error.PatchNotPushed => .conflict,
+        // the server lacks what it needs to merge (a stale mergeability check,
+        // a missing fork): nothing the caller's input can fix
+        error.MergeCheckUnavailable, error.PatchDataUnavailable => .internal,
+        error.TooManyProtectedBranches, error.TooManyKeys, error.AttachmentTooLarge => .limit_reached,
         error.NotFound => .not_found,
         error.LoginRequired => .login_required,
         error.Forbidden, error.WrongPassword => .forbidden,
         error.UnavailableHere => .unavailable_here,
-        // a local git write whose event db failed after the commit
-        error.CommittedUnconsumed => .internal,
+        // a local git write whose event db failed after the commit, and a
+        // merge whose fork removal failed after the merge committed
+        error.CommittedUnconsumed,
+        error.MergedForkKept,
+        error.PublishedForkKept,
+        error.ForkRemovedDirKept,
+        error.MutedNotDismissed,
+        => .internal,
     } };
 }
 

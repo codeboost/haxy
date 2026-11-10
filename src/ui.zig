@@ -2106,8 +2106,19 @@ pub const RoutablePage = union(enum) {
 };
 
 // a `RefOrOid` resolved against an on-disk repo to the commit oid it points at
+// whether a widget's operation failed because the session lost the repo or
+// its role after the widget's own check passed, which the widget treats as
+// that check failing
+pub fn lostAccess(err: anyerror) bool {
+    return switch (err) {
+        error.LoginRequired, error.Forbidden, error.NotFound => true,
+        else => false,
+    };
+}
+
+// the domain's set, so its branch length rule counts what this encodes
 fn isUnreserved(c: u8) bool {
-    return std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~';
+    return domain.isUnreservedRefByte(c);
 }
 
 // percent-encode a ref name for use as a single url path segment.
@@ -2362,7 +2373,19 @@ pub const Session = struct {
             }
         };
 
-        pub const MembersFailure = enum { not_found, already_added };
+        pub const MembersFailure = enum {
+            not_found,
+            already_added,
+
+            // the form failure a domain error is, or null for one the form doesn't show
+            pub fn fromError(err: anyerror) ?MembersFailure {
+                return switch (err) {
+                    domain.Error.UnknownUser => .not_found,
+                    domain.Error.AlreadyMember => .already_added,
+                    else => null,
+                };
+            }
+        };
 
         pub const BranchesFailure = enum {
             not_found,
@@ -2373,6 +2396,8 @@ pub const Session = struct {
             // the form failure a domain error is, or null for one the form doesn't show
             pub fn fromError(err: anyerror) ?BranchesFailure {
                 return switch (err) {
+                    domain.Error.UnknownBranch => .not_found,
+                    domain.Error.BranchNameTooLong => .too_long,
                     domain.Error.BranchProtected => .already_added,
                     domain.Error.TooManyProtectedBranches => .too_many,
                     else => null,
@@ -2655,7 +2680,7 @@ pub const Session = struct {
         if (builtin.target.cpu.arch == .wasm32) return;
         const key = self.ssh_key orelse return;
         const io = self.io orelse return;
-        const users_dir = self.users_dir orelse return;
+        if (self.users_dir == null) return;
         const admin_repo = self.admin_repo orelse return;
         const user_id = self.userId() orelse return;
         const fingerprint = evt.User.fingerprintOfKey(key) orelse return;
@@ -2665,11 +2690,16 @@ pub const Session = struct {
         const month = day.calculateMonthDay();
         const line = try std.fmt.allocPrint(allocator, "{s} added {d:0>4}-{d:0>2}-{d:0>2} via login", .{ key, day.year, month.month.numeric(), month.day_index + 1 });
         defer allocator.free(line);
-        evt.addUserKey(io, allocator, users_dir, admin_repo, &user_id, line) catch |err| switch (err) {
-            // it's already there, or there's no room for it
-            error.KeyAdded, error.TooManyKeys => {},
-            else => return err,
-        };
+        {
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            defer arena.deinit();
+            var op_ctx = try self.ctx(&arena);
+            (domain.AddKey{ .key = line }).run(&op_ctx) catch |err| switch (err) {
+                // it's already there, or there's no room for it
+                error.KeyAdded, error.TooManyKeys => {},
+                else => return err,
+            };
+        }
         try evt.setLoginKey(io, admin_repo, &fingerprint, &user_id, .trust);
         self.haxy_moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
     }

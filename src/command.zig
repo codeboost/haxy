@@ -40,7 +40,7 @@ fn commandHelp(command_kind: CommandKind) Help {
         .mcp => .{
             .name = "mcp",
             .descrip =
-            \\an mcp server on stdin and stdout, serving issues, patches and discussions as tools.
+            \\an mcp server on stdin and stdout, serving issues, patches, discussions, repos, members, branches, ssh keys and notifications as tools.
             ,
             .example =
             \\haxy mcp
@@ -48,7 +48,7 @@ fn commandHelp(command_kind: CommandKind) Help {
             \\haxy mcp --data-dir /srv/git --user alice
             \\    against server data, acting as the named user. both flags go together.
             \\haxy mcp --allow-destructive
-            \\    also serves the tools that remove threads, comments, attachments and forks.
+            \\    also serves undo and the tools that remove threads, comments, attachments, forks and ssh keys.
             ,
         },
     };

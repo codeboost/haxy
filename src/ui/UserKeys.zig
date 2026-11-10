@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../event.zig");
+const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
 const inp = @import("./input.zig");
 const xit = @import("xit");
@@ -215,13 +216,15 @@ pub const View = struct {
     // the terminal changes the keys itself; the web posts the form instead
     fn addKey(self: *View, allocator: std.mem.Allocator, key: []const u8) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
+        if (self.session.io == null or self.session.users_dir == null) return;
         const admin_repo = self.session.admin_repo orelse return;
-        const user_id = self.session.userId() orelse return;
-        evt.addUserKey(io, allocator, users_dir, admin_repo, &user_id, key) catch |err| switch (err) {
+        if (self.session.userId() == null) return;
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var ctx = try self.session.ctx(&arena);
+        (domain.AddKey{ .key = key }).run(&ctx) catch |err| switch (err) {
             // the account was removed under them
-            error.NotFound => return ui.UserNotifications.logOut(self.session),
+            error.LoginRequired => return ui.UserNotifications.logOut(self.session),
             else => {
                 const failure = ui.Session.FormFeedback.KeyFailure.fromError(err) orelse return err;
                 self.session.data.form_feedback = .{ .user_keys = .{ .failure = failure, .key = try self.session.arena.allocator().dupe(u8, key) } };
@@ -236,14 +239,18 @@ pub const View = struct {
     // the terminal removes the key itself; the web posts the form instead
     fn removeKey(self: *View, allocator: std.mem.Allocator, key: []const u8) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
+        if (self.session.io == null or self.session.users_dir == null) return;
         const admin_repo = self.session.admin_repo orelse return;
-        const user_id = self.session.userId() orelse return;
+        if (self.session.userId() == null) return;
         const fingerprint = evt.User.fingerprintOfKey(key) orelse unreachable;
-        evt.removeUserKey(io, allocator, users_dir, admin_repo, &user_id, &fingerprint) catch |err| switch (err) {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var ctx = try self.session.ctx(&arena);
+        (domain.RemoveKey{ .fingerprint = &fingerprint }).run(&ctx) catch |err| switch (err) {
             // the account was removed under them
-            error.NotFound => return ui.UserNotifications.logOut(self.session),
+            error.LoginRequired => return ui.UserNotifications.logOut(self.session),
+            // gone already; the refresh shows the keys as they are
+            error.NotFound => {},
             else => return err,
         };
         self.session.haxy_moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);

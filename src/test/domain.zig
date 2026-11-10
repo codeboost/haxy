@@ -19,10 +19,22 @@ comptime {
     _ = @import("domain/remove.zig");
     _ = @import("domain/assign.zig");
     _ = @import("domain/notifications.zig");
+    _ = @import("domain/list_notifications.zig");
+    _ = @import("domain/notify_action.zig");
+    _ = @import("domain/notify_page.zig");
     _ = @import("domain/patches.zig");
     _ = @import("domain/resolve_conflict.zig");
     _ = @import("domain/delete_fork.zig");
     _ = @import("domain/attach.zig");
+    _ = @import("domain/repos.zig");
+    _ = @import("domain/members.zig");
+    _ = @import("domain/branches.zig");
+    _ = @import("domain/undo.zig");
+    _ = @import("domain/sync.zig");
+    _ = @import("domain/delete_fresh.zig");
+    _ = @import("domain/users.zig");
+    _ = @import("domain/keys.zig");
+    _ = @import("domain/delete_user.zig");
 }
 
 const io = std.testing.io;
@@ -300,6 +312,8 @@ test "domain: classify sorts every expected failure and leaves the rest internal
         .{ error.PatchClosed, .conflict },
         .{ error.PatchAlreadyMerged, .conflict },
         .{ error.PatchNotPushed, .conflict },
+        // a notification bumped since the caller saw it
+        .{ error.NotificationOutOfDate, .conflict },
         .{ error.MergeCheckUnavailable, .internal },
         .{ error.PatchDataUnavailable, .internal },
         // deletes and attachments

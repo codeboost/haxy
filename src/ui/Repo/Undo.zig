@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const ui = @import("../../ui.zig");
 const evt = @import("../../event.zig");
+const domain = @import("../../domain.zig");
 const pch = @import("../../patch.zig");
 const push = @import("../../push.zig");
 const fork = @import("../../fork.zig");
@@ -319,17 +320,6 @@ fn momentIndex(comptime opts: rp.RepoOpts(.xit), haxy_moment: evt.EventDB(opts.h
     return try cursor.readUint();
 }
 
-pub fn execute(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource, index: u64) !void {
-    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, source.localInitOpts());
-    defer any_repo.deinit(io, allocator);
-    switch (any_repo) {
-        inline else => |*repo| {
-            if (try copy.undoFloor(repo.self_repo_opts, &repo.core)) |floor| if (index <= floor) return error.InvalidHistoryIndex;
-            try repo.undo(io, index);
-        },
-    }
-}
-
 // keep action failures on the current tab without rebuilding a stale route.
 pub fn handleRequest(allocator: std.mem.Allocator, session: *ui.Session, target: ui.RoutablePage.RepoUndoRoute) void {
     perform(allocator, session, target) catch |err| {
@@ -339,27 +329,17 @@ pub fn handleRequest(allocator: std.mem.Allocator, session: *ui.Session, target:
     session.data.undo_failure = null;
 }
 
-// both terminal hosts resolve and authorize the request afresh before opening
-// the repository; the web handler uses its matching http authorization path.
-pub fn perform(allocator: std.mem.Allocator, session: *ui.Session, target: ui.RoutablePage.RepoUndoRoute) !void {
+// both terminal hosts authorize the request afresh, and the operation again;
+// the web handler uses its matching http authorization path.
+pub fn perform(_: std.mem.Allocator, session: *ui.Session, target: ui.RoutablePage.RepoUndoRoute) !void {
     const identity = target.name.slice();
     const index = target.index orelse return error.InvalidHistoryIndex;
-    const source = try authorizedSource(session, identity) orelse return error.Forbidden;
-    const io = session.io orelse return error.NotFound;
-    try execute(io, allocator, source, index);
+    // anyone but an owner is refused alike, logged in or not
+    if (try session.authorize(identity, .owner, null) == null) return error.Forbidden;
+    if (session.io == null) return error.NotFound;
+    var ctx = try session.ctx(session.page_arena);
+    try (domain.Undo{ .repo = identity, .index = index }).run(&ctx);
     try session.navigate(ui.RoutablePage.repoUndoRoute(identity, null) orelse return error.RouteTooLong);
-}
-
-// the repo an owner may act on, or null when they may not
-fn authorizedSource(session: *ui.Session, identity: []const u8) !?ui.RepoSource {
-    if (try session.authorize(identity, .owner, null) == null) return null;
-    const admin_repo = session.admin_repo orelse return error.NotFound;
-    const moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
-    const pair = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
-    const io = session.io orelse return error.NotFound;
-    const users_dir = session.users_dir orelse return error.NotFound;
-    const found = try evt.readRepoByOwnerAndName(io, session.page_arena.child_allocator, session.page_arena, moment, users_dir, pair.owner, pair.name, null) orelse return error.NotFound;
-    return .{ .path = try evt.repoPath(session.page_arena.allocator(), users_dir, &try evt.parseEventId(&found.repo.event.user_id), &found.event_id), .repo_kind = .xit };
 }
 
 pub const View = struct {

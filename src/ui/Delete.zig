@@ -5,7 +5,6 @@ const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
 const inp = @import("./input.zig");
 const xit = @import("xit");
-const rp = xit.repo;
 const xitui = xit.xitui;
 const wgt = xitui.widget;
 const layout = xitui.layout;
@@ -40,73 +39,18 @@ pub const Target = union(enum) {
     }
 };
 
-// delete `target` as `user_id`, its main owner, when `typed` is its confirm
-// text and `password` is theirs. returns why nothing was deleted, or null
-// once deleted
-pub fn perform(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    users_dir: []const u8,
-    admin_repo: *rp.Repo(.xit, evt.admin_repo_opts),
-    user_id: [evt.event_id_size]u8,
-    target: Target,
-    typed: []const u8,
-    password: []const u8,
-) !?ui.Session.FormFeedback.DeleteFailure {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    // a fork's delete is an operation of its own
-    switch (target) {
-        .fork => |f| return try deleteFork(io, allocator, &arena, users_dir, admin_repo, user_id, f.identity, &f.id, typed, password),
-        .repo, .user => {},
-    }
-    const user = (try ui.activeUser(try evt.currentMoment(evt.admin_repo_opts, admin_repo), &arena, user_id)) orelse return error.NotFound;
-
-    // the typed text is checked before the slow password check
-    if (!std.mem.eql(u8, typed, target.confirmText())) return .wrong_confirm;
-    if (!evt.User.verifyPassword(user.event.password_hash, password)) return .wrong_password;
-
-    // anyone but the main owner finds nothing to delete
-    const author = evt.CommitAuthor{ .name = user.event.name, .email = user.event.email };
-    switch (target) {
-        .repo => |identity| {
-            const parsed = evt.parseOwnerRepoPath(identity) orelse return error.NotFound;
-            if (!std.mem.eql(u8, parsed.owner, user.event.name)) return error.NotFound;
-            const repo_id = blk: {
-                var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &user_id)) orelse return error.NotFound;
-                defer user_repo.deinit(io, allocator);
-                const moment = (try evt.userMoment(&user_repo)) orelse return error.NotFound;
-                const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, parsed.name)) orelse return error.NotFound;
-                break :blk found.event_id;
-            };
-            try evt.deleteRepo(io, allocator, users_dir, &user_id, &repo_id, author);
-        },
-        .fork => unreachable,
-        .user => |name| {
-            if (!std.mem.eql(u8, name, user.event.name)) return error.NotFound;
-            try evt.deleteUser(io, allocator, users_dir, admin_repo, &user_id, author);
-        },
-    }
-    return null;
-}
-
-// delete the fork `id` names as `user_id`, its forker. not found to anyone
-// else, as for the other targets.
-fn deleteFork(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    arena: *std.heap.ArenaAllocator,
-    users_dir: []const u8,
-    admin_repo: *rp.Repo(.xit, evt.admin_repo_opts),
-    user_id: [evt.event_id_size]u8,
-    identity: []const u8,
-    id: []const u8,
-    typed: []const u8,
-    password: []const u8,
-) !?ui.Session.FormFeedback.DeleteFailure {
-    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
-    var ctx = try domain.Ctx.initServer(io, allocator, arena, admin_repo, users_dir, user_id, now);
-    (domain.DeleteFork{ .identity = identity, .fork_id = id, .confirm = typed, .password = password }).run(&ctx) catch |err| {
+// delete `target` as the context's user, its main owner, when `typed` is its
+// confirm text and `password` is theirs. each target's operation checks both
+// and the owner; this only picks it. returns why nothing was deleted, or null
+// once deleted; anyone but the main owner finds nothing to delete.
+pub fn perform(ctx: *domain.Ctx, target: Target, typed: []const u8, password: []const u8) !?ui.Session.FormFeedback.DeleteFailure {
+    const result = switch (target) {
+        .repo => |identity| (domain.DeleteRepo{ .repo = identity, .confirm = typed, .password = password }).run(ctx),
+        .fork => |f| (domain.DeleteFork{ .identity = f.identity, .fork_id = &f.id, .confirm = typed, .password = password }).run(ctx),
+        // the operation deletes the acting user, whose name the tab shows
+        .user => (domain.DeleteUser{ .confirm = typed, .password = password }).run(ctx),
+    };
+    result catch |err| {
         if (ui.Session.FormFeedback.DeleteFailure.fromError(err)) |failure| return failure;
         return switch (domain.classify(err).kind) {
             .login_required, .forbidden, .not_found, .unavailable_here => error.NotFound,
@@ -244,17 +188,19 @@ pub const View = struct {
     // the delete route
     fn submitForm(self: *View, allocator: std.mem.Allocator) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
+        if (self.session.io == null or self.session.users_dir == null) return;
         const admin_repo = self.session.admin_repo orelse return;
-        const user_id = self.session.userId() orelse return;
+        if (self.session.userId() == null) return;
 
         const confirm = try self.textInput(confirm_index).text(allocator);
         defer allocator.free(confirm);
         const password = try self.textInput(password_index).text(allocator);
         defer allocator.free(password);
 
-        const failure = perform(io, allocator, users_dir, admin_repo, user_id, self.target, confirm, password) catch |err| switch (err) {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var ctx = try self.session.ctx(&arena);
+        const failure = perform(&ctx, self.target, confirm, password) catch |err| switch (err) {
             // only the main owner is offered the form
             error.NotFound => return,
             else => return err,

@@ -8,6 +8,7 @@ const domain = hx.domain;
 const xit = hx.xit;
 const rp = xit.repo;
 const hash = xit.hash;
+const copy = @import("../../copy.zig");
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
@@ -85,6 +86,42 @@ pub const Server = struct {
         return try domain.Ctx.initServer(io, allocator, arena, &self.admin, self.users_dir, user, 0);
     }
 
+    // the account `user` names as it stands now, or null once it is removed
+    pub fn account(self: *Server, user: Id) !?evt.User.Record {
+        const moment = try evt.currentMoment(evt.admin_repo_opts, &self.admin);
+        return try domain.activeUser(moment, &self.arena, user);
+    }
+
+    // the id of the account named `name`, or null when there is none
+    pub fn accountId(self: *Server, name: []const u8) !?Id {
+        const moment = try evt.currentMoment(evt.admin_repo_opts, &self.admin);
+        return try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, moment, name);
+    }
+
+    // whether `name` and `password` log in, as the login form checks them
+    pub fn logsIn(self: *Server, name: []const u8, password: []const u8) !bool {
+        const moment = try evt.currentMoment(evt.admin_repo_opts, &self.admin);
+        return switch (try evt.User.verifyCredentials(evt.AdminDB, evt.admin_repo_opts.hash, moment, &self.arena, name, password)) {
+            .success => true,
+            else => false,
+        };
+    }
+
+    // alice's issue `issue` on the open repo with bob's comment `comment` on
+    // it, which notifies her
+    pub fn notifyAlice(self: *Server, issue: Id, comment: Id) !void {
+        try self.addIssue(self.open, alice_author, issue);
+        try self.addComment(self.open, bob_author, comment, issue, "hi");
+    }
+
+    // a server page session acting as `user`
+    pub fn session(self: *Server, arena: *std.heap.ArenaAllocator, user: *const Id) !hx.ui.Session {
+        var result = try hx.ui.Session.init(arena, &self.admin, .{ .user_id = user });
+        result.io = io;
+        result.users_dir = self.users_dir;
+        return result;
+    }
+
     // the on-disk path of a repo in the fixture
     pub fn repoPath(self: *Server, location: evt.RepoLocation) ![]const u8 {
         return try std.Io.Dir.path.join(self.arena.allocator(), &.{ self.users_dir, &std.fmt.bytesToHex(location.owner_id, .lower), "repos", &std.fmt.bytesToHex(location.repo_id, .lower) });
@@ -123,6 +160,76 @@ pub const Server = struct {
         return switch (any_repo) {
             inline else => |*repo| if (try repo.readRef(io, .{ .kind = .head, .name = branch })) |oid| try self.arena.allocator().dupe(u8, &oid) else null,
         };
+    }
+
+    // the branch a repo's HEAD names, its default, or null when HEAD is detached
+    pub fn defaultBranch(self: *Server, location: evt.RepoLocation) !?[]const u8 {
+        var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try self.repoPath(location) });
+        defer any_repo.deinit(io, allocator);
+        var buffer: [xit.ref.MAX_REF_CONTENT_SIZE]u8 = undefined;
+        return switch (any_repo) {
+            inline else => |*repo| switch (try repo.head(io, &buffer)) {
+                .ref => |ref| try self.arena.allocator().dupe(u8, ref.name),
+                .oid => null,
+            },
+        };
+    }
+
+    // set a repo's `undo.value` config, one transaction in its history
+    pub fn setUndoValue(self: *Server, location: evt.RepoLocation, value: []const u8) !void {
+        var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try self.repoPath(location) });
+        defer any_repo.deinit(io, allocator);
+        switch (any_repo) {
+            inline else => |*repo| try repo.addConfig(io, allocator, .{ .name = "undo.value", .value = value }),
+        }
+    }
+
+    // a repo's `undo.value` config, or null when it has none
+    pub fn undoValue(self: *Server, location: evt.RepoLocation) !?[]const u8 {
+        var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try self.repoPath(location) });
+        defer any_repo.deinit(io, allocator);
+        switch (any_repo) {
+            inline else => |*repo| {
+                var config = try repo.listConfig(io, allocator);
+                defer config.deinit();
+                const section = config.local_sections.get("undo") orelse return null;
+                const value = section.get("value") orelse return null;
+                return try self.arena.allocator().dupe(u8, value);
+            },
+        }
+    }
+
+    // how many transactions a repo's history holds; the next one gets this index
+    pub fn historyCount(self: *Server, location: evt.RepoLocation) !u64 {
+        var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try self.repoPath(location) });
+        defer any_repo.deinit(io, allocator);
+        switch (any_repo) {
+            inline else => |*repo| {
+                const DB = @TypeOf(repo.*).DB;
+                const history = try DB.ArrayList(.read_only).init(repo.core.db.rootCursor().readOnly());
+                return try history.count();
+            },
+        }
+    }
+
+    // the lowest transaction undo may reach in a copied repo, or null for one that isn't a copy
+    pub fn undoFloor(self: *Server, location: evt.RepoLocation) !?u64 {
+        var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try self.repoPath(location) });
+        defer any_repo.deinit(io, allocator);
+        return switch (any_repo) {
+            inline else => |*repo| try copy.undoFloor(repo.self_repo_opts, &repo.core),
+        };
+    }
+
+    // the location of `owner`'s repo `name`
+    pub fn locate(self: *Server, owner: Id, name: []const u8) !evt.RepoLocation {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var user_repo = (try evt.openUserRepo(io, allocator, self.users_dir, &owner)) orelse return error.TestExpectedUserRepo;
+        defer user_repo.deinit(io, allocator);
+        const moment = (try evt.userMoment(&user_repo)) orelse return error.TestExpectedRepo;
+        const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, name)) orelse return error.TestExpectedRepo;
+        return .{ .owner_id = owner, .repo_id = found.event_id };
     }
 
     // commit `contents` as the README of `branch` in a repo, starting the
@@ -308,6 +415,41 @@ fn commitOnBranch(repo: anytype, branch: []const u8, file_name: []const u8, cont
     }
 }
 
+// server data as `haxy serve` first makes it, with no accounts yet
+pub const FreshServer = struct {
+    temp: std.testing.TmpDir,
+    arena: std.heap.ArenaAllocator,
+    admin: rp.Repo(.xit, evt.admin_repo_opts),
+    users_dir: []const u8,
+
+    // heap allocated so the admin repo a Ctx points at stays put
+    pub fn init() !*FreshServer {
+        const self = try allocator.create(FreshServer);
+        errdefer allocator.destroy(self);
+        self.temp = std.testing.tmpDir(.{});
+        errdefer self.temp.cleanup();
+        self.arena = std.heap.ArenaAllocator.init(allocator);
+        errdefer self.arena.deinit();
+        const aa = self.arena.allocator();
+        const base = try self.temp.dir.realPathFileAlloc(io, ".", aa);
+        self.users_dir = try std.Io.Dir.path.join(aa, &.{ base, "users" });
+        self.admin = try evt.initAdminRepo(io, allocator, try std.Io.Dir.path.join(aa, &.{ base, "admin" }));
+        return self;
+    }
+
+    pub fn deinit(self: *FreshServer) void {
+        self.admin.deinit(io, allocator);
+        self.arena.deinit();
+        self.temp.cleanup();
+        allocator.destroy(self);
+    }
+
+    // a context acting as `user`, or logged out when null. results land in `arena`.
+    pub fn ctx(self: *FreshServer, arena: *std.heap.ArenaAllocator, user: ?Id) !domain.Ctx {
+        return try domain.Ctx.initServer(io, allocator, arena, &self.admin, self.users_dir, user, 0);
+    }
+};
+
 // a temp local repo of `kind` and `hash_kind` with one commit on master, the
 // way `haxy` with no arguments sees a repo
 pub fn Local(comptime kind: rp.RepoKind, comptime hash_kind: hash.HashKind) type {
@@ -352,6 +494,21 @@ pub fn Local(comptime kind: rp.RepoKind, comptime hash_kind: hash.HashKind) type
             defer repo.deinit(io, allocator);
             try repo.addConfig(io, allocator, .{ .name = "user.name", .value = author.name });
             try repo.addConfig(io, allocator, .{ .name = "user.email", .value = author.email });
+        }
+
+        // add a remote `name` fetching from `url`, which may be another
+        // local repo's path
+        pub fn addRemote(self: *const Self, name: []const u8, url: []const u8) !void {
+            var repo = try rp.Repo(kind, repo_opts).open(io, allocator, .{ .path = self.path });
+            defer repo.deinit(io, allocator);
+            try repo.addRemote(io, allocator, .{ .name = name, .value = url });
+        }
+
+        // set a config entry of the repo
+        pub fn setConfig(self: *const Self, name: []const u8, value: []const u8) !void {
+            var repo = try rp.Repo(kind, repo_opts).open(io, allocator, .{ .path = self.path });
+            defer repo.deinit(io, allocator);
+            try repo.addConfig(io, allocator, .{ .name = name, .value = value });
         }
 
         // commit `contents` as the readme of `branch`, starting it from master

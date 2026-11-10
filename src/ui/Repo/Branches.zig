@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../../event.zig");
+const domain = @import("../../domain.zig");
 const ui = @import("../../ui.zig");
 const inp = @import("../input.zig");
 const Comment = @import("./Comment.zig");
@@ -34,53 +35,9 @@ pub fn init(arena: *std.heap.ArenaAllocator, identity: []const u8, repo: evt.Rep
     };
 }
 
-// make `branch` the default, or protect or unprotect it, in the repo
-// `identity` names as `actor`, one of its owners. returns why nothing was
-// written, or null once written
-pub fn perform(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    users_dir: []const u8,
-    actor: ui.Actor,
-    identity: []const u8,
-    action: Action,
-    branch: []const u8,
-) !?ui.Session.FormFeedback.BranchesFailure {
-    const owner_id = actor.repo_user_id orelse return error.NotFound;
-    const parsed = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const repo_id = blk: {
-        var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &owner_id)) orelse return error.NotFound;
-        defer user_repo.deinit(io, allocator);
-        const moment = (try evt.userMoment(&user_repo)) orelse return error.NotFound;
-        const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, parsed.name)) orelse return error.NotFound;
-        break :blk found.event_id;
-    };
-
-    // only an existing branch can be the default or protected, and a protected
-    // branch's row links to it, so its encoded name must fit in a route
-    if (action != .unprotect) {
-        if ((try ui.urlEncodeRef(arena.allocator(), branch)).len > ui.RoutablePage.ref_route_max_len) return .too_long;
-        const path = try evt.repoPath(allocator, users_dir, &owner_id, &repo_id);
-        defer allocator.free(path);
-        const source = ui.RepoSource{ .path = path, .repo_kind = .xit };
-        if (!try source.hasBranch(io, allocator, branch)) return .not_found;
-        // the default branch is HEAD, which the repo page, the commits tab and clones follow
-        if (action == .default) {
-            var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = path });
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| try repo.resetAdd(io, .{ .ref = .{ .kind = .head, .name = branch } }),
-            }
-            return null;
-        }
-    }
-    evt.protectBranch(io, allocator, users_dir, &owner_id, &repo_id, branch, action == .protect, actor.author) catch |err| {
-        if (ui.Session.FormFeedback.BranchesFailure.fromError(err)) |failure| return failure;
-        return err;
-    };
-    return null;
+// the domain's branch name limit is the encoded length a branch route holds
+comptime {
+    std.debug.assert(domain.branch_encoded_max_len == ui.RoutablePage.ref_route_max_len);
 }
 
 pub const View = struct {
@@ -251,15 +208,24 @@ pub const View = struct {
     }
 
     // the terminal performs the action itself; the web posts the form instead
-    fn act(self: *View, allocator: std.mem.Allocator, action: Action, branch: []const u8) !void {
+    fn act(self: *View, _: std.mem.Allocator, action: Action, branch: []const u8) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
-        const actor = (try self.session.authorize(self.data.identity, .owner, null)) orelse return;
-        if (try perform(io, allocator, users_dir, actor, self.data.identity, action, branch)) |failure| {
+        if (self.session.io == null or self.session.users_dir == null) return;
+        // a session that may no longer manage branches does nothing
+        if (try self.session.authorize(self.data.identity, .owner, null) == null) return;
+        var ctx = try self.session.ctx(self.session.page_arena);
+        const result = switch (action) {
+            .default => (domain.SetDefaultBranch{ .repo = self.data.identity, .branch = branch }).run(&ctx),
+            .protect => (domain.ProtectBranch{ .repo = self.data.identity, .branch = branch }).run(&ctx),
+            .unprotect => (domain.UnprotectBranch{ .repo = self.data.identity, .branch = branch }).run(&ctx),
+        };
+        result catch |err| {
+            // access lost since the check above leaves the form, like failing it
+            if (ui.lostAccess(err)) return;
+            const failure = ui.Session.FormFeedback.BranchesFailure.fromError(err) orelse return err;
             self.session.data.form_feedback = .{ .repo_branches = .{ .failure = failure, .name = try self.session.arena.allocator().dupe(u8, branch), .default = action == .default } };
             return;
-        }
+        };
         try self.session.navigate(ui.RoutablePage.repoBranchesRoute(self.data.identity) orelse return error.RouteTooLong);
     }
 

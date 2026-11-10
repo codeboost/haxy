@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../../event.zig");
+const domain = @import("../../domain.zig");
 const ui = @import("../../ui.zig");
 const inp = @import("../input.zig");
 const xit = @import("xit");
@@ -357,9 +358,9 @@ pub const Form = struct {
     // the web posts the form to the settings route.
     fn submitForm(self: *Form, allocator: std.mem.Allocator) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
-        const actor = (try self.session.authorize(self.data.identity, .owner, null)) orelse return;
+        if (self.session.io == null or self.session.users_dir == null) return;
+        // a session that may no longer change the repo does nothing
+        if (try self.session.authorize(self.data.identity, .owner, null) == null) return;
 
         const name = try (try formField(self.formBox(), "name")).text(allocator);
         defer allocator.free(name);
@@ -370,7 +371,18 @@ pub const Form = struct {
         const issue_role = labelRole((try formRadio(self.formBox(), "issue_role")).selected()) catch unreachable;
         const patch_role = labelRole((try formRadio(self.formBox(), "patch_role")).selected()) catch unreachable;
 
-        const route = update(io, allocator, users_dir, actor, self.data.identity, name, description, access, discuss_role, issue_role, patch_role) catch |err| {
+        var ctx = try self.session.ctx(self.session.page_arena);
+        const updated = (domain.UpdateRepoSettings{
+            .repo = self.data.identity,
+            .name = name,
+            .description = description,
+            .access = access,
+            .discuss_role = discuss_role,
+            .issue_role = issue_role,
+            .patch_role = patch_role,
+        }).run(&ctx) catch |err| {
+            // access lost since the check above leaves the form, like failing it
+            if (ui.lostAccess(err)) return;
             const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
             const aa = self.session.arena.allocator();
             self.session.data.form_feedback = .{ .repo_settings = .{ .failure = failure, .fields = .{
@@ -383,7 +395,7 @@ pub const Form = struct {
             } } };
             return;
         };
-        try self.session.navigate(route);
+        try self.session.navigate(ui.RoutablePage.repoSettingsRoute(updated.identity) orelse return error.RouteTooLong);
     }
 
     fn formBox(self: *Form) *wgt.Box(ui.Widget) {
@@ -408,26 +420,3 @@ pub const Form = struct {
         return box.focus.child_id == box.children.keys()[0];
     }
 };
-
-// change the repo `identity` names as `actor`, its owner, returning its
-// settings route under its new name
-pub fn update(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    users_dir: []const u8,
-    actor: ui.Actor,
-    identity: []const u8,
-    name: []const u8,
-    description: []const u8,
-    access: evt.Repo.Access,
-    discuss_role: ?evt.Repo.Role,
-    issue_role: ?evt.Repo.Role,
-    patch_role: ?evt.Repo.Role,
-) !ui.RoutablePage {
-    const parsed = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
-    const owner_id = actor.repo_user_id orelse return error.NotFound;
-    try evt.updateRepo(io, allocator, users_dir, &owner_id, actor.author, parsed.name, name, description, access, discuss_role, issue_role, patch_role);
-    var buf: [ui.RoutablePage.repo_route_max_len]u8 = undefined;
-    const new_identity = std.fmt.bufPrint(&buf, "{s}:{s}", .{ parsed.owner, name }) catch return error.RouteTooLong;
-    return ui.RoutablePage.repoSettingsRoute(new_identity) orelse error.RouteTooLong;
-}

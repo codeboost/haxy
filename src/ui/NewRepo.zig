@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../event.zig");
+const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
 const inp = @import("./input.zig");
 const xit = @import("xit");
@@ -136,12 +137,10 @@ pub const View = struct {
     // posts the form to the new-repo route.
     fn submitForm(self: *View, allocator: std.mem.Allocator) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
-        const admin_repo = self.session.admin_repo orelse return;
-        const user_id = self.session.userId() orelse return;
-        const moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
-        const user = (try ui.activeUser(moment, self.session.page_arena, user_id)) orelse return;
+        if (self.session.io == null or self.session.users_dir == null or self.session.admin_repo == null) return;
+        var ctx = try self.session.ctx(self.session.page_arena);
+        // a logged-out or removed user's form does nothing
+        if (ctx.user_id == null) return;
 
         const name_input = try formField(self.formBox(), "name");
         const description_input = try formField(self.formBox(), "description");
@@ -155,7 +154,7 @@ pub const View = struct {
         const hash_kind = std.meta.stringToEnum(hash.HashKind, (try formRadio(self.formBox(), "hash")).selected()) orelse unreachable;
         const access = std.meta.stringToEnum(evt.Repo.Access, (try formRadio(self.formBox(), "access")).selected()) orelse unreachable;
 
-        _ = evt.createRepo(io, allocator, users_dir, &user_id, .{ .name = user.event.name, .email = user.event.email }, name, description, access, hash_kind, if (copy.len == 0) null else .{ .admin_moment = moment, .path = copy }) catch |err| {
+        const created = (domain.CreateRepo{ .name = name, .description = description, .access = access, .hash = hash_kind, .copy = copy }).run(&ctx) catch |err| {
             const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
             const aa = self.session.arena.allocator();
             self.session.data.form_feedback = .{ .repo = .{ .failure = failure, .fields = .{
@@ -173,8 +172,7 @@ pub const View = struct {
         description_input.clear(allocator);
         copy_input.clear(allocator);
 
-        const identity = try self.session.page_arena.allocator().print("{s}:{s}", .{ user.event.name, name });
-        try self.session.navigate(ui.RoutablePage.repoFilesRoute(identity, null, "", "", 0) orelse return);
+        try self.session.navigate(ui.RoutablePage.repoFilesRoute(created.identity, null, "", "", 0) orelse return);
     }
 
     fn formBox(self: *View) *wgt.Box(ui.Widget) {

@@ -44,3 +44,19 @@ test "mcp cli: anything but no flags or both server flags with values is an inva
     // a positional argument
     try expectDispatch(&.{ "mcp", "alice" }, invalid.argument("alice"));
 }
+
+test "mcp cli: the help names every tool family and what --allow-destructive adds" {
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try cmd.printHelp(.mcp, &out.writer);
+    const help = out.written();
+    // the flag's line names undo and the key removal
+    const flag_line = help[std.mem.indexOf(u8, help, "--allow-destructive") orelse return error.TestExpectedFlag ..];
+    for ([_][]const u8{ "undo", "ssh keys" }) |word| try std.testing.expect(std.mem.indexOf(u8, flag_line, word) != null);
+    for ([_][]const u8{ "issues", "patches", "discussions", "repos", "members", "branches", "ssh keys", "notifications" }) |word| {
+        if (std.mem.indexOf(u8, help, word) == null) {
+            std.debug.print("help lacks {s}:\n{s}\n", .{ word, help });
+            return error.TestExpectedWord;
+        }
+    }
+}

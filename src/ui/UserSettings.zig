@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../event.zig");
+const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
 const inp = @import("./input.zig");
 const xit = @import("xit");
@@ -205,10 +206,9 @@ pub const View = struct {
     // the user route.
     fn submitForm(self: *View, allocator: std.mem.Allocator) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
+        if (self.session.io == null or self.session.users_dir == null) return;
         const admin_repo = self.session.admin_repo orelse return;
-        const user_id = self.session.userId() orelse return;
+        if (self.session.userId() == null) return;
 
         const email = try (try self.formField("email")).text(allocator);
         defer allocator.free(email);
@@ -219,9 +219,12 @@ pub const View = struct {
         const new_password_again = try (try self.formField("new_password_again")).text(allocator);
         defer allocator.free(new_password_again);
 
-        evt.updateUser(io, allocator, users_dir, admin_repo, &user_id, email, current_password, new_password, new_password_again) catch |err| switch (err) {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var ctx = try self.session.ctx(&arena);
+        (domain.UpdateUserSettings{ .email = email, .current_password = current_password, .new_password = new_password, .new_password_again = new_password_again }).run(&ctx) catch |err| switch (err) {
             // the account was removed under them
-            error.NotFound => return ui.UserNotifications.logOut(self.session),
+            error.LoginRequired => return ui.UserNotifications.logOut(self.session),
             else => {
                 const failure = ui.Session.FormFeedback.UserFailure.fromError(err) orelse return err;
                 const aa = self.session.arena.allocator();

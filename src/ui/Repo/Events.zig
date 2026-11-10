@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../../event.zig");
+const domain = @import("../../domain.zig");
 const copy = @import("../../copy.zig");
 const ui = @import("../../ui.zig");
 const inp = @import("../input.zig");
@@ -674,20 +675,6 @@ pub const Header = struct {
     const nothing = "nothing to sync";
     const unsynced = "sync needed!";
 
-    const Progress = struct {
-        message: *std.Io.Writer.Allocating,
-
-        pub fn run(self: @This(), _: std.Io, event: rp.ProgressEvent) !void {
-            switch (event) {
-                .text => |value| {
-                    self.message.clearRetainingCapacity();
-                    try self.message.writer.writeAll(value);
-                },
-                else => {},
-            }
-        }
-    };
-
     pub fn local(
         comptime repo_kind: rp.RepoKind,
         comptime repo_opts: rp.RepoOpts(repo_kind),
@@ -697,7 +684,7 @@ pub const Header = struct {
         failure: ?[]const u8,
     ) !Header {
         if (failure != null) return Header.empty(aa, failure);
-        const remote_name = (try remoteName(repo_kind, repo_opts, repo, io, aa)) orelse return .{ .sync_status = nothing };
+        const remote_name = (try domain.eventsRemoteName(repo_kind, repo_opts, repo, io, aa)) orelse return .{ .sync_status = nothing };
         const remote_ref: rf.Ref = .{ .kind = .{ .remote = remote_name }, .name = evt.events_ref.name };
         const local_oid = (try repo.readRef(io, evt.events_ref)) orelse return .{ .sync_status = nothing };
         const remote_oid = (try repo.readRef(io, remote_ref)) orelse return .{ .sync_status = nothing };
@@ -840,17 +827,23 @@ pub const Header = struct {
     };
 };
 
+fn syncSession(session: *ui.Session, arena: *std.heap.ArenaAllocator) !domain.Sync.Result {
+    var ctx = try session.ctx(arena);
+    return try (domain.Sync{}).run(&ctx);
+}
+
 pub fn performSync(allocator: std.mem.Allocator, session: *ui.Session) !void {
     if (comptime builtin.target.cpu.arch == .wasm32) return;
-    const io = session.io orelse return;
-    const source = session.local orelse return;
+    if (session.io == null or session.local == null) return;
     defer session.refresh_requested = true;
-    const failure = sync(io, allocator, source) catch |err| {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    // a setup failure shows like the sync's own
+    const result = syncSession(session, &arena) catch |err| {
         session.data.sync_failure = @errorName(err);
         return;
     };
-    if (failure) |message| {
-        defer allocator.free(message);
+    if (result.remote_failure) |message| {
         session.data.sync_failure = try session.arena.allocator().dupe(u8, message);
         return;
     }
@@ -862,103 +855,4 @@ pub fn performSync(allocator: std.mem.Allocator, session: *ui.Session) !void {
         },
         else => {},
     }
-}
-
-fn remoteName(
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    repo: *rp.Repo(repo_kind, repo_opts),
-    io: std.Io,
-    allocator: std.mem.Allocator,
-) !?[]u8 {
-    var remotes = try repo.listRemotes(io, allocator);
-    defer remotes.deinit();
-    const names = remotes.sections.keys();
-    if (names.len == 0) return null;
-    for (names) |name| {
-        const remote_ref: rf.Ref = .{ .kind = .{ .remote = name }, .name = evt.events_ref.name };
-        if (try repo.readRef(io, remote_ref) != null) return try allocator.dupe(u8, name);
-    }
-    return try allocator.dupe(u8, names[0]);
-}
-
-fn isLoopbackSshUrl(url: []const u8) bool {
-    const uri = std.Uri.parse(url) catch return false;
-    const host = switch (uri.host orelse return false) {
-        .raw => |value| value,
-        .percent_encoded => |value| value,
-    };
-    return std.mem.eql(u8, host, "localhost") or
-        std.mem.eql(u8, host, "127.0.0.1") or
-        std.mem.eql(u8, host, "::1") or
-        std.mem.eql(u8, host, "[::1]");
-}
-
-pub fn sync(io: std.Io, allocator: std.mem.Allocator, source: ui.RepoSource) !?[]u8 {
-    var message: std.Io.Writer.Allocating = .init(allocator);
-    defer message.deinit();
-
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{ .ProgressCtx = Header.Progress }).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| {
-                    const repo_opts = repo.self_repo_opts;
-                    const remote_name = (try remoteName(repo_kind, repo_opts, repo, io, allocator)) orelse return error.RemoteNotFound;
-                    defer allocator.free(remote_name);
-
-                    var config = try repo.listConfig(io, allocator);
-                    defer config.deinit();
-                    const configured_ssh = if (config.sections.get("core")) |core| core.get("sshcommand") else null;
-                    const ssh = if (configured_ssh) |command| if (command.len > 0) command else "ssh" else "ssh";
-                    const remote_section = try allocator.print("remote.{s}", .{remote_name});
-                    defer allocator.free(remote_section);
-                    const remote_config = config.sections.get(remote_section) orelse return error.RemoteNotFound;
-                    const fetch_url = remote_config.get("url") orelse return error.UrlNotFound;
-                    const push_url = remote_config.get("pushurl") orelse fetch_url;
-                    const loopback_opts = " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
-                    const fetch_ssh_command = try allocator.print("{s}{s} -o BatchMode=yes -o LogLevel=QUIET", .{ ssh, if (isLoopbackSshUrl(fetch_url)) loopback_opts else "" });
-                    defer allocator.free(fetch_ssh_command);
-                    const push_ssh_command = try allocator.print("{s}{s} -o BatchMode=yes -o LogLevel=QUIET", .{ ssh, if (isLoopbackSshUrl(push_url)) loopback_opts else "" });
-                    defer allocator.free(push_ssh_command);
-                    const fetch_transport_opts: xit.net.Opts(repo_opts.ProgressCtx) = .{ .progress_ctx = .{ .message = &message }, .wire = .{ .ssh = .{ .command = fetch_ssh_command } } };
-                    const push_transport_opts: xit.net.Opts(repo_opts.ProgressCtx) = .{ .progress_ctx = .{ .message = &message }, .wire = .{ .ssh = .{ .command = push_ssh_command } } };
-
-                    const remote_ref: rf.Ref = .{ .kind = .{ .remote = remote_name }, .name = evt.events_ref.name };
-                    const fetch_refspec = try allocator.print("+refs/heads/{s}:refs/remotes/{s}/{s}", .{ evt.events_ref.name, remote_name, evt.events_ref.name });
-                    defer allocator.free(fetch_refspec);
-                    var fetch_opts = fetch_transport_opts;
-                    fetch_opts.refspecs = &.{fetch_refspec};
-                    message.clearRetainingCapacity();
-                    evt.mergeEvents(repo_kind, repo_opts, io, allocator, repo, remote_ref, fetch_opts) catch |err| {
-                        if (err == error.ServerReportedError and message.written().len != 0) return try allocator.dupe(u8, message.written());
-                        return err;
-                    };
-
-                    const local_oid = try repo.readRef(io, evt.events_ref);
-                    const remote_oid = try repo.readRef(io, remote_ref);
-                    if (local_oid == null and remote_oid == null) {
-                        try evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{});
-                        return null;
-                    }
-                    try evt.consume(.local, .repo, repo_kind, repo_opts, io, allocator, repo, evt.events_ref, &.{});
-
-                    const push_refspec = try allocator.print("refs/heads/{s}:refs/heads/{s}", .{ evt.events_ref.name, evt.events_ref.name });
-                    defer allocator.free(push_refspec);
-                    message.clearRetainingCapacity();
-                    repo.push(io, allocator, remote_name, push_refspec, false, push_transport_opts) catch |err| {
-                        if (err == error.ServerReportedError and message.written().len != 0) return try allocator.dupe(u8, message.written());
-                        return err;
-                    };
-                    message.clearRetainingCapacity();
-                    repo.fetch(io, allocator, remote_name, fetch_opts) catch |err| {
-                        if (err == error.ServerReportedError and message.written().len != 0) return try allocator.dupe(u8, message.written());
-                        return err;
-                    };
-                },
-            }
-        },
-    }
-    return null;
 }

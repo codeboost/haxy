@@ -80,6 +80,10 @@ pub fn build(b: *std.Build) void {
         });
         unit_tests.root_module.addImport("xit", xit_dep.module("xit"));
         unit_tests.root_module.addImport("ansi_art", ansi_art);
+        // the web tests serve pages, which embed the wasm
+        unit_tests.root_module.addAnonymousImport("haxy.wasm", .{
+            .root_source_file = wasm_exe.getEmittedBin(),
+        });
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
         run_unit_tests.has_side_effects = true;

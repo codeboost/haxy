@@ -244,8 +244,96 @@ pub fn loadLabels(
     return labels.items;
 }
 
+// a repo's event db, held open while thread data is read from it. a git repo
+// keeps its db next to it (synced from the events branch on each page build);
+// a xit repo's is its own.
+pub fn EventDb(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.RepoOpts(repo_kind)) type {
+    return struct {
+        local: ?evt.LocalEventDB(repo_opts.hash),
+
+        const Self = @This();
+
+        pub const Moment = union(enum) {
+            // a git repo with no event db yet
+            none,
+            // a db that holds no events yet. the page also counts one it
+            // can't read; `momentStrict` doesn't.
+            no_events,
+            ok: evt.EventDB(repo_opts.hash).HashMap(.read_only),
+        };
+
+        pub fn open(io: std.Io, gpa: std.mem.Allocator, repo: *rp.Repo(repo_kind, repo_opts)) !Self {
+            return .{ .local = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, gpa, repo.core.repo_dir) else null };
+        }
+
+        pub fn deinit(self: *Self, io: std.Io, gpa: std.mem.Allocator) void {
+            if (self.local) |*event_db| event_db.deinit(io, gpa);
+        }
+
+        // the db's current moment. the page shows a db it can't read as one
+        // with no events; `momentStrict` is the same read for a read
+        // operation, which fails instead.
+        pub fn moment(self: *Self, repo: *rp.Repo(repo_kind, repo_opts)) Moment {
+            return self.readMoment(false, repo) catch unreachable;
+        }
+
+        // `moment`, where only a db with no events yet is `.no_events`
+        pub fn momentStrict(self: *Self, repo: *rp.Repo(repo_kind, repo_opts)) !Moment {
+            return try self.readMoment(true, repo);
+        }
+
+        // the read `moment` and `momentStrict` share
+        fn readMoment(self: *Self, comptime strict: bool, repo: *rp.Repo(repo_kind, repo_opts)) !Moment {
+            const current = if (self.local) |*event_db|
+                evt.currentMomentFromDb(repo_opts.hash, event_db.db)
+            else if (repo_kind == .git)
+                return .none
+            else
+                evt.currentMoment(repo_opts, repo);
+            return .{ .ok = current catch |err| {
+                if (strict and !isNoEvents(err)) return err;
+                return .no_events;
+            } };
+        }
+    };
+}
+
+// whether reading an event db's moment failed because the db holds no events
+// yet: no transaction, or none that recorded events
+pub fn isNoEvents(err: anyerror) bool {
+    return err == error.NotFound;
+}
+
+// one thread kind's tables at a moment of the event db
+pub fn Tables(comptime Data: type, comptime hash_kind: hash.HashKind) type {
+    const DB = evt.EventDB(hash_kind);
+    return struct {
+        moment: DB.HashMap(.read_only),
+        // event id -> record
+        records: DB.HashMap(.read_only),
+        // the conflicted threads' container (issues and patches): a set view
+        // for membership and windowing, a map view for the resolve entry, over
+        // the same cursor
+        conflict_set: ?DB.SortedSet(.read_only) = null,
+        conflicts_map: ?DB.SortedMap(.read_only) = null,
+
+        // null when the moment holds no thread of the kind
+        pub fn read(moment: DB.HashMap(.read_only)) !?@This() {
+            const records_cursor = try moment.getCursor(hash.hashInt(hash_kind, Data.Event.record_map_key)) orelse return null;
+            var tables: @This() = .{ .moment = moment, .records = try DB.HashMap(.read_only).init(records_cursor) };
+            if (comptime @hasField(Data.Entry, "conflicted")) {
+                if (try moment.getCursor(hash.hashInt(hash_kind, Data.Event.conflicts_key))) |cursor| {
+                    tables.conflict_set = try DB.SortedSet(.read_only).init(cursor);
+                    tables.conflicts_map = try DB.SortedMap(.read_only).init(cursor);
+                }
+            }
+            return tables;
+        }
+    };
+}
+
 // the key a list set (and the search index) stores a thread under
-const OrderKey = [@sizeOf(u64) + evt.event_id_size]u8;
+pub const OrderKey = [@sizeOf(u64) + evt.event_id_size]u8;
 
 // a search result's bytes as an order key
 fn resultKey(key: []const u8) !OrderKey {
@@ -260,26 +348,27 @@ fn keyIdHex(order_key: *const OrderKey) [evt.event_id_size * 2]u8 {
     return std.fmt.bytesToHex(order_key[@sizeOf(u64)..].*, .lower);
 }
 
+// one window of the listing `sets` intersect, starting at `root_key` (null for
+// the first window)
 pub fn loadWindow(
     comptime Data: type,
     comptime kind: evt.EventKind,
     comptime hash_kind: hash.HashKind,
     arena: *std.heap.ArenaAllocator,
     admin_moment: ?evt.AdminDB.HashMap(.read_only),
-    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
-    records: evt.EventDB(hash_kind).HashMap(.read_only),
+    tables: Tables(Data, hash_kind),
     // the sets the listing intersects, all keyed alike; none lists nothing
     sets: []const evt.EventDB(hash_kind).SortedSet(.read_only),
     root_key: ?[]const u8,
-    conflict_set: ?evt.EventDB(hash_kind).SortedSet(.read_only),
-    selected_id: []const u8,
-    comments_start: usize,
+    // the selected thread, already read with its comment window, which stands
+    // in for its own entry
+    selected: ?*const Data.Entry,
     // the words the listing is narrowed to, "" for none
     words: []const u8,
     viewer: ?ui.Viewer,
 ) !Data.Window {
     if (sets.len == 0) return .empty;
-    if (sets.len > 1 or words.len != 0) return loadSearchWindow(Data, kind, hash_kind, arena, admin_moment, haxy_moment, records, sets, root_key, conflict_set, selected_id, comments_start, words, viewer);
+    if (sets.len > 1 or words.len != 0) return loadSearchWindow(Data, kind, hash_kind, arena, admin_moment, tables, sets, root_key, selected, words, viewer);
     const set = sets[0];
     const aa = arena.allocator();
 
@@ -308,7 +397,7 @@ pub fn loadWindow(
             next_id = try aa.dupe(u8, &keyIdHex(&order_key));
             break;
         }
-        const entry = (try loadEntry(Data, hash_kind, arena, admin_moment, haxy_moment, records, &order_key, conflict_set, selected_id, comments_start, viewer)) orelse continue;
+        const entry = (try windowEntry(Data, hash_kind, arena, admin_moment, tables, &order_key, selected, viewer)) orelse continue;
         try items.append(aa, entry);
     }
 
@@ -332,19 +421,17 @@ fn loadSearchWindow(
     comptime hash_kind: hash.HashKind,
     arena: *std.heap.ArenaAllocator,
     admin_moment: ?evt.AdminDB.HashMap(.read_only),
-    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
-    records: evt.EventDB(hash_kind).HashMap(.read_only),
+    tables: Tables(Data, hash_kind),
     sets: []const evt.EventDB(hash_kind).SortedSet(.read_only),
     root_key: ?[]const u8,
-    conflict_set: ?evt.EventDB(hash_kind).SortedSet(.read_only),
-    selected_id: []const u8,
-    comments_start: usize,
+    selected: ?*const Data.Entry,
     words: []const u8,
     viewer: ?ui.Viewer,
 ) !Data.Window {
     const DB = evt.EventDB(hash_kind);
     const aa = arena.allocator();
     const root = root_key orelse "";
+    const haxy_moment = tables.moment;
 
     // the matching list keys, in list order. the cap bounds the count, not the
     // paging: past it a pass goes on only until the window and its "next" link
@@ -392,7 +479,7 @@ fn loadSearchWindow(
     var items: std.ArrayList(Data.Entry) = .empty;
     const last = @min(first + Data.page_size, keys.items.len);
     for (keys.items[first..last]) |*order_key| {
-        const entry = (try loadEntry(Data, hash_kind, arena, admin_moment, haxy_moment, records, order_key, conflict_set, selected_id, comments_start, viewer)) orelse continue;
+        const entry = (try windowEntry(Data, hash_kind, arena, admin_moment, tables, order_key, selected, viewer)) orelse continue;
         try items.append(aa, entry);
     }
 
@@ -413,26 +500,41 @@ fn windowKnown(comptime Data: type, keys: []const OrderKey, root: []const u8) bo
     return std.mem.order(u8, &keys[keys.len - 1 - Data.page_size], root) != .lt;
 }
 
-// one list entry: the record `order_key` names, with its author, comments,
-// attachments and assignees. null when the record is gone.
-fn loadEntry(
+// a window's entry for `order_key`: the selected thread's own when it is the
+// one, otherwise read with its first comment window
+fn windowEntry(
     comptime Data: type,
     comptime hash_kind: hash.HashKind,
     arena: *std.heap.ArenaAllocator,
     admin_moment: ?evt.AdminDB.HashMap(.read_only),
-    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
-    records: evt.EventDB(hash_kind).HashMap(.read_only),
+    tables: Tables(Data, hash_kind),
     order_key: *const OrderKey,
-    conflict_set: ?evt.EventDB(hash_kind).SortedSet(.read_only),
-    selected_id: []const u8,
+    selected: ?*const Data.Entry,
+    viewer: ?ui.Viewer,
+) !?Data.Entry {
+    if (selected) |entry| if (std.mem.eql(u8, entry.id, &keyIdHex(order_key))) return entry.*;
+    return try loadEntry(Data, hash_kind, arena, admin_moment, tables, order_key, 0, viewer);
+}
+
+// one list entry: the record `order_key` names, with its author, the comment
+// window starting at `comments_start`, attachments and assignees. null when
+// the record is gone.
+pub fn loadEntry(
+    comptime Data: type,
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    tables: Tables(Data, hash_kind),
+    order_key: *const OrderKey,
     comments_start: usize,
     viewer: ?ui.Viewer,
 ) !?Data.Entry {
     const DB = evt.EventDB(hash_kind);
     const aa = arena.allocator();
+    const haxy_moment = tables.moment;
     const id = order_key[@sizeOf(u64)..];
     const id_hex = keyIdHex(order_key);
-    const record_cursor = try records.getCursor(hash.hashInt(hash_kind, id)) orelse return null;
+    const record_cursor = try tables.records.getCursor(hash.hashInt(hash_kind, id)) orelse return null;
     const record = try evt.read(Data.Event.Record, DB, hash_kind, arena, try DB.HashMap(.read_only).init(record_cursor));
     var entry: Data.Entry = .{
         .id = try aa.dupe(u8, &id_hex),
@@ -445,7 +547,7 @@ fn loadEntry(
             haxy_moment,
             evt.Comment.thread_id_to_comment_id_set_key,
             id,
-            if (std.mem.eql(u8, &id_hex, selected_id)) comments_start else 0,
+            comments_start,
             viewer,
         ),
         .attachments = try Attachment.load(hash_kind, arena, haxy_moment, id),
@@ -453,7 +555,7 @@ fn loadEntry(
         .can_modify = if (viewer) |v| v.role.canModify(v.email, record.author_email) else false,
     };
     if (comptime @hasField(Data.Entry, "conflicted")) {
-        entry.conflicted = if (conflict_set) |conflicts| try conflicts.contains(order_key) else false;
+        entry.conflicted = if (tables.conflict_set) |conflicts| try conflicts.contains(order_key) else false;
     }
     return entry;
 }

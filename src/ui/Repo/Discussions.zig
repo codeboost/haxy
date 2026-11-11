@@ -85,6 +85,7 @@ pub fn window(self: *const Self, _: Status) *const Window {
     return &self.recent;
 }
 
+// an empty listing, for the wasm / no-repo paths. `search` is decoded.
 pub fn emptyResult(
     aa: std.mem.Allocator,
     identity: []const u8,
@@ -96,7 +97,7 @@ pub fn emptyResult(
 ) !Self {
     return .{
         .identity = try aa.dupe(u8, identity),
-        .search = if (search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, search)),
+        .search = if (search.len == 0) null else try aa.dupe(u8, search),
         .selected_id = try aa.dupe(u8, selected_id),
         .comment_id = try aa.dupe(u8, comment_id),
         .comments_start = comments_start,
@@ -125,80 +126,43 @@ pub fn init(
     var empty = try emptyResult(arena.allocator(), identity, search, selected_id, comment_id, comments_start, view);
     // the early returns below still let the viewer write
     empty.viewer = viewer;
-    const aa = arena.allocator();
-    const DB = evt.EventDB(repo_opts.hash);
     const rooted = empty.selected_id.len != 0;
 
     const gpa = arena.child_allocator;
-    var event_db_maybe: ?evt.LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, gpa, repo.core.repo_dir) else null;
-    defer if (event_db_maybe) |*event_db| event_db.deinit(io, gpa);
-    const haxy_moment = (if (event_db_maybe) |*event_db|
-        evt.currentMomentFromDb(repo_opts.hash, event_db.db)
-    else if (repo_kind == .git)
-        return empty
-    else
-        evt.currentMoment(repo_opts, repo)) catch {
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (event_db.moment(repo)) {
+        .none => return empty,
+        .no_events => {
+            if (rooted) return error.NotFound;
+            return empty;
+        },
+        .ok => |moment| moment,
+    };
+
+    const terms = try readSearch(repo_opts.hash, arena, haxy_moment, empty.search orelse "");
+
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse {
         if (rooted) return error.NotFound;
         return empty;
     };
-
-    // the listing intersects every label's set, or is the active set without
-    // labels, since each label's set lies within it. discussions have no
-    // assignees, so an assignee term lists nothing.
-    const filters = try srch_thrd.parseFilters(aa, empty.search orelse "");
-    const sets: []const DB.SortedSet(.read_only) = blk: {
-        if (filters.assignees.len != 0) break :blk &.{};
-        var list: std.ArrayList(DB.SortedSet(.read_only)) = .empty;
-        if (filters.labels.len == 0) {
-            const active_cursor = try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Discussion.active_id_set_key)) orelse break :blk &.{};
-            try list.append(aa, try DB.SortedSet(.read_only).init(active_cursor));
-        } else {
-            const labels_cursor = try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Discussion.label_to_id_set_key)) orelse break :blk &.{};
-            const label_sets = try DB.SortedMap(.read_only).init(labels_cursor);
-            for (filters.labels) |label| {
-                const cursor = try label_sets.getCursor(label) orelse break :blk &.{};
-                try list.append(aa, try DB.SortedSet(.read_only).init(cursor));
-            }
-        }
-        break :blk list.items;
-    };
-
-    const records_cursor = try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Discussion.record_map_key)) orelse {
-        if (rooted) return error.NotFound;
-        return empty;
-    };
-    const records = try DB.HashMap(.read_only).init(records_cursor);
-
-    var root_key: ?[]const u8 = null;
-    if (rooted) {
-        const id = evt.parseEventId(empty.selected_id) catch return error.NotFound;
-        const record_cursor = try records.getCursor(hash.hashInt(repo_opts.hash, &id)) orelse return error.NotFound;
-        const record = try evt.read(evt.Discussion.Record, DB, repo_opts.hash, arena, try DB.HashMap(.read_only).init(record_cursor));
-        if (record.removed) return error.NotFound;
-        const activity_order = try evt.Discussion.activityOrder(DB, repo_opts.hash, haxy_moment, &id);
-        const order_key = try aa.dupe(u8, &evt.orderKeyDesc(activity_order, &id));
-        if (!try thread.inEverySet(DB, sets, order_key)) return error.NotFound;
-        root_key = order_key;
-    }
 
     const discussion_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
-    const loaded_window = try thread.loadWindow(Self, .discuss, repo_opts.hash, arena, admin_moment, haxy_moment, records, sets, root_key, null, empty.selected_id, discussion_comments_start, filters.words, viewer);
+    const selected: ?Selected = if (rooted) try loadThread(repo_opts.hash, arena, admin_moment, tables, terms, empty.selected_id, discussion_comments_start, viewer) else null;
+    const loaded_window = try loadWindow(
+        repo_opts.hash,
+        arena,
+        admin_moment,
+        tables,
+        terms,
+        if (selected) |thread_selected| thread_selected.order_key else null,
+        if (selected) |*thread_selected| &thread_selected.entry else null,
+        viewer,
+    );
     const comment_page = if (empty.comment_id.len == 0)
         null
     else
         try Comment.init(repo_opts.hash, arena, admin_moment, haxy_moment, empty.selected_id, empty.comment_id, comments_start, viewer);
-
-    var label_names: std.ArrayList([]const u8) = .empty;
-    if (try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Discussion.label_to_id_set_key))) |labels_cursor| {
-        const label_sets = try DB.SortedMap(.read_only).init(labels_cursor);
-        var label_iter = try label_sets.iterator();
-        while (try label_iter.next()) |entry_cursor| {
-            if (label_names.items.len == max_labels) break;
-            var entry = entry_cursor;
-            const pair = try entry.readKeyValuePair();
-            try label_names.append(aa, try pair.key_cursor.readBytesAlloc(aa, null));
-        }
-    }
 
     return .{
         .identity = empty.identity,
@@ -211,8 +175,184 @@ pub fn init(
         .recent = loaded_window,
         .view = empty.view,
         .description_page = empty.description_page,
-        .labels = label_names.items,
+        .labels = try loadLabels(repo_opts.hash, arena, haxy_moment),
     };
+}
+
+// a search's terms, as the listing applies them
+pub fn Search(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        // the words the listing is narrowed to, "" for none
+        words: []const u8,
+        // the sets the listing intersects
+        sets: []const evt.EventDB(hash_kind).SortedSet(.read_only),
+    };
+}
+
+// the decoded `search`'s terms, resolved against the repo
+pub fn readSearch(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    search: []const u8,
+) !Search(hash_kind) {
+    const aa = arena.allocator();
+    const DB = evt.EventDB(hash_kind);
+    // the listing intersects every label's set, or is the active set without
+    // labels, since each label's set lies within it. discussions have no
+    // assignees, so an assignee term lists nothing.
+    const filters = try srch_thrd.parseFilters(aa, search);
+    const sets: []const DB.SortedSet(.read_only) = blk: {
+        if (filters.assignees.len != 0) break :blk &.{};
+        var list: std.ArrayList(DB.SortedSet(.read_only)) = .empty;
+        if (filters.labels.len == 0) {
+            const active_cursor = try haxy_moment.getCursor(hash.hashInt(hash_kind, evt.Discussion.active_id_set_key)) orelse break :blk &.{};
+            try list.append(aa, try DB.SortedSet(.read_only).init(active_cursor));
+        } else {
+            const labels_cursor = try haxy_moment.getCursor(hash.hashInt(hash_kind, evt.Discussion.label_to_id_set_key)) orelse break :blk &.{};
+            const label_sets = try DB.SortedMap(.read_only).init(labels_cursor);
+            for (filters.labels) |label| {
+                const cursor = try label_sets.getCursor(label) orelse break :blk &.{};
+                try list.append(aa, try DB.SortedSet(.read_only).init(cursor));
+            }
+        }
+        break :blk list.items;
+    };
+    return .{ .words = filters.words, .sets = sets };
+}
+
+// one window of the discussions the search matches, most recently active
+// first, starting at `root_key` (null for the first window). `selected`, read
+// with its comment window, stands in for its own entry.
+pub fn loadWindow(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    tables: thread.Tables(Self, hash_kind),
+    terms: Search(hash_kind),
+    root_key: ?[]const u8,
+    selected: ?*const DiscussionWithId,
+    viewer: ?ui.Viewer,
+) !Window {
+    return try thread.loadWindow(Self, .discuss, hash_kind, arena, admin_moment, tables, terms.sets, root_key, selected, terms.words, viewer);
+}
+
+// the discussion a url selects, read for its detail pane
+pub const Selected = struct {
+    entry: DiscussionWithId,
+    // the key the window holding it is rooted at
+    order_key: []const u8,
+};
+
+// the discussion `id` names, with the window of its comments starting at
+// `comments_start`. not found when it names no discussion, a removed one, or
+// one the search's sets leave out.
+pub fn loadThread(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    tables: thread.Tables(Self, hash_kind),
+    terms: Search(hash_kind),
+    id: []const u8,
+    comments_start: usize,
+    viewer: ?ui.Viewer,
+) !Selected {
+    const DB = evt.EventDB(hash_kind);
+    const id_bytes = evt.parseEventId(id) catch return error.NotFound;
+    const record_cursor = try tables.records.getCursor(hash.hashInt(hash_kind, &id_bytes)) orelse return error.NotFound;
+    const record = try evt.read(evt.Discussion.Record, DB, hash_kind, arena, try DB.HashMap(.read_only).init(record_cursor));
+    if (record.removed) return error.NotFound;
+    const activity_order = try evt.Discussion.activityOrder(DB, hash_kind, tables.moment, &id_bytes);
+    const order_key = evt.orderKeyDesc(activity_order, &id_bytes);
+    if (!try thread.inEverySet(DB, terms.sets, &order_key)) return error.NotFound;
+    return .{
+        .entry = (try thread.loadEntry(Self, hash_kind, arena, admin_moment, tables, &order_key, comments_start, viewer)) orelse return error.NotFound,
+        .order_key = try arena.allocator().dupe(u8, &order_key),
+    };
+}
+
+// every discussion label, in sorted order
+pub fn loadLabels(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+) ![]const []const u8 {
+    const aa = arena.allocator();
+    const DB = evt.EventDB(hash_kind);
+    var label_names: std.ArrayList([]const u8) = .empty;
+    if (try haxy_moment.getCursor(hash.hashInt(hash_kind, evt.Discussion.label_to_id_set_key))) |labels_cursor| {
+        const label_sets = try DB.SortedMap(.read_only).init(labels_cursor);
+        var label_iter = try label_sets.iterator();
+        while (try label_iter.next()) |entry_cursor| {
+            if (label_names.items.len == max_labels) break;
+            var entry = entry_cursor;
+            const pair = try entry.readKeyValuePair();
+            try label_names.append(aa, try pair.key_cursor.readBytesAlloc(aa, null));
+        }
+    }
+    return label_names.items;
+}
+
+// one window of the discussions the decoded `search` matches, starting at the
+// discussion `from` names ("" = the first window). not found when `from`
+// names none the search leaves in.
+pub fn readWindow(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    search: []const u8,
+    from: []const u8,
+    viewer: ?ui.Viewer,
+) !Window {
+    const rooted = from.len != 0;
+    const gpa = arena.child_allocator;
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (try event_db.momentStrict(repo)) {
+        .none, .no_events => return if (rooted) error.NotFound else .empty,
+        .ok => |moment| moment,
+    };
+    const terms = try readSearch(repo_opts.hash, arena, haxy_moment, search);
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse return if (rooted) error.NotFound else .empty;
+    const selected: ?Selected = if (rooted) try loadThread(repo_opts.hash, arena, admin_moment, tables, terms, from, 0, viewer) else null;
+    return try loadWindow(
+        repo_opts.hash,
+        arena,
+        admin_moment,
+        tables,
+        terms,
+        if (selected) |thread_selected| thread_selected.order_key else null,
+        if (selected) |*thread_selected| &thread_selected.entry else null,
+        viewer,
+    );
+}
+
+// the discussion `id` names, with the window of its comments starting at
+// `comments_start`
+pub fn readThread(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    id: []const u8,
+    comments_start: usize,
+    viewer: ?ui.Viewer,
+) !DiscussionWithId {
+    const gpa = arena.child_allocator;
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (try event_db.momentStrict(repo)) {
+        .none, .no_events => return error.NotFound,
+        .ok => |moment| moment,
+    };
+    const terms = try readSearch(repo_opts.hash, arena, haxy_moment, "");
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse return error.NotFound;
+    return (try loadThread(repo_opts.hash, arena, admin_moment, tables, terms, id, comments_start, viewer)).entry;
 }
 
 pub const View = thread.View(.discuss, Self);

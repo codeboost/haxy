@@ -55,7 +55,58 @@ moment: ?u64 = null,
 
 const Self = @This();
 
+// the events page's data. the page shows an event db it can't read as one
+// with no events; `initStrict` is the same read for a read operation, which
+// fails instead.
 pub fn init(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    identity: []const u8,
+    repo_event: evt.Repo,
+    requested_view: ui.RoutablePage.EventsView,
+    selected_kind: ?evt.EventKind,
+    selected: []const u8,
+    moment_index: ?u64,
+    local: bool,
+    failure: ?[]const u8,
+) !Self {
+    return try read(false, repo_kind, repo_opts, arena, repo, io, admin_moment, identity, repo_event, requested_view, selected_kind, selected, moment_index, local, failure);
+}
+
+// `init`, where only a db with no events yet, or a transaction that isn't
+// there, reads as empty or not found
+pub fn initStrict(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    identity: []const u8,
+    repo_event: evt.Repo,
+    requested_view: ui.RoutablePage.EventsView,
+    selected_kind: ?evt.EventKind,
+    selected: []const u8,
+    moment_index: ?u64,
+    local: bool,
+    failure: ?[]const u8,
+) !Self {
+    return try read(true, repo_kind, repo_opts, arena, repo, io, admin_moment, identity, repo_event, requested_view, selected_kind, selected, moment_index, local, failure);
+}
+
+// whether reading the events' moment failed because there is none: a db with
+// no events yet, or a transaction index past the history
+fn isMissingMoment(err: anyerror) bool {
+    return err == error.NotFound or err == error.TransactionNotFound;
+}
+
+// the read `init` and `initStrict` share
+fn read(
+    comptime strict: bool,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -89,7 +140,8 @@ pub fn init(
     else if (repo_kind == .git)
         return result
     else
-        evt.currentMoment(repo_opts, repo)) catch {
+        evt.currentMoment(repo_opts, repo)) catch |err| {
+        if (strict and !isMissingMoment(err)) return err;
         // a moment page names a transaction it can't show
         if (require_selected_event or moment_index != null) return error.NotFound;
         return result;

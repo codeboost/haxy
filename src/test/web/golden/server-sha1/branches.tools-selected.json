@@ -1,0 +1,139 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:tools"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "tools",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "develop",
+    "title": {
+     "content": "🬂🬰🬂 🬑🬂🬟 🬑🬂🬟 🬐   🬑🬂🬀\n 🬋  🬃 🬇 🬃 🬇 🬃   🬇🬋🬃\n 🬰  🬟🬭🬑 🬟🬭🬑 🬮🬭🬭 🬞🬭🬑"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 25,
+    "event": {
+     "description": "the tools repo",
+     "discuss_role": "read",
+     "issue_role": "write",
+     "name": "tools",
+     "patch_role": null,
+     "protected_branches": "release",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 28
+   },
+   "settings": {
+    "access": "public",
+    "branches": {
+     "default_branch": "develop",
+     "identity": "alice:tools",
+     "names": [
+      "release"
+     ]
+    },
+    "delete": {
+     "target": {
+      "repo": "alice:tools"
+     }
+    },
+    "description": "the tools repo",
+    "discuss_role": "read",
+    "hash_kind": "sha1",
+    "identity": "alice:tools",
+    "issue_role": "write",
+    "members": {
+     "confirm": null,
+     "identity": "alice:tools",
+     "next_start": null,
+     "rows": [
+      {
+       "name": "bob",
+       "role": "write"
+      }
+     ],
+     "start": 0
+    },
+    "name": "tools",
+    "patch_role": null,
+    "view": "branches"
+   },
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": false,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_branches": {
+    "branch": "release",
+    "name": "alice:tools"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

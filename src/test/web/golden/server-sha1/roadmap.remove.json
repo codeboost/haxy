@@ -1,0 +1,230 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "chat",
+     "plans"
+    ],
+    "recent": {
+     "count": 21,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 50,
+           "created_timestamp": 1700005940,
+           "event": {
+            "body": "more tests",
+            "parent_id": "<discuss:roadmap>",
+            "thread_id": "<discuss:roadmap>"
+           },
+           "removed": false,
+           "updated_order": 50
+          },
+          "id": "<comment:roadmap.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "carol"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "carol@example.test",
+           "created_order": 51,
+           "created_timestamp": 1700006000,
+           "event": {
+            "body": "and docs",
+            "parent_id": "<comment:roadmap.c01>",
+            "thread_id": "<discuss:roadmap>"
+           },
+           "removed": false,
+           "updated_order": 51
+          },
+          "id": "<comment:roadmap.c02>",
+          "parent_author": {
+           "user_name": "bob"
+          }
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 52,
+           "created_timestamp": 1700006060,
+           "event": {
+            "body": "agreed",
+            "parent_id": "<discuss:roadmap>",
+            "thread_id": "<discuss:roadmap>"
+           },
+           "removed": false,
+           "updated_order": 52
+          },
+          "id": "<comment:roadmap.c03>",
+          "parent_author": null
+         }
+        ],
+        "count": 3,
+        "start": 0
+       },
+       "id": "<discuss:roadmap>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 49,
+        "created_timestamp": 1700005880,
+        "event": {
+         "description": "what comes next",
+         "labels": "plans",
+         "title": "the roadmap"
+        },
+        "removed": false,
+        "updated_order": 49
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": ""
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "<discuss:roadmap>",
+    "view": "remove",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_discussions": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "<discuss:roadmap>",
+    "start": false,
+    "view": "remove"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 1,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

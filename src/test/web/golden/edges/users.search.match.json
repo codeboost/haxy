@@ -1,0 +1,57 @@
+{
+ "page": {
+  "home": {
+   "about": {
+    "text": "Welcome to your Haxy instance!\n\nEdit `admin/ABOUT.md` in the server dir to change what this page says.",
+    "title": "HAXY"
+   },
+   "header": {
+    "title": {
+     "content": "🬐 🬠 🬞🬂🬏 🬟 🬑 🬟 🬑\n🬋🬋🬋 🬋🬋🬋  🬋   🬋 \n🬐 🬠 🬐 🬠 🬑 🬟  🬰 "
+    }
+   },
+   "quit": {},
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   },
+   "users": {
+    "next_start": null,
+    "search": "bo",
+    "start": 0,
+    "users": [
+     {
+      "name": "bob"
+     }
+    ]
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "home_users": {
+    "search": "bo",
+    "start": 0
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

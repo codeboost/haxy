@@ -1,0 +1,55 @@
+{
+ "page": {
+  "user": {
+   "forks": [],
+   "forks_next_start": null,
+   "forks_start": 0,
+   "header": {
+    "name": "alice",
+    "title": {
+     "content": "🬞🬂🬏 🬐   🬂🬰🬂 🬑🬂🬀 🬒🬂🬂\n🬋🬋🬋 🬃    🬋  🬃   🬋🬋🬃\n🬐 🬠 🬮🬭🬭 🬭🬰🬭 🬟🬭🬏 🬮🬭🬭"
+    }
+   },
+   "quit": {},
+   "repos": [],
+   "repos_next_start": null,
+   "repos_search": "tok+plus",
+   "repos_start": 0,
+   "user": {
+    "name": "alice"
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "user_repos": {
+    "name": "alice",
+    "search": "tok%2Bplus",
+    "start": 0
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

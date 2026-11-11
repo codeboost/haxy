@@ -35,6 +35,20 @@ comptime {
     _ = @import("domain/users.zig");
     _ = @import("domain/keys.zig");
     _ = @import("domain/delete_user.zig");
+    _ = @import("domain/get_repo.zig");
+    _ = @import("domain/list_files.zig");
+    _ = @import("domain/read_file.zig");
+    _ = @import("domain/list_refs.zig");
+    _ = @import("domain/list_discussions.zig");
+    _ = @import("domain/list_events.zig");
+    _ = @import("domain/run_open.zig");
+    _ = @import("domain/list_commits.zig");
+    _ = @import("domain/get_commit.zig");
+    _ = @import("domain/diff.zig");
+    _ = @import("domain/accounts.zig");
+    _ = @import("domain/page_ctx.zig");
+    _ = @import("domain/resolve_ref.zig");
+    _ = @import("domain/thread_reads.zig");
 }
 
 const io = std.testing.io;

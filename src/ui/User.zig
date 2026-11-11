@@ -47,7 +47,7 @@ pub fn init(
     haxy_moment: evt.AdminDB.HashMap(.read_only),
     name: ui.RoutablePage.Array(evt.User.name_max_len),
     repos_start: usize,
-    // the url-encoded repos search ("" = none)
+    // the decoded repos search ("" = none)
     repos_search: []const u8,
     forks_start: usize,
     user_tab: ui.RoutablePage.UserTab,
@@ -67,12 +67,65 @@ pub fn init(
     // a user with no user repo or no events has empty lists
     var user_repo_maybe = try evt.openUserRepo(io, gpa, users_dir, &user_id);
     defer if (user_repo_maybe) |*user_repo| user_repo.deinit(io, gpa);
-    const user_moment = if (user_repo_maybe) |*user_repo| try evt.userMoment(user_repo) else null;
+    const user_repo: ?*UserRepo = if (user_repo_maybe) |*user_repo| user_repo else null;
 
-    const search: ?[]const u8 = if (repos_search.len == 0) null else std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, repos_search));
+    const search: ?[]const u8 = if (repos_search.len == 0) null else try arena.allocator().dupe(u8, repos_search);
+    const repos = try loadRepos(arena, user_repo, session.userId(), repos_start, search);
+    const forks = try loadForks(arena, io, users_dir, &user_id, user_repo, session.userId(), forks_start);
+
+    return .{
+        .header = try Header.init(arena, user.event.name),
+        .user = evt.project(evt.User.Public, user.event),
+        .repos = repos.repos,
+        .repos_start = repos.start,
+        .repos_next_start = repos.next_start,
+        .repos_search = repos.search,
+        .forks = forks.forks,
+        .forks_start = forks.start,
+        .forks_next_start = forks.next_start,
+        .user_notifications = try ui.UserNotifications.init(arena, session, user_tab),
+        .quit = Quit.init(),
+    };
+}
+
+// a user's own repo, which holds their repos and forks
+pub const UserRepo = rp.Repo(.xit, evt.user_repo_opts);
+
+// one window of a user's repos as a viewer may see them
+pub const ReposWindow = struct {
+    repos: []const evt.Repo.Record,
+    // the window's start, mirrored into the url
+    start: usize,
+    // the `start` for the "next" row, or null on the last window
+    next_start: ?usize,
+    // the name prefix the repos are narrowed to (decoded; null = no search)
+    search: ?[]const u8,
+    // whether `start` lies past the last repo, which a window the viewer
+    // can't read all of doesn't
+    past_end: bool,
+};
+
+// one window of a user's repos, read from their user repo (null when they
+// have none), as `viewer_id` may see them: a repo the viewer can't read leaves
+// its window short rather than shifting the others
+pub fn loadRepos(
+    arena: *std.heap.ArenaAllocator,
+    user_repo_maybe: ?*UserRepo,
+    viewer_id: ?[evt.event_id_size]u8,
+    repos_start: usize,
+    // decoded; null = no search
+    search: ?[]const u8,
+) !ReposWindow {
+    // admin and user repos share one db type
+    const DB = evt.AdminDB;
+    const hash_kind = evt.admin_repo_opts.hash;
+
+    const user_moment = if (user_repo_maybe) |user_repo| try evt.userMoment(user_repo) else null;
 
     var repos: std.ArrayList(evt.Repo.Record) = .empty;
     var repos_next_start: ?usize = null;
+    // nothing is listed until a name or an index says otherwise
+    var past_end = true;
     if (user_moment) |moment| {
         if (search) |prefix| {
             if (try moment.getCursor(hash.hashInt(hash_kind, evt.Repo.name_index_key))) |index_cursor| {
@@ -91,42 +144,86 @@ pub fn init(
                         break;
                     }
                     taken += 1;
+                    past_end = false;
                     var event_id: [evt.event_id_size]u8 = undefined;
                     _ = try pair.value_cursor.readBytes(&event_id);
                     const repo_event = (try evt.Repo.readById(DB, hash_kind, moment, arena, &event_id)) orelse continue;
                     // unreadable repos leave their window short rather than shifting the others
-                    if (try evt.Repo.roleOf(DB, hash_kind, moment, arena, repo_event, &event_id, session.userId()) == null) continue;
+                    if (try evt.Repo.roleOf(DB, hash_kind, moment, arena, repo_event, &event_id, viewer_id) == null) continue;
                     try repos.append(arena.allocator(), repo_event);
                 }
             }
         } else {
             // unsearched, the newest activity comes first. its index sits beside the events.
-            const user_repo = if (user_repo_maybe) |*user_repo| user_repo else unreachable;
+            const user_repo = user_repo_maybe orelse unreachable;
             if (try (try user_repo.core.latestMoment()).getCursor(hash.hashInt(hash_kind, evt.recent_repo_id_set_key))) |recent_cursor| {
                 const recent = try DB.SortedSet(.read_only).init(recent_cursor);
                 const count = try recent.count();
                 const end = @min(repos_start +| page_size, count);
+                past_end = repos_start >= count;
                 var iter = try recent.iteratorFromIndex(repos_start);
                 var i = repos_start;
                 while (i < end) : (i += 1) {
                     const kv_cursor = (try iter.next()) orelse break;
                     const repo_id = try evt.readOrderKeyId(DB, kv_cursor);
                     const repo_event = (try evt.Repo.readById(DB, hash_kind, moment, arena, &repo_id)) orelse continue;
-                    if (try evt.Repo.roleOf(DB, hash_kind, moment, arena, repo_event, &repo_id, session.userId()) == null) continue;
+                    if (try evt.Repo.roleOf(DB, hash_kind, moment, arena, repo_event, &repo_id, viewer_id) == null) continue;
                     try repos.append(arena.allocator(), repo_event);
                 }
                 repos_next_start = if (end < count) end else null;
             }
         }
     }
+    return .{
+        .repos = repos.items,
+        .start = repos_start,
+        .next_start = repos_next_start,
+        .search = search,
+        .past_end = past_end,
+    };
+}
+
+// one window of a user's forks
+pub const ForksWindow = struct {
+    forks: []const ForkItem,
+    // the window's start, mirrored into the url
+    start: usize,
+    // the `start` for the "next" row, or null on the last window
+    next_start: ?usize,
+    // whether `start` lies past the last fork, which a window the viewer
+    // can't read all of doesn't
+    past_end: bool,
+};
+
+// one window of the forks `user_id` made, read from their user repo (null
+// when they have none), as `viewer_id` may see them: a fork whose target the
+// viewer can't read, or whose target is gone and the viewer isn't the forker,
+// leaves its window short
+pub fn loadForks(
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    users_dir: []const u8,
+    user_id: *const [evt.event_id_size]u8,
+    user_repo_maybe: ?*UserRepo,
+    viewer_id: ?[evt.event_id_size]u8,
+    forks_start: usize,
+) !ForksWindow {
+    // admin and user repos share one db type
+    const DB = evt.AdminDB;
+    const hash_kind = evt.admin_repo_opts.hash;
+    const gpa = arena.child_allocator;
+
+    const user_moment = if (user_repo_maybe) |user_repo| try evt.userMoment(user_repo) else null;
 
     var forks: std.ArrayList(ForkItem) = .empty;
     var forks_next_start: ?usize = null;
+    var past_end = true;
     if (user_moment) |moment| {
         if (try moment.getCursor(hash.hashInt(hash_kind, evt.Fork.active_id_set_key))) |user_forks_cursor| {
             const user_forks = try DB.SortedSet(.read_only).init(user_forks_cursor);
             const count = try user_forks.count();
             const end = @min(forks_start +| page_size, count);
+            past_end = forks_start >= count;
             var iter = try user_forks.iteratorFromIndex(forks_start);
             var i = forks_start;
             while (i < end) : (i += 1) {
@@ -138,18 +235,18 @@ pub fn init(
                 // the target lives in its owner's user repo
                 const owner_id = try evt.parseEventId(&record.event.repo_user_id);
                 // a deleted target, or one whose owner was deleted, leaves the fork to its forker
-                const target = try evt.readRepoById(io, gpa, arena, users_dir, &owner_id, &try evt.parseEventId(&record.event.repo_id), session.userId());
+                const target = try evt.readRepoById(io, gpa, arena, users_dir, &owner_id, &try evt.parseEventId(&record.event.repo_id), viewer_id);
                 if (target) |value| {
                     if (value.role == null) continue;
                     // patches that are off take their drafts with them
                     if (value.repo.event.patch_role == null) continue;
                 } else {
-                    const viewer_id = session.userId() orelse continue;
-                    if (!std.mem.eql(u8, &viewer_id, &user_id)) continue;
+                    const viewer = viewer_id orelse continue;
+                    if (!std.mem.eql(u8, &viewer, user_id)) continue;
                 }
 
                 var title: []const u8 = "(unavailable)";
-                const path = try fork.forkPath(arena.allocator(), users_dir, &user_id, &fork_id);
+                const path = try fork.forkPath(arena.allocator(), users_dir, user_id, &fork_id);
                 if (rp.AnyRepo(.xit, .{}).open(io, gpa, .{ .path = path, .require_repo_root = true })) |opened| {
                     var any_fork = opened;
                     defer any_fork.deinit(io, gpa);
@@ -170,19 +267,11 @@ pub fn init(
             forks_next_start = if (end < count) end else null;
         }
     }
-
     return .{
-        .header = try Header.init(arena, user.event.name),
-        .user = evt.project(evt.User.Public, user.event),
-        .repos = repos.items,
-        .repos_start = repos_start,
-        .repos_next_start = repos_next_start,
-        .repos_search = search,
         .forks = forks.items,
-        .forks_start = forks_start,
-        .forks_next_start = forks_next_start,
-        .user_notifications = try ui.UserNotifications.init(arena, session, user_tab),
-        .quit = Quit.init(),
+        .start = forks_start,
+        .next_start = forks_next_start,
+        .past_end = past_end,
     };
 }
 

@@ -1,0 +1,176 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": {
+    "branches": {
+     "names": [
+      "b/01",
+      "b/02",
+      "b/03",
+      "b/04",
+      "b/05",
+      "b/06",
+      "b/07",
+      "b/08",
+      "b/09",
+      "b/10",
+      "b/11",
+      "b/12",
+      "b/13",
+      "b/14",
+      "b/15",
+      "b/16",
+      "b/17",
+      "b/18",
+      "b/19",
+      "b/20",
+      "b/21",
+      "b/22",
+      "b/23",
+      "b/24",
+      "b/25",
+      "b/26",
+      "b/27",
+      "b/28",
+      "b/29",
+      "b/30",
+      "b/31",
+      "b/32",
+      "b/33",
+      "b/34",
+      "b/35",
+      "b/36",
+      "b/37",
+      "b/38",
+      "b/39",
+      "b/40",
+      "b/41",
+      "b/42",
+      "b/43",
+      "b/44",
+      "b/45",
+      "b/46",
+      "b/47",
+      "b/48",
+      "b/49",
+      "b/50"
+     ],
+     "next": "haxy/events",
+     "prev": null
+    },
+    "from": "v%2541",
+    "identity": "alice:open",
+    "kind": "tag",
+    "search": null,
+    "tags": {
+     "names": [
+      "v%41",
+      "v+1",
+      "vA",
+      "vé"
+     ],
+     "next": null,
+     "prev": null
+    }
+   },
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the long patch",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long talk",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:d-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long issue",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:i-long>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_refs": {
+    "from": "v%2541",
+    "kind": "tag",
+    "name": "alice:open",
+    "search": ""
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

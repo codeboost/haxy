@@ -1,0 +1,253 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": {
+    "capped": false,
+    "dir": "",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "dir A",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "dir%41",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "dir+é",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "# edges",
+       ""
+      ],
+      "loaded": true,
+      "name": "README.md",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "on tok+plus",
+       ""
+      ],
+      "loaded": true,
+      "name": "branch.txt",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "tok/slash",
+       ""
+      ],
+      "loaded": true,
+      "name": "log.txt",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "a space",
+       ""
+      ],
+      "loaded": true,
+      "name": "tok plus.txt",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "a literal percent forty-one",
+       ""
+      ],
+      "loaded": true,
+      "name": "tok%41.txt",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "a plus",
+       ""
+      ],
+      "loaded": true,
+      "name": "tok+plus.txt",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "an A",
+       ""
+      ],
+      "loaded": true,
+      "name": "tokA.txt",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "an e acute",
+       ""
+      ],
+      "loaded": true,
+      "name": "tokétoile.txt",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": true,
+    "handle": {
+     "location": {
+      "repo": "alice:open"
+     },
+     "read_access": "public",
+     "viewer": {
+      "email": "alice@example.test",
+      "role": "owner"
+     }
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "tok%2Bplus",
+    "selected_file": null
+   },
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "tok%2Bplus",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the long patch",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long talk",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:d-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long issue",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:i-long>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_files": {
+    "find": "",
+    "line": 0,
+    "name": "alice:open",
+    "patchrev_id": "",
+    "path": "",
+    "ref_kind": "branch",
+    "ref_value": "tok%2Bplus"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

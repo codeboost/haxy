@@ -1,0 +1,202 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": {
+    "active": {
+     "count": 12,
+     "events": [
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patch:p-conflicted>",
+       "kind": "patch",
+       "view_url": "/patch:<patch:p-conflicted>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<issue:conflicted>",
+       "kind": "issue",
+       "view_url": "/issue:<issue:conflicted>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patchrev:p-conflicted>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:p-open.c01>",
+       "kind": "comment",
+       "view_url": "/patch:<patch:p-open>/comment:<comment:p-open.c01>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patch:p-open>",
+       "kind": "patch",
+       "view_url": "/patch:<patch:p-open>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patchrev:p-open>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:roadmap.c01>",
+       "kind": "comment",
+       "view_url": "/discuss:<discuss:roadmap>/comment:<comment:roadmap.c01>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<discuss:roadmap>",
+       "kind": "discuss",
+       "view_url": "/discuss:<discuss:roadmap>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<issue:flaky-door>",
+       "kind": "issue",
+       "view_url": "/issue:<issue:flaky-door>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:leaky-roof.c02>",
+       "kind": "comment",
+       "view_url": "/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c02>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:leaky-roof.c01>",
+       "kind": "comment",
+       "view_url": "/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c01>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<issue:leaky-roof>",
+       "kind": "issue",
+       "view_url": "/issue:<issue:leaky-roof>"
+      }
+     ],
+     "next": null
+    },
+    "header": {
+     "sync_status": "nothing to sync"
+    },
+    "identity": "",
+    "moment": null,
+    "removed": {
+     "count": 0,
+     "events": [],
+     "next": null
+    },
+    "selected": null,
+    "view": "active"
+   },
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": ""
+    },
+    "read_access": "private",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "snapshot-repo",
+    "owner_name": "",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬀 🬮 🬠 🬞🬂🬏 🬒🬂🬟 🬑🬂🬀 🬐 🬠 🬑🬂🬟 🬂🬰🬂     🬒🬂🬟 🬒🬂🬂 🬒🬂🬟 🬑🬂🬟\n🬇🬋🬃 🬃🬇🬇 🬋🬋🬋 🬋🬋🬃 🬇🬋🬃 🬋🬋🬋 🬃 🬇  🬋  🬇🬋🬃 🬋🬋🬃 🬋🬋🬃 🬋🬋🬃 🬃 🬇\n🬞🬭🬑 🬐 🬡 🬐 🬠 🬐   🬞🬭🬑 🬐 🬠 🬟🬭🬑  🬰      🬐🬁🬞 🬮🬭🬭 🬐   🬟🬭🬑"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 0,
+    "event": {
+     "description": "",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "snapshot-repo",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "private",
+     "user_id": "00000000000000000000000000000000"
+    },
+    "removed": false,
+    "updated_order": 0
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_events": {
+    "kind": null,
+    "moment": null,
+    "name": "",
+    "selected": "",
+    "view": "active"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": null,
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "local",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

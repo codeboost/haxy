@@ -1,0 +1,707 @@
+{
+ "page": {
+  "fork": {
+   "commits": {
+    "base_oid": "<commit:bob-fork-1>",
+    "commit_count": 0,
+    "commits": [],
+    "default_branch": "",
+    "handle": {
+     "location": {
+      "fork": {
+       "id": "<patch:bob-fork>",
+       "identity": "bob:open"
+      }
+     },
+     "read_access": "private",
+     "viewer": {
+      "email": "bob@example.test",
+      "role": "write"
+     }
+    },
+    "message": false,
+    "next_start": null,
+    "no_commits": false,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "patch",
+    "search": null,
+    "search_available": false
+   },
+   "delete": {
+    "target": {
+     "fork": {
+      "id": "<patch:bob-fork>",
+      "identity": "bob:open"
+     }
+    }
+   },
+   "diff": {
+    "path": "",
+    "route": {
+     "fork": {
+      "base_oid": "",
+      "id": "<patch:bob-fork>",
+      "identity": "bob:open",
+      "oid": "",
+      "patch_base_oid": "<commit:bob-fork-1>"
+     }
+    },
+    "window": {
+     "has_more": false,
+     "hunks": [],
+     "start": 0,
+     "truncated": false
+    }
+   },
+   "files": {
+    "capped": false,
+    "dir": "",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "docs",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "src",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "# open",
+       "",
+       "a repo for **snapshots**, with a [link](https://example.test) and a list:",
+       "",
+       "- one",
+       "- two",
+       "",
+       "```zig",
+       "const x = 1;",
+       "```",
+       ""
+      ],
+      "loaded": true,
+      "name": "README.md",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "from the fork",
+       ""
+      ],
+      "loaded": true,
+      "name": "fork.txt",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": true,
+      "is_dir": false,
+      "lines": [],
+      "loaded": true,
+      "name": "logo.png",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "notes",
+       "change 1",
+       "change 2",
+       "change 3",
+       "change 4",
+       "change 5",
+       "change 6",
+       "change 7",
+       "change 8",
+       "change 9",
+       "change 10",
+       "change 11",
+       "change 12",
+       "change 13",
+       "change 14",
+       "change 15",
+       "change 16",
+       "change 17",
+       "change 18",
+       "change 19",
+       "change 20",
+       "change 21",
+       "change 22",
+       ""
+      ],
+      "loaded": true,
+      "name": "notes.txt",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": false,
+    "handle": {
+     "location": {
+      "fork": {
+       "id": "<patch:bob-fork>",
+       "identity": "bob:open"
+      }
+     },
+     "read_access": "private",
+     "viewer": {
+      "email": "bob@example.test",
+      "role": "write"
+     }
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "patch",
+    "selected_file": null
+   },
+   "header": {
+    "forker_name": "bob",
+    "id": "<patch:bob-fork>",
+    "name": "open",
+    "oid": "",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "patch": {
+    "closed": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-closed>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 82,
+        "created_timestamp": 1700007680,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-closed>",
+          "source_oid": "<commit:fix/close-1>",
+          "squash_oid": "<commit:p-closed.squash_oid>"
+         },
+         "source_branch": "fix/close",
+         "status": {
+          "closed": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix to close"
+        },
+        "removed": false,
+        "updated_order": 83
+       },
+       "revision_oid": "<commit:fix/close-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "master",
+    "description_page": false,
+    "drafts": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": 0,
+       "conflicted": false,
+       "draft": true,
+       "fork_exists": true,
+       "fork_identity": "bob:open",
+       "id": "<patch:bob-draft>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": true,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700008100,
+        "event": {
+         "description": "",
+         "labels": "",
+         "revision": null,
+         "source_branch": null,
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "bob's draft"
+        },
+        "removed": false,
+        "updated_order": 1
+       },
+       "revision_oid": "<commit:squash p-squashed.source_oid>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "alice:open",
+    "labels": [
+     "bug",
+     "feature",
+     "fork"
+    ],
+    "merged": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": 1,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-squashed>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 89,
+        "created_timestamp": 1700007920,
+        "event": {
+         "description": "",
+         "labels": "",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-squashed>",
+          "source_oid": "<commit:fix/squash-2>",
+          "squash_oid": "<commit:p-squashed.squash_oid>"
+         },
+         "source_branch": "fix/squash",
+         "status": {
+          "merged": {
+           "patchrev_id": "<patchrev:squash p-squashed>",
+           "revision": "squash"
+          }
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix to squash"
+        },
+        "removed": false,
+        "updated_order": 91
+       },
+       "revision_oid": "<commit:p-squashed.squash_oid>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-merged>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 85,
+        "created_timestamp": 1700007800,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-merged>",
+          "source_oid": "<commit:fix/merge-1>",
+          "squash_oid": "<commit:p-merged.squash_oid>"
+         },
+         "source_branch": "fix/merge",
+         "status": {
+          "merged": {
+           "patchrev_id": "<patchrev:merge p-merged>",
+           "revision": "source"
+          }
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix to merge"
+        },
+        "removed": false,
+        "updated_order": 87
+       },
+       "revision_oid": "<commit:fix/merge-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 3,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "",
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": true,
+       "fork_identity": "bob:open",
+       "id": "<patch:bob-fork>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 92,
+        "created_timestamp": 1700008280,
+        "event": {
+         "description": "made in bob's fork",
+         "labels": "fork",
+         "revision": null,
+         "source_branch": null,
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix from a fork"
+        },
+        "removed": false,
+        "updated_order": 92
+       },
+       "revision_oid": "",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:shout>",
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 79,
+           "created_timestamp": 1700007560,
+           "event": {
+            "body": "looks good",
+            "parent_id": "<patch:p-open>",
+            "thread_id": "<patch:p-open>"
+           },
+           "removed": false,
+           "updated_order": 79
+          },
+          "id": "<comment:p-open.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 80,
+           "created_timestamp": 1700007620,
+           "event": {
+            "body": "thanks",
+            "parent_id": "<comment:p-open.c01>",
+            "thread_id": "<patch:p-open>"
+           },
+           "removed": false,
+           "updated_order": 80
+          },
+          "id": "<comment:p-open.c02>",
+          "parent_author": {
+           "user_name": "alice"
+          }
+         }
+        ],
+        "count": 2,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-open>",
+       "mergeability": {
+        "source": "clean",
+        "squash": "clean"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 78,
+        "created_timestamp": 1700007500,
+        "event": {
+         "description": "two commits of **feature**",
+         "labels": "feature",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-open>",
+          "source_oid": "<commit:feature-2>",
+          "squash_oid": "<commit:p-open.squash_oid>"
+         },
+         "source_branch": "feature",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "the feature"
+        },
+        "removed": false,
+        "updated_order": 78
+       },
+       "revision_oid": "<commit:feature-2>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-stale>",
+       "mergeability": {
+        "source": "clean",
+        "squash": "clean"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 76,
+        "created_timestamp": 1700007440,
+        "event": {
+         "description": "made before master moved",
+         "labels": "bug",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-stale>",
+          "source_oid": "<commit:fix/stale-1>",
+          "squash_oid": "<commit:p-stale.squash_oid>"
+         },
+         "source_branch": "fix/stale",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a stale fix"
+        },
+        "removed": false,
+        "updated_order": 76
+       },
+       "revision_oid": "<commit:fix/stale-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": "<bytes:repo:alice:open>",
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "<patch:bob-fork>",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": {
+     "email": "bob@example.test",
+     "role": "write"
+    }
+   },
+   "quit": {},
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": false,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "fork_patch": {
+    "id": "<patch:bob-fork>",
+    "name": "bob:open"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": "bob@example.test",
+  "user_id": "<bytes:user:bob>",
+  "user_name": "bob"
+ }
+}

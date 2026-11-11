@@ -1,0 +1,430 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": {
+    "count": 226,
+    "failure": null,
+    "handle": {
+     "location": {
+      "repo": "alice:open"
+     },
+     "read_access": "public",
+     "viewer": {
+      "email": "alice@example.test",
+      "role": "owner"
+     }
+    },
+    "identity": "alice:open",
+    "items": [
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:225",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/225/undo",
+      "index": 225,
+      "link": "ai:/alice:open/undo/225",
+      "timestamp": 1700008280,
+      "undone": false
+     },
+     {
+      "action": "merge patch",
+      "buttons": [],
+      "description": "merged a patch into its target branch",
+      "form": "form:/alice:open/undo/224/undo",
+      "index": 224,
+      "link": "ai:/alice:open/undo/224",
+      "timestamp": 1700007980,
+      "undone": false
+     },
+     {
+      "action": "events (2)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:223",
+        "text": "view events (2)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/223/undo",
+      "index": 223,
+      "link": "ai:/alice:open/undo/223",
+      "timestamp": 1700007920,
+      "undone": false
+     },
+     {
+      "action": "merge patch",
+      "buttons": [],
+      "description": "merged a patch into its target branch",
+      "form": "form:/alice:open/undo/222/undo",
+      "index": 222,
+      "link": "ai:/alice:open/undo/222",
+      "timestamp": 1700007860,
+      "undone": false
+     },
+     {
+      "action": "events (2)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:221",
+        "text": "view events (2)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/221/undo",
+      "index": 221,
+      "link": "ai:/alice:open/undo/221",
+      "timestamp": 1700007800,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:220",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/220/undo",
+      "index": 220,
+      "link": "ai:/alice:open/undo/220",
+      "timestamp": 1700007740,
+      "undone": false
+     },
+     {
+      "action": "events (2)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:219",
+        "text": "view events (2)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/219/undo",
+      "index": 219,
+      "link": "ai:/alice:open/undo/219",
+      "timestamp": 1700007680,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:218",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/218/undo",
+      "index": 218,
+      "link": "ai:/alice:open/undo/218",
+      "timestamp": 1700007620,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:217",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/217/undo",
+      "index": 217,
+      "link": "ai:/alice:open/undo/217",
+      "timestamp": 1700007560,
+      "undone": false
+     },
+     {
+      "action": "events (2)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:216",
+        "text": "view events (2)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/216/undo",
+      "index": 216,
+      "link": "ai:/alice:open/undo/216",
+      "timestamp": 1700007500,
+      "undone": false
+     },
+     {
+      "action": "events (2)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:215",
+        "text": "view events (2)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/215/undo",
+      "index": 215,
+      "link": "ai:/alice:open/undo/215",
+      "timestamp": 1700007440,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:214",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/214/undo",
+      "index": 214,
+      "link": "ai:/alice:open/undo/214",
+      "timestamp": 1700007380,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:213",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/213/undo",
+      "index": 213,
+      "link": "ai:/alice:open/undo/213",
+      "timestamp": 1700007320,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:212",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/212/undo",
+      "index": 212,
+      "link": "ai:/alice:open/undo/212",
+      "timestamp": 1700007260,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:211",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/211/undo",
+      "index": 211,
+      "link": "ai:/alice:open/undo/211",
+      "timestamp": 1700007200,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:210",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/210/undo",
+      "index": 210,
+      "link": "ai:/alice:open/undo/210",
+      "timestamp": 1700007140,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:209",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/209/undo",
+      "index": 209,
+      "link": "ai:/alice:open/undo/209",
+      "timestamp": 1700007080,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:208",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/208/undo",
+      "index": 208,
+      "link": "ai:/alice:open/undo/208",
+      "timestamp": 1700007020,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:207",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/207/undo",
+      "index": 207,
+      "link": "ai:/alice:open/undo/207",
+      "timestamp": 1700006960,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:206",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/206/undo",
+      "index": 206,
+      "link": "ai:/alice:open/undo/206",
+      "timestamp": 1700006900,
+      "undone": false
+     }
+    ],
+    "next": 205
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": false,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_undo": {
+    "index": null,
+    "name": "alice:open"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

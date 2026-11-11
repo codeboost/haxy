@@ -26,8 +26,40 @@ pub const RefreshLocal = struct {
         // a server consumes every write in its own transaction
         if (ctx.host != .local) return error.UnavailableHere;
         const resolved = (try domain.resolveRepo(ctx, self.repo)) orelse return error.NotFound;
-        try domain.withRepo(ctx, resolved, {}, refresh);
+        try domain.withRepo(ctx, resolved, RefreshArgs{ .op = self, .resolved = resolved }, RefreshArgs.body);
     }
+
+    // the refresh on a repo the caller already opened, as a local page does
+    // before it reads
+    pub fn runOpen(
+        self: RefreshLocal,
+        ctx: *domain.Ctx,
+        comptime repo_kind: rp.RepoKind,
+        comptime repo_opts: rp.RepoOpts(repo_kind),
+        repo: *rp.Repo(repo_kind, repo_opts),
+        resolved: domain.Resolved,
+    ) !void {
+        _ = self;
+        _ = resolved;
+        if (ctx.host != .local) return error.UnavailableHere;
+        try evt.consume(.local, .repo, repo_kind, repo_opts, ctx.io, ctx.gpa, repo, evt.events_ref, &.{});
+        try pch.refreshBranches(.local, repo_kind, repo_opts, ctx.io, ctx.gpa, repo, null);
+    }
+
+    const RefreshArgs = struct {
+        op: RefreshLocal,
+        resolved: domain.Resolved,
+
+        fn body(
+            comptime repo_kind: rp.RepoKind,
+            comptime repo_opts: rp.RepoOpts(repo_kind),
+            ctx: *domain.Ctx,
+            repo: *rp.Repo(repo_kind, repo_opts),
+            args: RefreshArgs,
+        ) !void {
+            try args.op.runOpen(ctx, repo_kind, repo_opts, repo, args.resolved);
+        }
+    };
 };
 
 pub const CreateRepo = struct {
@@ -433,17 +465,6 @@ fn authorizeOwner(ctx: *domain.Ctx, identity: []const u8) !domain.Actor {
         .repo_not_found => error.NotFound,
         .forbidden => error.Forbidden,
     };
-}
-
-fn refresh(
-    comptime repo_kind: rp.RepoKind,
-    comptime repo_opts: rp.RepoOpts(repo_kind),
-    ctx: *domain.Ctx,
-    repo: *rp.Repo(repo_kind, repo_opts),
-    _: void,
-) !void {
-    try evt.consume(.local, .repo, repo_kind, repo_opts, ctx.io, ctx.gpa, repo, evt.events_ref, &.{});
-    try pch.refreshBranches(.local, repo_kind, repo_opts, ctx.io, ctx.gpa, repo, null);
 }
 
 pub const Sync = struct {

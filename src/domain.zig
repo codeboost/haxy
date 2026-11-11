@@ -13,6 +13,26 @@ pub const GetIssue = reads.GetIssue;
 pub const GetDiscussion = reads.GetDiscussion;
 pub const ListPatches = reads.ListPatches;
 pub const GetPatch = reads.GetPatch;
+pub const ListDiscussions = reads.ListDiscussions;
+pub const ListEvents = reads.ListEvents;
+const history = @import("./domain/history.zig");
+pub const ListCommits = history.ListCommits;
+pub const GetCommit = history.GetCommit;
+pub const Diff = history.Diff;
+const files = @import("./domain/files.zig");
+pub const GetRepo = files.GetRepo;
+pub const ListFiles = files.ListFiles;
+pub const ReadFile = files.ReadFile;
+pub const ListRefs = files.ListRefs;
+const accounts = @import("./domain/accounts.zig");
+pub const ListUsers = accounts.ListUsers;
+pub const ListRepos = accounts.ListRepos;
+pub const ListForks = accounts.ListForks;
+pub const ResolvedFork = accounts.ResolvedFork;
+pub const resolveFork = accounts.resolveFork;
+pub const resolveForkWith = accounts.resolveForkWith;
+pub const ForkTip = accounts.ForkTip;
+pub const readForkTip = accounts.readForkTip;
 const repos = @import("./domain/repos.zig");
 pub const RefreshLocal = repos.RefreshLocal;
 pub const CreateRepo = repos.CreateRepo;
@@ -191,6 +211,34 @@ pub const Ctx = struct {
         };
     }
 
+    // a server context over a moment and an account its caller already read:
+    // the caller vouches that `moment` is one of `admin`'s and that `user` is
+    // the active record `user_id` names in it (both null when logged out).
+    // it reads nothing, so a page built with it decides at its session's moment.
+    pub fn initServerVouched(
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        arena: *std.heap.ArenaAllocator,
+        admin: *rp.Repo(.xit, evt.admin_repo_opts),
+        users_dir: []const u8,
+        moment: evt.AdminDB.HashMap(.read_only),
+        user_id: ?[evt.event_id_size]u8,
+        user: ?evt.User.Record,
+        now: i64,
+    ) Ctx {
+        return .{
+            .io = io,
+            .gpa = gpa,
+            .arena = arena,
+            .host = .{ .server = .{ .admin_repo_path = admin.core.work_path, .users_dir = users_dir } },
+            .admin = admin,
+            .moment = moment,
+            .user_id = if (user != null) user_id else null,
+            .user = if (user_id != null) user else null,
+            .now = now,
+        };
+    }
+
     // a local context over the repo `src` names, which has no accounts
     pub fn initLocal(
         io: std.Io,
@@ -305,6 +353,8 @@ pub const Resolved = struct {
     role: evt.Repo.Role,
     // where it lives on disk
     source: RepoSource,
+    // its event id, which a page's notify buttons need. local mode has none.
+    id: ?[evt.event_id_size]u8 = null,
 
     // the event history needs write access, like pushing
     pub fn hasEvents(self: Resolved) bool {
@@ -356,6 +406,7 @@ pub fn resolveRepo(ctx: *Ctx, identity: []const u8) !?Resolved {
                 .record = found.repo,
                 .role = role,
                 .source = .{ .path = try evt.repoPath(aa, server.users_dir, &owner_id, &found.event_id), .repo_kind = .xit },
+                .id = found.event_id,
             };
         },
     }
@@ -499,6 +550,11 @@ pub const Error = error{
     // sync: the local repo has no remote, or one with no url
     RemoteNotFound,
     UrlNotFound,
+    // files: a path that names a directory where a file is wanted, or the reverse
+    NotAFile,
+    NotADirectory,
+    // read inputs that contradict each other or are incomplete
+    InvalidReadArguments,
     // authorization and capability
     NotFound,
     LoginRequired,
@@ -607,6 +663,10 @@ pub fn classify(err: anyerror) Failure {
         // a missing fork): nothing the caller's input can fix
         error.MergeCheckUnavailable, error.PatchDataUnavailable => .internal,
         error.TooManyProtectedBranches, error.TooManyKeys, error.AttachmentTooLarge => .limit_reached,
+        // the path exists, but as the other kind of entry
+        error.NotAFile, error.NotADirectory => .invalid_input,
+        // a read's inputs that can't go together, or one missing its partner
+        error.InvalidReadArguments => .invalid_input,
         error.NotFound => .not_found,
         error.LoginRequired => .login_required,
         error.Forbidden, error.WrongPassword => .forbidden,

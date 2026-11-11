@@ -65,12 +65,63 @@ no_commits: bool = false,
 
 const Self = @This();
 
-// walk the log for an opened repo. generic over the repo's backend and hash
-// kind so the oid buffers it threads through match the repo's opts. `message`
-// reads the walk root's message whole, up to the safety limit above. walks
-// with the arena's backing allocator (transient; the commits we keep are
-// duped into the page arena so they outlive it).
-pub fn init(
+// walk the log for an opened repo from the decoded ref name or oid
+// `requested_value`. generic over the repo's backend and hash kind so the oid
+// buffers it threads through match the repo's opts. `message` reads the walk
+// root's message whole, up to the safety limit above. walks with the arena's
+// backing allocator (transient; the commits we keep are duped into the page
+// arena so they outlive it). the page shows a log it can't read as an empty
+// one; `loadStrict` is the same walk for a read, which fails instead.
+pub fn load(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    handle: ui.RepoHandle,
+    requested_ref_or_oid: ?ui.RoutablePage.RefOrOid,
+    requested_value: []const u8,
+    message: bool,
+    base_oid: []const u8,
+    search: []const u8,
+    from: []const u8,
+) !Self {
+    return try walk(false, repo_kind, repo_opts, arena, repo, io, gpa, admin_moment, handle, requested_ref_or_oid, requested_value, message, base_oid, search, from);
+}
+
+// `load` for a read: a ref, cursor or start that names no commit is NotFound,
+// and a commit that can't be read is the read's error, never an empty log
+pub fn loadStrict(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    handle: ui.RepoHandle,
+    requested_ref_or_oid: ?ui.RoutablePage.RefOrOid,
+    requested_value: []const u8,
+    message: bool,
+    base_oid: []const u8,
+    search: []const u8,
+    from: []const u8,
+) !Self {
+    return try walk(true, repo_kind, repo_opts, arena, repo, io, gpa, admin_moment, handle, requested_ref_or_oid, requested_value, message, base_oid, search, from);
+}
+
+// whether reading a commit failed because there is none: no object under the
+// oid, or one of another kind
+pub fn isMissingCommit(err: anyerror) bool {
+    return err == error.ObjectNotFound or err == error.CommitNotFound;
+}
+
+// the walk `load` and `loadStrict` share. where the page falls back to an
+// empty log, a `strict` walk returns the failure.
+fn walk(
+    comptime strict: bool,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -85,6 +136,7 @@ pub fn init(
     requested_value: []const u8,
     message: bool,
     base_oid: []const u8,
+    // decoded; the commit search syntax
     search: []const u8,
     from: []const u8,
 ) !Self {
@@ -96,24 +148,28 @@ pub fn init(
     if (from.len != 0) {
         evt.PatchRev.validateOid(repo_opts.hash, from) catch return error.NotFound;
     }
-    const query: ?[]const u8 = if (search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, search));
+    const query: ?[]const u8 = if (search.len == 0) null else try aa.dupe(u8, search);
 
     // resolve the requested ref (or the default branch) to the commit oid to
     // walk from. an explicitly named ref that doesn't resolve is a bad url
     // (NotFound -> 404); the default-branch path falls through to empty.
-    var resolved = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).init(repo, io, aa, requested_ref_or_oid, requested_value)) orelse {
+    var resolved = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).resolve(repo, io, aa, requested_ref_or_oid, requested_value)) orelse {
         if (requested_ref_or_oid != null) return error.NotFound;
         var data = try emptyResult(aa, handle, .branch, requested_value, base_oid);
         data.no_commits = true;
         return data;
     };
 
-    var moment = repo.core.latestMoment() catch return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
+    var moment = repo.core.latestMoment() catch |err| {
+        if (strict) return err;
+        return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
+    };
     const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
 
     // resolve annotated tags once, independently of the page's starting commit.
     {
-        var tip = obj.Object(repo_kind, repo_opts).initCommit(state, io, gpa, &resolved.oid) catch {
+        var tip = obj.Object(repo_kind, repo_opts).initCommit(state, io, gpa, &resolved.oid) catch |err| {
+            if (strict) return if (isMissingCommit(err)) error.NotFound else err;
             if (query != null) return error.NotFound;
             return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
         };
@@ -154,7 +210,10 @@ pub fn init(
 
         var results = try srch.Query(rp.Repo(.xit, repo_opts).DB).init(index, aa, text);
         if (from.len != 0) {
-            var start = obj.Object(.xit, repo_opts).initCommit(state, io, gpa, from[0..hex_len]) catch return error.NotFound;
+            var start = obj.Object(.xit, repo_opts).initCommit(state, io, gpa, from[0..hex_len]) catch |err| {
+                if (strict and !isMissingCommit(err)) return err;
+                return error.NotFound;
+            };
             defer start.deinit();
             const key = try srch_cmmt.docKey(repo_opts.hash, start.content.commit.metadata.timestamp, &start.oid);
             results.seek(&key);
@@ -179,7 +238,10 @@ pub fn init(
         var start_oid = resolved.oid;
         if (from.len != 0) @memcpy(&start_oid, from);
 
-        var iter = repo.log(io, gpa, .{ .start_oids = &.{start_oid}, .first_parent = true }) catch return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
+        var iter = repo.log(io, gpa, .{ .start_oids = &.{start_oid}, .first_parent = true }) catch |err| {
+            if (strict) return if (isMissingCommit(err)) error.NotFound else err;
+            return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, base_oid);
+        };
         defer iter.deinit();
         while (try iter.next(gpa)) |commit_object| {
             defer commit_object.deinit();
@@ -261,7 +323,9 @@ pub fn resolveMerge(
     evt.PatchRev.validateOid(repo_opts.hash, merge_oid) catch return error.NotFound;
     var moment = try repo.core.latestMoment();
     const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
-    var merge = obj.Object(repo_kind, repo_opts).initCommit(state, io, gpa, merge_oid[0..comptime xit.hash.hexLen(repo_opts.hash)]) catch return error.NotFound;
+    // a commit that can't be read is a failure, not a missing merge
+    var merge = obj.Object(repo_kind, repo_opts).initCommit(state, io, gpa, merge_oid[0..comptime xit.hash.hexLen(repo_opts.hash)]) catch |err|
+        return if (isMissingCommit(err)) error.NotFound else err;
     defer merge.deinit();
     const parent_oids = merge.content.commit.metadata.parent_oids orelse &.{};
     if (parent_oids.len < 2) return error.NotFound;

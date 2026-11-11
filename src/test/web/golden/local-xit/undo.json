@@ -1,0 +1,23 @@
+{
+ "page": {
+  "not_found": {}
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "not_found": {}
+  },
+  "form_feedback": null,
+  "git_http_url": null,
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "local",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

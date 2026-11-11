@@ -85,6 +85,9 @@ pub fn build(b: *std.Build) void {
         run_unit_tests.has_side_effects = true;
         const test_step = b.step("test", "Run unit tests");
         test_step.dependOn(&run_unit_tests.step);
+        // ui.zig and web.zig also build for wasm32-freestanding, so a test run
+        // fails when that build breaks
+        test_step.dependOn(&wasm_exe.step);
     }
 
     // module for using haxy as a library

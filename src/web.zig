@@ -7,6 +7,7 @@ const evt = @import("./event.zig");
 const serve_common = @import("./serve_common.zig");
 const serve_http = @import("./serve_http.zig");
 const ui = @import("./ui.zig");
+const domain = @import("./domain.zig");
 const fork = @import("./fork.zig");
 const pch = @import("./patch.zig");
 const notify = @import("./notify.zig");
@@ -572,6 +573,48 @@ fn handleLogout(request: *std.http.Server.Request, allocator: std.mem.Allocator,
     });
 }
 
+const AdminRepo = rp.Repo(.xit, evt.admin_repo_opts);
+
+// the context an operation for the request runs in, acting as its logged-in
+// user. a server context reads the admin repo, which `admin_repo` holds open
+// for the caller to close once the context is done. call it before reading the
+// body, which invalidates the request's headers.
+fn requestCtx(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    request: *std.http.Server.Request,
+    host: Host,
+    admin_repo: *?AdminRepo,
+) !domain.Ctx {
+    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
+    switch (host) {
+        .local => |src| return domain.Ctx.initLocal(io, allocator, arena, src, now),
+        .server => |server| {
+            const user_id = requestUserId(request, server.session_store);
+            admin_repo.* = try AdminRepo.open(io, allocator, .{ .path = server.admin_repo_path });
+            return try domain.Ctx.initServer(io, allocator, arena, &admin_repo.*.?, server.users_dir, user_id, now);
+        },
+    }
+}
+
+// the repo identity an operation takes for the repo url base `repo_base`
+// names ("" for local mode's one repo), or null for a base that names none
+fn requestIdentity(host: Host, repo_base: []const u8) ?[]const u8 {
+    return switch (host) {
+        .server => repoBaseIdentity(repo_base),
+        .local => if (repo_base.len == 0) "" else null,
+    };
+}
+
+// whether the viewer finds the repo `identity` names with its `kind` tab on,
+// which tells a missing repo from a missing thread once an operation reports
+// either as not found
+fn repoTabFound(ctx: *domain.Ctx, identity: []const u8, kind: evt.EventKind) !bool {
+    const resolved = (try domain.resolveRepo(ctx, identity)) orelse return false;
+    return resolved.hasTab(kind);
+}
+
 // the actor for a write to the repo `repo_base` names with at least `min_role`
 // and in the `thread_kind` tab when there is one, or null once the refusal has
 // been sent. local mode always writes.
@@ -585,20 +628,28 @@ fn authorizeWrite(
     min_role: evt.Repo.Role,
     thread_kind: ?evt.EventKind,
 ) !?ui.Actor {
-    const server = switch (host) {
-        .server => |server| server,
-        .local => |src| return .{ .author = try ui.localAuthor(src, io, allocator, arena), .role = .owner },
-    };
-    const authorization: ui.Authorization = blk: {
-        const user_id = requestUserId(request, server.session_store) orelse break :blk .login_required;
+    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
+    const authorization: domain.Authorization = switch (host) {
+        .local => |src| blk: {
+            var ctx = domain.Ctx.initLocal(io, allocator, arena, src, now);
+            break :blk try ctx.authorize("", min_role, thread_kind);
+        },
+        .server => |server| blk: {
+            const user_id = requestUserId(request, server.session_store) orelse break :blk .login_required;
 
-        const identity = repoBaseIdentity(repo_base) orelse break :blk .repo_not_found;
+            const identity = repoBaseIdentity(repo_base) orelse break :blk .repo_not_found;
 
-        var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
-        defer admin_repo.deinit(io, allocator);
-        const moment = try evt.currentMoment(evt.admin_repo_opts, &admin_repo);
-        break :blk try ui.authorizeUser(io, moment, arena, server.users_dir, user_id, identity, min_role, thread_kind);
+            var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
+            defer admin_repo.deinit(io, allocator);
+            var ctx = try domain.Ctx.initServer(io, allocator, arena, &admin_repo, server.users_dir, user_id, now);
+            break :blk try ctx.authorize(identity, min_role, thread_kind);
+        },
     };
+    return try respondUnauthorized(request, authorization);
+}
+
+// the authorized actor, or null once the request has been refused
+fn respondUnauthorized(request: *std.http.Server.Request, authorization: domain.Authorization) !?ui.Actor {
     switch (authorization) {
         .actor => |actor| return actor,
         .login_required => try respondLoginRequired(request),
@@ -1141,7 +1192,8 @@ fn respondKeyNotFound(request: *std.http.Server.Request) !void {
     });
 }
 
-// create a thread in the repo the form's page names and redirect to it.
+// create an issue or discussion in the repo the form's page names and
+// redirect to it. patches have their own handler until their operation exists.
 fn handleThreadNew(
     io: std.Io,
     request: *std.http.Server.Request,
@@ -1150,6 +1202,67 @@ fn handleThreadNew(
     host: Host,
     kind: evt.EventKind,
 ) !void {
+    if (kind == .patch) return handlePatchNew(io, request, allocator, base, host);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+    // the context reads the session cookie, which the body read invalidates
+    var admin_repo: ?AdminRepo = null;
+    defer if (admin_repo) |*repo| repo.deinit(io, allocator);
+    var ctx = try requestCtx(io, allocator, &arena, request, host, &admin_repo);
+    const identity = requestIdentity(host, base) orelse return respondRepoNotFound(request);
+    // refuse before the body is read; the operation authorizes again
+    _ = (try respondUnauthorized(request, try ctx.authorize(identity, .read, kind))) orelse return;
+
+    const body = try readFormBody(request, allocator);
+    defer allocator.free(body);
+    const title = (try parseFormField(aa, body, "title")) orelse "";
+    const labels = (try parseFormField(aa, body, "labels")) orelse "";
+    // form submission normalizes textarea line breaks to CRLF; store plain
+    // newlines so the text renders the same on every host
+    const description = try std.mem.replaceOwned(u8, aa, (try parseFormField(aa, body, "description")) orelse "", "\r\n", "\n");
+
+    const created = (domain.CreateThread{
+        .repo = identity,
+        .kind = domain.ThreadKind.fromEventKind(kind) orelse unreachable,
+        .title = title,
+        .labels = labels,
+        .body = description,
+    }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+        // the form shows a missing title; it shows nothing for an overlong label
+        .invalid_input => {
+            const form_location = try aa.print("{s}/{s}/new", .{ base, threadListName(kind) });
+            if (ui.Session.FormFeedback.ThreadFailure.fromError(err)) |failure| switch (failure) {
+                .required_title => return respondThreadFormFailure(request, allocator, host, form_location, requiredTitleFeedback(kind, title, labels, description, "", null)),
+            };
+            return request.respond("", .{
+                .status = .see_other,
+                .extra_headers = &.{.{ .name = "location", .value = form_location }},
+            });
+        },
+        .login_required => return respondLoginRequired(request),
+        .forbidden => return respondForbidden(request),
+        .not_found => return respondRepoNotFound(request),
+        else => return err,
+    };
+
+    const location = try aa.print("{s}/{s}:{s}", .{ base, @tagName(kind), &created.id });
+    try request.respond("", .{
+        .status = .see_other,
+        .extra_headers = &.{.{ .name = "location", .value = location }},
+    });
+}
+
+// create a patch in the repo the form's page names and redirect to it. moves
+// to a domain operation with the rest of the patch writes.
+fn handlePatchNew(
+    io: std.Io,
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    base: []const u8,
+    host: Host,
+) !void {
+    const kind: evt.EventKind = .patch;
     var author_arena = std.heap.ArenaAllocator.init(allocator);
     defer author_arena.deinit();
     const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, base, .read, kind)) orelse return;
@@ -1170,16 +1283,10 @@ fn handleThreadNew(
     const target_branch = (try parseFormField(allocator, body, "target_branch")) orelse try allocator.dupe(u8, "");
     defer allocator.free(target_branch);
 
-    const source_branch = if (kind == .patch) try parseFormField(allocator, body, "source_branch") else null;
+    const source_branch = try parseFormField(allocator, body, "source_branch");
     defer if (source_branch) |branch| allocator.free(branch);
 
-    const valid = switch (kind) {
-        .issue => evt.Issue.fieldsValid(title, labels),
-        .patch => evt.Patch.fieldsValid(title, labels),
-        .discuss => evt.Discussion.fieldsValid(title, labels),
-        else => unreachable,
-    };
-    if (!valid) {
+    if (!evt.Patch.fieldsValid(title, labels)) {
         const form_location = try allocator.print("{s}/{s}/new", .{ base, threadListName(kind) });
         defer allocator.free(form_location);
         if (!evt.titleValid(title)) {
@@ -1206,7 +1313,7 @@ fn handleThreadNew(
     };
     defer request_repo.deinit(allocator);
     const source = request_repo.source;
-    if (kind == .patch and source_branch == null) {
+    if (source_branch == null) {
         const server = switch (host) {
             .server => |server| server,
             .local => return respondRemoveNotFound(request),
@@ -1239,12 +1346,7 @@ fn handleThreadNew(
             .id = event_id_hex,
             .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
             .author = author,
-            .event = switch (kind) {
-                .issue => .{ .issue = .{ .title = title, .description = description, .labels = labels } },
-                .patch => .{ .patch = .{ .title = title, .description = description, .labels = labels, .target_branch = target_branch, .source_branch = source_branch } },
-                .discuss => .{ .discuss = .{ .title = title, .description = description, .labels = labels } },
-                else => unreachable,
-            },
+            .event = .{ .patch = .{ .title = title, .description = description, .labels = labels, .target_branch = target_branch, .source_branch = source_branch } },
         };
 
         switch (source.repo_kind) {
@@ -1253,12 +1355,7 @@ fn handleThreadNew(
                 defer any_repo.deinit(io, allocator);
                 switch (any_repo) {
                     inline else => |*repo| {
-                        const result = if (kind == .patch)
-                            pch.writeBranchPatch(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, event_id_hex, event.event.patch orelse unreachable, null, author)
-                        else
-                            evt.consume(host.event(), .repo, repo_kind, repo.self_repo_opts, io, allocator, repo, evt.events_ref, &.{event});
-                        result catch |err| {
-                            if (kind != .patch) return err;
+                        pch.writeBranchPatch(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, event_id_hex, event.event.patch orelse unreachable, null, author) catch |err| {
                             const failure = ui.Session.FormFeedback.PatchFailure.fromError(err) orelse return err;
                             const form_location = try allocator.print("{s}/patches/new", .{base});
                             defer allocator.free(form_location);
@@ -1410,59 +1507,51 @@ fn handleCommentNew(
         return;
     };
 
-    var author_arena = std.heap.ArenaAllocator.init(allocator);
-    defer author_arena.deinit();
-    const author = ((try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return).author;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+    // the context reads the session cookie, which the body read invalidates
+    var admin_repo: ?AdminRepo = null;
+    defer if (admin_repo) |*repo| repo.deinit(io, allocator);
+    var ctx = try requestCtx(io, allocator, &arena, request, host, &admin_repo);
+    const identity = requestIdentity(host, parts.repo_base) orelse return respondRepoNotFound(request);
+    // refuse before the body is read; the operation authorizes again
+    _ = (try respondUnauthorized(request, try ctx.authorize(identity, .read, parts.thread_kind))) orelse return;
 
     const form_body = try readFormBody(request, allocator);
     defer allocator.free(form_body);
-    const body_crlf = (try parseFormField(allocator, form_body, "body")) orelse try allocator.dupe(u8, "");
-    defer allocator.free(body_crlf);
-    const body = try std.mem.replaceOwned(u8, allocator, body_crlf, "\r\n", "\n");
-    defer allocator.free(body);
-
-    if (!evt.Comment.fieldsValid(body)) {
-        const form_location = try allocator.print("{s}/new", .{base});
-        defer allocator.free(form_location);
-        try request.respond("", .{
-            .status = .see_other,
-            .extra_headers = &.{.{ .name = "location", .value = form_location }},
-        });
-        return;
-    }
+    const body = try std.mem.replaceOwned(u8, aa, (try parseFormField(aa, form_body, "body")) orelse "", "\r\n", "\n");
 
     const thread_id_hex = std.fmt.bytesToHex(parts.thread_id, .lower);
     const parent_id_hex = std.fmt.bytesToHex(parts.comment_id orelse parts.thread_id, .lower);
-
-    const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse {
-        try request.respond(not_found, .{
-            .status = .not_found,
-            .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
-        });
-        return;
-    };
-    defer request_repo.deinit(allocator);
-    const source = request_repo.source;
-    var event_id_hex: [evt.event_id_size * 2]u8 = undefined;
-    switch (source.repo_kind) {
-        inline else => |repo_kind| {
-            var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-            defer any_repo.deinit(io, allocator);
-            switch (any_repo) {
-                inline else => |*repo| event_id_hex = evt.Comment.create(host.event(), repo_kind, repo.self_repo_opts, io, allocator, repo, parts.thread_kind, &thread_id_hex, &parent_id_hex, body, author) catch |err| switch (err) {
-                    // the url's thread or parent comment isn't what it claims
-                    error.NotFound => return request.respond(not_found, .{
-                        .status = .not_found,
-                        .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
-                    }),
-                    else => |e| return e,
-                },
-            }
+    const created = (domain.CreateComment{
+        .repo = identity,
+        .kind = domain.ThreadKind.fromEventKind(parts.thread_kind) orelse unreachable,
+        .thread_id = &thread_id_hex,
+        .parent_id = &parent_id_hex,
+        .body = body,
+    }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+        .invalid_input => {
+            const form_location = try aa.print("{s}/new", .{base});
+            return request.respond("", .{
+                .status = .see_other,
+                .extra_headers = &.{.{ .name = "location", .value = form_location }},
+            });
         },
-    }
+        .login_required => return respondLoginRequired(request),
+        .forbidden => return respondForbidden(request),
+        .not_found => {
+            if (!try repoTabFound(&ctx, identity, parts.thread_kind)) return respondRepoNotFound(request);
+            // the url's thread or parent comment isn't what it claims
+            return request.respond(not_found, .{
+                .status = .not_found,
+                .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
+            });
+        },
+        else => return err,
+    };
 
-    const location = try allocator.print("{s}/{s}:{s}/comment:{s}", .{ parts.repo_base, @tagName(parts.thread_kind), &thread_id_hex, &event_id_hex });
-    defer allocator.free(location);
+    const location = try aa.print("{s}/{s}:{s}/comment:{s}", .{ parts.repo_base, @tagName(parts.thread_kind), &thread_id_hex, &created.id });
     try request.respond("", .{
         .status = .see_other,
         .extra_headers = &.{.{ .name = "location", .value = location }},
@@ -2097,29 +2186,35 @@ fn handleThreadStatus(
         return;
     };
 
-    var author_arena = std.heap.ArenaAllocator.init(allocator);
-    defer author_arena.deinit();
-    const actor = (try authorizeWrite(io, allocator, &author_arena, request, host, parts.repo_base, .read, parts.thread_kind)) orelse return;
-    const author = actor.author;
-    {
-        const request_repo = (try requestRepoSource(io, allocator, host, parts.repo_base)) orelse return respondRemoveNotFound(request);
-        defer request_repo.deinit(allocator);
-        if (!try request_repo.source.canModify(io, allocator, actor, parts.thread_kind, &parts.thread_id)) return respondForbidden(request);
-    }
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var admin_repo: ?AdminRepo = null;
+    defer if (admin_repo) |*repo| repo.deinit(io, allocator);
+    var ctx = try requestCtx(io, allocator, &arena, request, host, &admin_repo);
+    const identity = requestIdentity(host, parts.repo_base) orelse return respondRepoNotFound(request);
+    // refused as before the operation existed; the operation authorizes again
+    _ = (try respondUnauthorized(request, try ctx.authorize(identity, .read, parts.thread_kind))) orelse return;
 
-    (switch (parts.thread_kind) {
-        .issue => updateThread(evt.Issue, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .status = if (open) .open else .closed }, author),
-        .patch => updateThread(evt.Patch, io, allocator, host, parts.repo_base, &parts.thread_id, .{ .status = if (open) .open else .closed }, author),
-        else => return respondRemoveNotFound(request),
-    }) catch |err| switch (err) {
-        error.NotFound => {
+    const thread_id_hex = std.fmt.bytesToHex(parts.thread_id, .lower);
+    (domain.SetThreadStatus{
+        .repo = identity,
+        .kind = domain.ThreadKind.fromEventKind(parts.thread_kind) orelse unreachable,
+        .thread_id = &thread_id_hex,
+        .status = if (open) .open else .closed,
+    }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+        .login_required => return respondLoginRequired(request),
+        .forbidden => return respondForbidden(request),
+        .not_found => {
+            if (!try repoTabFound(&ctx, identity, parts.thread_kind)) return respondRepoNotFound(request);
+            // discussions have no status
+            if (parts.thread_kind == .discuss) return respondRemoveNotFound(request);
             try request.respond(not_found, .{
                 .status = .not_found,
                 .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
             });
             return;
         },
-        else => |e| return e,
+        else => return err,
     };
 
     // like logout, this is a bodyless POST, so close the connection rather than

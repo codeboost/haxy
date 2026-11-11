@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const pch = @import("../../patch.zig");
 const evt = @import("../../event.zig");
+const domain = @import("../../domain.zig");
 const notify = @import("../../notify.zig");
 const ui = @import("../../ui.zig");
 const widget = @import("../widget.zig");
@@ -1727,30 +1728,38 @@ pub fn Detail(comptime kind: evt.EventKind, comptime Data: type) type {
         }
 
         fn toggleStatus(self: *This, allocator: std.mem.Allocator) !void {
+            _ = allocator;
             if (comptime (!has_status or wasm)) return;
             const entry = self.entry orelse return;
-            const io = self.session.io orelse return;
-            const source = self.data.repo_source orelse return;
-            const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
+            if (self.data.repo_source == null) return;
             const status = (statusChange(entryStatus(entry)) orelse return).status;
-            const id = try evt.parseEventId(entry.id);
-            if (!try source.canModify(io, allocator, actor, kind, &id)) return;
 
-            switch (source.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, source.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try Event.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, &id, .{ .status = status }, author),
-                    }
-                },
-            }
+            var ctx = try self.session.ctx(self.session.page_arena);
+            (domain.SetThreadStatus{
+                .repo = self.data.identity,
+                .kind = comptime domain.ThreadKind.fromEventKind(kind).?,
+                .thread_id = entry.id,
+                .status = std.meta.stringToEnum(domain.SetThreadStatus.Status, @tagName(status)) orelse return,
+            }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+                // the buttons only show to those who may use them
+                .login_required, .forbidden => return,
+                .not_found => if (try repoGone(self.session, self.data.identity, kind)) return else return err,
+                else => return err,
+            };
 
             const route = listRoute(self.data.identity, status, entry.id) orelse return;
             try self.session.navigate(route);
         }
     };
+}
+
+// whether the repo `identity` names, or its `kind` tab, is gone for the
+// session's user since the page was built. an operation reports that as not
+// found, which a terminal form shrugs off as it did before the operations, so
+// a revoked repo doesn't end the session.
+fn repoGone(session: *ui.Session, identity: []const u8, kind: evt.EventKind) !bool {
+    var ctx = try session.ctx(session.page_arena);
+    return try ctx.authorize(identity, .read, kind) == .repo_not_found;
 }
 
 pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
@@ -3021,41 +3030,46 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             if (comptime wasm) return;
             const io = self.session.io orelse return;
             const src = self.data.repo_source orelse return;
-            const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
-            const author = actor.author;
             const form = self.formBox() orelse return;
             const body_input = try formField(form, "body");
             const body = try body_input.text(allocator);
             defer allocator.free(body);
-            if (!evt.Comment.fieldsValid(body)) return;
 
             var thread_id: [evt.event_id_size * 2]u8 = undefined;
             @memcpy(&thread_id, self.data.selected_id);
-            const parent_id = if (self.data.comment_id.len == 0) thread_id else blk: {
-                var parent: [evt.event_id_size * 2]u8 = undefined;
-                @memcpy(&parent, self.data.comment_id);
-                break :blk parent;
-            };
             var event_id_hex: [evt.event_id_size * 2]u8 = undefined;
-            const editing = self.data.view == .edit_comment;
-            if (editing) {
+            if (self.data.view == .edit_comment) {
+                const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
+                const author = actor.author;
+                if (!evt.Comment.fieldsValid(body)) return;
                 const comment_id = evt.parseEventId(self.data.comment_id) catch return;
                 if (!try src.canModify(io, allocator, actor, .comment, &comment_id)) return;
-            }
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| if (editing) {
-                            const comment_id = evt.parseEventId(self.data.comment_id) catch return;
-                            try evt.Comment.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, &comment_id, body, author);
-                            event_id_hex = std.fmt.bytesToHex(comment_id, .lower);
-                        } else {
-                            event_id_hex = try evt.Comment.create(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, &parent_id, body, author);
-                        },
-                    }
-                },
+                switch (src.repo_kind) {
+                    inline else => |repo_kind| {
+                        var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
+                        defer any_repo.deinit(io, allocator);
+                        switch (any_repo) {
+                            inline else => |*repo| try evt.Comment.update(self.session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, kind, &thread_id, &comment_id, body, author),
+                        }
+                    },
+                }
+                event_id_hex = std.fmt.bytesToHex(comment_id, .lower);
+            } else {
+                var ctx = try self.session.ctx(self.session.page_arena);
+                const created = (domain.CreateComment{
+                    .repo = self.data.identity,
+                    .kind = comptime domain.ThreadKind.fromEventKind(kind).?,
+                    .thread_id = &thread_id,
+                    // "" replies to the thread itself
+                    .parent_id = self.data.comment_id,
+                    .body = body,
+                }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+                    // an empty body or a write the user may not make does nothing
+                    .invalid_input, .login_required, .forbidden => return,
+                    .not_found => if (try repoGone(self.session, self.data.identity, kind)) return else return err,
+                    else => return err,
+                };
+                event_id_hex = created.id;
             }
 
             body_input.clear(allocator);
@@ -3077,9 +3091,9 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
         // so the wasm side never runs (or compiles) the repo access below.
         fn submitNewThread(self: *This, allocator: std.mem.Allocator) !void {
             if (comptime wasm) return;
-            const io = self.session.io orelse return;
-            const src = self.data.repo_source orelse return;
-            const actor = (try self.session.authorize(self.data.identity, .read, kind)) orelse return;
+            if (self.session.io == null or self.data.repo_source == null) return;
+            // patches still write through the page's data
+            const actor = if (comptime supports_drafts) (try self.session.authorize(self.data.identity, .read, kind)) orelse return else {};
 
             const form = self.threadForm() orelse return;
             const title_input = try formField(form, "title");
@@ -3095,12 +3109,11 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
             const target_branch = if (comptime supports_drafts) try (try formField(form, "target_branch")).text(allocator) else "";
             defer if (comptime supports_drafts) allocator.free(target_branch);
 
-            if (!Event.fieldsValid(title, labels)) {
-                if (!evt.titleValid(title)) try self.rememberThreadFeedback(.required_title, title, labels, description, target_branch);
-                return;
-            }
-
             if (comptime supports_drafts) {
+                if (!Event.fieldsValid(title, labels)) {
+                    if (!evt.titleValid(title)) try self.rememberThreadFeedback(.required_title, title, labels, description, target_branch);
+                    return;
+                }
                 const source = formWidget(form, .patch_source) orelse return error.MissingFormField;
                 const source_branch = switch (source.selectedKind()) {
                     .fork => null,
@@ -3121,30 +3134,24 @@ pub fn View(comptime kind: evt.EventKind, comptime Data: type) type {
                 return;
             }
 
-            var id_bytes: [evt.event_id_size]u8 = undefined;
-            io.random(&id_bytes);
-            const event_id_hex = std.fmt.bytesToHex(id_bytes, .lower);
-
-            const event = evt.EventWithId{
-                .id = event_id_hex,
-                .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-                .author = actor.author,
-                .event = @unionInit(evt.Event, @tagName(kind), Event{
-                    .title = title,
-                    .description = description,
-                    .labels = labels,
-                }),
-            };
-
-            switch (src.repo_kind) {
-                inline else => |repo_kind| {
-                    var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, src.localInitOpts());
-                    defer any_repo.deinit(io, allocator);
-                    switch (any_repo) {
-                        inline else => |*repo| try evt.consume(self.session.eventHost(), .repo, repo_kind, repo.self_repo_opts, io, allocator, repo, evt.events_ref, &.{event}),
-                    }
+            var ctx = try self.session.ctx(self.session.page_arena);
+            const created = (domain.CreateThread{
+                .repo = self.data.identity,
+                .kind = comptime domain.ThreadKind.fromEventKind(kind).?,
+                .title = title,
+                .labels = labels,
+                .body = description,
+            }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+                // the form shows a missing title; it shows nothing for an overlong label
+                .invalid_input => {
+                    if (FeedbackFailure.fromError(err)) |failure| try self.rememberThreadFeedback(failure, title, labels, description, target_branch);
+                    return;
                 },
-            }
+                .login_required, .forbidden => return,
+                .not_found => if (try repoGone(self.session, self.data.identity, kind)) return else return err,
+                else => return err,
+            };
+            const event_id_hex = created.id;
 
             // wipe the form so a return visit starts fresh
             title_input.clear(allocator);

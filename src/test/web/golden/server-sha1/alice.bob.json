@@ -1,0 +1,307 @@
+{
+ "page": {
+  "user": {
+   "forks": [
+    {
+     "access": "public",
+     "id": "<patch:alice-draft>",
+     "repo_name": "open",
+     "title": "alice's draft"
+    }
+   ],
+   "forks_next_start": null,
+   "forks_start": 0,
+   "header": {
+    "name": "alice",
+    "title": {
+     "content": "🬞🬂🬏 🬐   🬂🬰🬂 🬑🬂🬀 🬒🬂🬂\n🬋🬋🬋 🬃    🬋  🬃   🬋🬋🬃\n🬐 🬠 🬮🬭🬭 🬭🬰🬭 🬟🬭🬏 🬮🬭🬭"
+    }
+   },
+   "quit": {},
+   "repos": [
+    {
+     "created_order": 54,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo19",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 54
+    },
+    {
+     "created_order": 53,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo18",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 53
+    },
+    {
+     "created_order": 52,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo17",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 52
+    },
+    {
+     "created_order": 50,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo15",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 50
+    },
+    {
+     "created_order": 49,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo14",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 49
+    },
+    {
+     "created_order": 48,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo13",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 48
+    },
+    {
+     "created_order": 46,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo11",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 46
+    },
+    {
+     "created_order": 45,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo10",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 45
+    },
+    {
+     "created_order": 44,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo09",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 44
+    },
+    {
+     "created_order": 42,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo07",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 42
+    },
+    {
+     "created_order": 41,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo06",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 41
+    },
+    {
+     "created_order": 40,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo05",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 40
+    },
+    {
+     "created_order": 38,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo03",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 38
+    },
+    {
+     "created_order": 37,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo02",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 37
+    },
+    {
+     "created_order": 36,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "repo01",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 36
+    }
+   ],
+   "repos_next_start": 20,
+   "repos_search": null,
+   "repos_start": 0,
+   "user": {
+    "name": "alice"
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "user_repos": {
+    "name": "alice",
+    "search": "",
+    "start": 0
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "bob@example.test",
+  "user_id": "<bytes:user:bob>",
+  "user_name": "bob"
+ }
+}

@@ -80,7 +80,28 @@ no_commits: bool = false,
 
 const Self = @This();
 
+// what a listing does when it can't read what its tree names: the page shows
+// an empty file or listing in its place, a domain read reports the failure
+pub const Failures = enum { fall_back, propagate };
+
 pub fn initPatchRev(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    handle: ui.RepoHandle,
+    id_hex: []const u8,
+    path: []const u8,
+    line: usize,
+) !Self {
+    return try loadPatchRev(.fall_back, repo_kind, repo_opts, arena, repo, io, gpa, handle, id_hex, path, line);
+}
+
+// a patch revision's listing, read as `failures` says
+pub fn loadPatchRev(
+    comptime failures: Failures,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -95,7 +116,7 @@ pub fn initPatchRev(
     const id = evt.parseEventId(id_hex) catch return error.NotFound;
     const record = (try evt.readFromRepo(evt.PatchRev, repo_kind, repo_opts, io, gpa, arena, repo, &id)) orelse return error.NotFound;
     if (record.removed) return error.NotFound;
-    var data = try init(repo_kind, repo_opts, arena, repo, io, gpa, handle, .object, record.head_tree_oid, path, line, "");
+    var data = try loadWith(failures, repo_kind, repo_opts, arena, repo, io, gpa, handle, .object, record.head_tree_oid, path, line, "");
     data.patchrev_id = try arena.allocator().dupe(u8, id_hex);
     return data;
 }
@@ -114,11 +135,31 @@ fn isEmpty(self: *const Self) bool {
     return self.entries.len == 0 and self.dir.len == 0;
 }
 
-// build the listing for an opened repo. generic over the repo's backend and
-// hash kind so the tree/diff types it threads through match the repo's opts.
-// reads with the arena's backing allocator (transient); the listing is built
-// into the page arena so it outlives the repo handle.
-pub fn init(
+// the page's listing: what it can't read shows empty
+pub fn load(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    handle: ui.RepoHandle,
+    requested_ref_or_oid: ?ui.RoutablePage.RefOrOid,
+    requested_value: []const u8,
+    path: []const u8,
+    line: usize,
+    find: []const u8,
+) !Self {
+    return try loadWith(.fall_back, repo_kind, repo_opts, arena, repo, io, gpa, handle, requested_ref_or_oid, requested_value, path, line, find);
+}
+
+// build the listing for an opened repo at the decoded ref name or oid
+// `requested_value`, or of the results of the decoded `find`. generic over the
+// repo's backend and hash kind so the tree/diff types it threads through match
+// the repo's opts. reads with the arena's backing allocator (transient); the
+// listing is built into the page arena so it outlives the repo handle.
+pub fn loadWith(
+    comptime failures: Failures,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -133,12 +174,12 @@ pub fn init(
     find: []const u8,
 ) !Self {
     const aa = arena.allocator();
-    const term: ?[]const u8 = if (find.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, find));
+    const term: ?[]const u8 = if (find.len == 0) null else try aa.dupe(u8, find);
 
     // resolve the requested ref (or the default branch) to the object oid whose
     // tree we list. a ref the route named explicitly that doesn't resolve is a
     // bad url (NotFound -> 404); the default-branch path falls through to empty.
-    const resolved = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).init(repo, io, aa, requested_ref_or_oid, requested_value)) orelse {
+    const resolved = (try ui.ResolvedRefOrOid(repo_kind, repo_opts).resolve(repo, io, aa, requested_ref_or_oid, requested_value)) orelse {
         if (requested_ref_or_oid != null or term != null) return error.NotFound;
         var data = try emptyResult(aa, handle, .branch, requested_value, path);
         data.no_commits = true;
@@ -149,7 +190,10 @@ pub fn init(
     // read-only state mirrors what repo.status does internally, but for an
     // arbitrary commit rather than HEAD. a path that doesn't exist in the tree
     // is a bad url (404).
-    var moment = repo.core.latestMoment() catch return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, path);
+    var moment = repo.core.latestMoment() catch |err| switch (failures) {
+        .fall_back => return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, path),
+        .propagate => return err,
+    };
     const state = rp.Repo(repo_kind, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
 
     var entries: std.ArrayList(Entry) = .empty;
@@ -161,7 +205,7 @@ pub fn init(
     // and refuses a find: url.
     if (comptime repo_kind == .xit) index: {
         if (resolved.ref_or_oid != .branch) break :index;
-        const branch = std.Uri.percentDecodeInPlace(try aa.dupe(u8, resolved.value));
+        const branch = resolved.name;
         const files = (try fnd.lookup(repo_opts, moment, branch, &resolved.oid)) orelse break :index;
         find_available = true;
         const value = term orelse break :index;
@@ -173,12 +217,12 @@ pub fn init(
         var found = false;
         for (results.matches) |match| {
             if (selected) |sf| found = found or std.mem.eql(u8, sf, match.path);
-            try entries.append(aa, try fileEntry(repo_kind, repo_opts, state, io, gpa, aa, "", match.path, &match.oid, null, selected, line, &preloaded_bytes));
+            try entries.append(aa, try fileEntry(failures, repo_kind, repo_opts, state, io, gpa, aa, "", match.path, &match.oid, null, selected, line, &preloaded_bytes));
         }
         // the cap can cut off the row the url names, so bring it back
         if (capped and !found) {
             if (selected) |sf| if (try fnd.get(repo_opts, files, aa, sf)) |*oid| {
-                try entries.append(aa, try fileEntry(repo_kind, repo_opts, state, io, gpa, aa, "", sf, oid, null, selected, line, &preloaded_bytes));
+                try entries.append(aa, try fileEntry(failures, repo_kind, repo_opts, state, io, gpa, aa, "", sf, oid, null, selected, line, &preloaded_bytes));
             };
         }
         return .{
@@ -197,7 +241,10 @@ pub fn init(
 
     var tree_dir = tr.TreeDir(repo_kind, repo_opts).init(state, io, gpa, &resolved.oid, path) catch |err| switch (err) {
         error.TreeEntryNotFound => return error.NotFound,
-        else => return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, path),
+        else => switch (failures) {
+            .fall_back => return emptyResult(aa, handle, resolved.ref_or_oid, resolved.value, path),
+            .propagate => return err,
+        },
     };
     defer tree_dir.deinit();
 
@@ -234,7 +281,7 @@ pub fn init(
                     capped = true;
                     continue;
                 }
-                try entries.append(aa, try fileEntry(repo_kind, repo_opts, state, io, gpa, aa, dir, name, &tree_entry.oid, tree_entry.mode, selected_file, line, &preloaded_bytes));
+                try entries.append(aa, try fileEntry(failures, repo_kind, repo_opts, state, io, gpa, aa, dir, name, &tree_entry.oid, tree_entry.mode, selected_file, line, &preloaded_bytes));
             }
         }
     }
@@ -255,6 +302,7 @@ pub fn init(
 // the route) calls for it. only the route's selected file paginates; the rest
 // show their first window, for the in-page detail when selected.
 fn fileEntry(
+    comptime failures: Failures,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     state: rp.Repo(repo_kind, repo_opts).State(.read_only),
@@ -277,8 +325,10 @@ fn fileEntry(
     const file_path = try childDir(aa, dir, name);
     // the url's `line` is 1-based (0 = unset); the window index is 0-based.
     const window_start = if (is_selected) line -| 1 else 0;
-    const content = readFileContent(repo_kind, repo_opts, state, io, gpa, aa, file_path, oid, mode, window_start) catch
-        FileContent{ .lines = &.{} };
+    const content = readFileContent(repo_kind, repo_opts, state, io, gpa, aa, file_path, oid, mode, window_start) catch |err| switch (failures) {
+        .fall_back => FileContent{ .lines = &.{} },
+        .propagate => return err,
+    };
     for (content.lines) |l| preloaded_bytes.* += l.len;
     entry.lines = content.lines;
     entry.is_binary = content.is_binary;

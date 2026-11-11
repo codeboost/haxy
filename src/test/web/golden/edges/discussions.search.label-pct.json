@@ -1,0 +1,170 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "lab",
+     "lab%41",
+     "lab+plus",
+     "lab/slash",
+     "labA",
+     "labé",
+     "long"
+    ],
+    "recent": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:d-pct>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 2,
+        "created_timestamp": 1700001800,
+        "event": {
+         "description": "",
+         "labels": "lab%41",
+         "title": "tok%41 talk"
+        },
+        "removed": false,
+        "updated_order": 2
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": "label:lab%41",
+    "selected_id": "",
+    "view": "recent",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": "label:lab%41",
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the long patch",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long talk",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:d-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long issue",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:i-long>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_discussions": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "label%3Alab%2541",
+    "selected": "",
+    "start": false,
+    "view": "recent"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

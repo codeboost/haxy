@@ -20,10 +20,13 @@ search: ?[]const u8, // the name prefix the list is narrowed to (decoded; null =
 
 const Self = @This();
 
-pub fn init(
+// the window of the active users from `start` whose names start with the
+// decoded `search` ("" = every user)
+pub fn load(
     arena: *std.heap.ArenaAllocator,
     haxy_moment: evt.AdminDB.HashMap(.read_only),
-    route: ui.RoutablePage.HomeUsersRoute,
+    start: usize,
+    search: []const u8,
 ) !Self {
     const DB = evt.AdminDB;
     const hash_kind = evt.admin_repo_opts.hash;
@@ -31,9 +34,9 @@ pub fn init(
 
     var result: Self = .{
         .users = &.{},
-        .start = route.start,
+        .start = start,
         .next_start = null,
-        .search = if (route.search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, route.search.slice())),
+        .search = if (search.len == 0) null else try aa.dupe(u8, search),
     };
     const prefix = result.search orelse "";
 
@@ -44,13 +47,13 @@ pub fn init(
     // the names with the prefix are contiguous from its rank, so the window
     // is one seek then a walk that stops at the first name without it
     var users: std.ArrayList(evt.User.Public) = .empty;
-    var iter = try index.iteratorFromIndex(try index.rank(prefix) +| route.start);
+    var iter = try index.iteratorFromIndex(try index.rank(prefix) +| start);
     while (try iter.next()) |cursor| {
         const pair = try cursor.readKeyValuePair();
         const name = try pair.key_cursor.readBytesAlloc(aa, null);
         if (!std.mem.startsWith(u8, name, prefix)) break;
         if (users.items.len == page_size) {
-            result.next_start = route.start + page_size;
+            result.next_start = start + page_size;
             break;
         }
         try users.append(aa, .{ .name = name });

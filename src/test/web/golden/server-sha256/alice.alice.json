@@ -1,0 +1,106 @@
+{
+ "page": {
+  "user": {
+   "forks": [
+    {
+     "access": "public",
+     "id": "<patch:alice-draft>",
+     "repo_name": "open",
+     "title": "alice's draft"
+    }
+   ],
+   "forks_next_start": null,
+   "forks_start": 0,
+   "header": {
+    "name": "alice",
+    "title": {
+     "content": "🬞🬂🬏 🬐   🬂🬰🬂 🬑🬂🬀 🬒🬂🬂\n🬋🬋🬋 🬃    🬋  🬃   🬋🬋🬃\n🬐 🬠 🬮🬭🬭 🬭🬰🬭 🬟🬭🬏 🬮🬭🬭"
+    }
+   },
+   "quit": {},
+   "repos": [
+    {
+     "created_order": 1,
+     "event": {
+      "description": "the open repo",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "open",
+      "patch_role": "read",
+      "protected_branches": "",
+      "read_access": "public",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 7
+    },
+    {
+     "created_order": 2,
+     "event": {
+      "description": "",
+      "discuss_role": "read",
+      "issue_role": "read",
+      "name": "secret",
+      "patch_role": null,
+      "protected_branches": "",
+      "read_access": "private",
+      "user_id": "<user:alice>"
+     },
+     "removed": false,
+     "updated_order": 2
+    }
+   ],
+   "repos_next_start": null,
+   "repos_search": null,
+   "repos_start": 0,
+   "user": {
+    "name": "alice"
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "user_repos": {
+    "name": "alice",
+    "search": "",
+    "start": 0
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 2,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

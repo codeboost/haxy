@@ -1,0 +1,256 @@
+{
+ "page": {
+  "fork": {
+   "commits": {
+    "base_oid": "<commit:doomed-1>",
+    "commit_count": 0,
+    "commits": [],
+    "default_branch": "",
+    "handle": {
+     "location": {
+      "fork": {
+       "id": "<patch:doomed-draft>",
+       "identity": "bob:doomed"
+      }
+     },
+     "read_access": "private",
+     "viewer": {
+      "email": "bob@example.test",
+      "role": "read"
+     }
+    },
+    "message": false,
+    "next_start": null,
+    "no_commits": false,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "patch",
+    "search": null,
+    "search_available": false
+   },
+   "delete": {
+    "target": {
+     "fork": {
+      "id": "<patch:doomed-draft>",
+      "identity": "bob:doomed"
+     }
+    }
+   },
+   "diff": {
+    "path": "",
+    "route": {
+     "fork": {
+      "base_oid": "",
+      "id": "<patch:doomed-draft>",
+      "identity": "bob:doomed",
+      "oid": "",
+      "patch_base_oid": "<commit:doomed-1>"
+     }
+    },
+    "window": {
+     "has_more": false,
+     "hunks": [],
+     "start": 0,
+     "truncated": false
+    }
+   },
+   "files": {
+    "capped": false,
+    "dir": "",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "base",
+       ""
+      ],
+      "loaded": true,
+      "name": "base.txt",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": true,
+    "handle": {
+     "location": {
+      "fork": {
+       "id": "<patch:doomed-draft>",
+       "identity": "bob:doomed"
+      }
+     },
+     "read_access": "private",
+     "viewer": {
+      "email": "bob@example.test",
+      "role": "read"
+     }
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "patch",
+    "selected_file": null
+   },
+   "header": {
+    "forker_name": "bob",
+    "id": "<patch:doomed-draft>",
+    "name": "doomed",
+    "oid": "",
+    "title": {
+     "content": "🬒🬂🬟 🬑🬂🬟 🬑🬂🬟 🬐🬭🬠 🬒🬂🬂 🬒🬂🬟\n🬃 🬇 🬃 🬇 🬃 🬇 🬃 🬇 🬋🬋🬃 🬃 🬇\n🬮🬭🬑 🬟🬭🬑 🬟🬭🬑 🬐 🬠 🬮🬭🬭 🬮🬭🬑"
+    }
+   },
+   "patch": {
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "",
+    "description_page": false,
+    "drafts": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": true,
+       "fork_exists": true,
+       "fork_identity": "bob:doomed",
+       "id": "<patch:doomed-draft>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700009360,
+        "event": {
+         "description": "",
+         "labels": "",
+         "revision": null,
+         "source_branch": null,
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a draft on doomed"
+        },
+        "removed": false,
+        "updated_order": 1
+       },
+       "revision_oid": "<commit:doomed-1>",
+       "target_deleted": true
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "alice:doomed",
+    "labels": [],
+    "merged": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": "<bytes:repo:alice:doomed>",
+    "repo_source": null,
+    "search": null,
+    "selected_id": "<patch:doomed-draft>",
+    "theirs_picks": "",
+    "view": "drafts",
+    "viewer": null
+   },
+   "quit": {},
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": false,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "fork_patch": {
+    "id": "<patch:doomed-draft>",
+    "name": "bob:doomed"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": "bob@example.test",
+  "user_id": "<bytes:user:bob>",
+  "user_name": "bob"
+ }
+}

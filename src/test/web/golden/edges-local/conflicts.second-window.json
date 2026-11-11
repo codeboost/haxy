@@ -1,0 +1,837 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": ""
+    },
+    "read_access": "private",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "snapshot-repo",
+    "owner_name": "",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬀 🬮 🬠 🬞🬂🬏 🬒🬂🬟 🬑🬂🬀 🬐 🬠 🬑🬂🬟 🬂🬰🬂     🬒🬂🬟 🬒🬂🬂 🬒🬂🬟 🬑🬂🬟\n🬇🬋🬃 🬃🬇🬇 🬋🬋🬋 🬋🬋🬃 🬇🬋🬃 🬋🬋🬋 🬃 🬇  🬋  🬇🬋🬃 🬋🬋🬃 🬋🬋🬃 🬋🬋🬃 🬃 🬇\n🬞🬭🬑 🬐 🬡 🬐 🬠 🬐   🬞🬭🬑 🬐 🬠 🬟🬭🬑  🬰      🬐🬁🬞 🬮🬭🬭 🬐   🬟🬭🬑"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:flaky-door>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 4,
+        "created_timestamp": 1700000660,
+        "event": {
+         "description": "",
+         "labels": "",
+         "status": "closed",
+         "title": "the door sticks"
+        },
+        "removed": false,
+        "updated_order": 5
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 23,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-02>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 18,
+        "created_timestamp": 1700001620,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 2"
+        },
+        "removed": false,
+        "updated_order": 40
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-01>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 17,
+        "created_timestamp": 1700001560,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 1"
+        },
+        "removed": false,
+        "updated_order": 39
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflicted>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 11,
+        "created_timestamp": 1700001020,
+        "event": {
+         "description": "one\nOURS\nthree\n",
+         "labels": "a ours",
+         "status": "open",
+         "title": "ours"
+        },
+        "removed": false,
+        "updated_order": 14
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": ""
+    },
+    "description_page": false,
+    "identity": "",
+    "labels": [
+     "a",
+     "bug",
+     "c",
+     "ours"
+    ],
+    "open": {
+     "count": 24,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-22>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 38,
+        "created_timestamp": 1700002820,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 22"
+        },
+        "removed": false,
+        "updated_order": 60
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-21>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 37,
+        "created_timestamp": 1700002760,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 21"
+        },
+        "removed": false,
+        "updated_order": 59
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-20>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 36,
+        "created_timestamp": 1700002700,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 20"
+        },
+        "removed": false,
+        "updated_order": 58
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-19>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 35,
+        "created_timestamp": 1700002640,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 19"
+        },
+        "removed": false,
+        "updated_order": 57
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-18>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 34,
+        "created_timestamp": 1700002580,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 18"
+        },
+        "removed": false,
+        "updated_order": 56
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-17>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 33,
+        "created_timestamp": 1700002520,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 17"
+        },
+        "removed": false,
+        "updated_order": 55
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-16>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 32,
+        "created_timestamp": 1700002460,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 16"
+        },
+        "removed": false,
+        "updated_order": 54
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-15>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 31,
+        "created_timestamp": 1700002400,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 15"
+        },
+        "removed": false,
+        "updated_order": 53
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-14>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 30,
+        "created_timestamp": 1700002340,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 14"
+        },
+        "removed": false,
+        "updated_order": 52
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-13>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 29,
+        "created_timestamp": 1700002280,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 13"
+        },
+        "removed": false,
+        "updated_order": 51
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-12>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 28,
+        "created_timestamp": 1700002220,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 12"
+        },
+        "removed": false,
+        "updated_order": 50
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-11>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 27,
+        "created_timestamp": 1700002160,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 11"
+        },
+        "removed": false,
+        "updated_order": 49
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-10>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 26,
+        "created_timestamp": 1700002100,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 10"
+        },
+        "removed": false,
+        "updated_order": 48
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-09>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 25,
+        "created_timestamp": 1700002040,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 9"
+        },
+        "removed": false,
+        "updated_order": 47
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-08>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 24,
+        "created_timestamp": 1700001980,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 8"
+        },
+        "removed": false,
+        "updated_order": 46
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-07>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 23,
+        "created_timestamp": 1700001920,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 7"
+        },
+        "removed": false,
+        "updated_order": 45
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-06>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 22,
+        "created_timestamp": 1700001860,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 6"
+        },
+        "removed": false,
+        "updated_order": 44
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-05>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 21,
+        "created_timestamp": 1700001800,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 5"
+        },
+        "removed": false,
+        "updated_order": 43
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-04>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 20,
+        "created_timestamp": 1700001740,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 4"
+        },
+        "removed": false,
+        "updated_order": 42
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflict-03>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 19,
+        "created_timestamp": 1700001680,
+        "event": {
+         "description": "one\nOURS\n",
+         "labels": "c ours",
+         "status": "open",
+         "title": "ours 3"
+        },
+        "removed": false,
+        "updated_order": 41
+       }
+      }
+     ],
+     "more": false,
+     "next_id": "<issue:conflict-02>",
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "git"
+    },
+    "search": null,
+    "selected_id": "<issue:conflict-02>",
+    "theirs_picks": "",
+    "view": "conflicts",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 0,
+    "event": {
+     "description": "",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "snapshot-repo",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "private",
+     "user_id": "00000000000000000000000000000000"
+    },
+    "removed": false,
+    "updated_order": 0
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_issues": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "",
+    "search": "",
+    "selected": "<issue:conflict-02>",
+    "start": false,
+    "theirs": "",
+    "view": "conflicts"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": null,
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "local",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

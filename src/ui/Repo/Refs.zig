@@ -18,6 +18,7 @@ pub const page_size = 50;
 identity: []const u8,
 // only one column windows at a time: `from` (a url-encoded ref name, "" = the
 // first window) roots `kind`'s column; the other always shows its first window.
+// a page sets it to its route's own form.
 kind: ui.RoutablePage.RefKind,
 from: []const u8,
 // the prefix both columns are narrowed to (decoded; null = no search)
@@ -36,14 +37,14 @@ pub const Column = struct {
     next: ?[]const u8 = null,
 };
 
-// empty columns, for the wasm / no-repo paths.
+// empty columns, for the wasm / no-repo paths. `from` and `search` are decoded.
 pub fn emptyResult(arena: *std.heap.ArenaAllocator, identity: []const u8, kind: ui.RoutablePage.RefKind, from: []const u8, search: []const u8) !Self {
     const aa = arena.allocator();
     return .{
         .identity = try aa.dupe(u8, identity),
         .kind = kind,
-        .from = try aa.dupe(u8, from),
-        .search = if (search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, search)),
+        .from = try ui.urlEncodeRef(aa, from),
+        .search = if (search.len == 0) null else try aa.dupe(u8, search),
         .branches = .{},
         .tags = .{},
     };
@@ -54,9 +55,31 @@ fn isEmpty(self: *const Self) bool {
     return self.branches.names.len == 0 and self.branches.prev == null and self.tags.names.len == 0 and self.tags.prev == null;
 }
 
-// read one window of each column from an opened repo. the ref names are duped
-// into the page arena so they outlive the repo handle.
+// what a listing does when it can't list a kind of ref: the page shows the
+// column empty, a domain read reports the failure
+pub const Failures = enum { fall_back, propagate };
+
+// the page's columns: one it can't list shows empty
 pub fn init(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    identity: []const u8,
+    kind: ui.RoutablePage.RefKind,
+    from: []const u8,
+    search: []const u8,
+) !Self {
+    return try load(.fall_back, repo_kind, repo_opts, arena, repo, io, gpa, identity, kind, from, search);
+}
+
+// read one window of each column from an opened repo, rooted at the decoded
+// ref name `from` and narrowed to the decoded prefix `search`. the ref names
+// are duped into the page arena so they outlive the repo handle.
+pub fn load(
+    comptime failures: Failures,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -71,17 +94,19 @@ pub fn init(
     const aa = arena.allocator();
     var result = try emptyResult(arena, identity, kind, from, search);
     const prefix = result.search orelse "";
-    // the window root only applies to its own column; a ref name arrives
-    // url-encoded, and the iterator seeks to the first name at or after it.
-    const decoded = std.Uri.percentDecodeInPlace(try aa.dupe(u8, from));
     for (
         [_]ui.RoutablePage.RefKind{ .branch, .tag },
         [_]*Column{ &result.branches, &result.tags },
     ) |col_kind, column| {
-        const col_from: []const u8 = if (kind == col_kind) decoded else "";
-        // an unreadable listing leaves the column empty. the names are sorted,
+        // the window root only applies to its own column, and the iterator
+        // seeks to the first name at or after it
+        const col_from: []const u8 = if (kind == col_kind) from else "";
+        // an unreadable listing leaves the page's column empty. the names are sorted,
         // so those with the prefix are contiguous from the prefix itself.
-        var iter = listRefs(repo_kind, repo_opts, repo, io, gpa, col_kind, iterStart(laterKey(prefix, col_from))) catch continue;
+        var iter = listRefs(repo_kind, repo_opts, repo, io, gpa, col_kind, iterStart(laterKey(prefix, col_from))) catch |err| switch (failures) {
+            .fall_back => continue,
+            .propagate => return err,
+        };
         defer iter.deinit();
         var names = try std.ArrayListUnmanaged([]const u8).initCapacity(aa, page_size);
         while (try iter.next()) |ref| {
@@ -94,7 +119,10 @@ pub fn init(
         }
         column.names = names.items;
         if (col_from.len != 0) {
-            var prev_iter = listRefs(repo_kind, repo_opts, repo, io, gpa, col_kind, iterStart(prefix)) catch continue;
+            var prev_iter = listRefs(repo_kind, repo_opts, repo, io, gpa, col_kind, iterStart(prefix)) catch |err| switch (failures) {
+                .fall_back => continue,
+                .propagate => return err,
+            };
             defer prev_iter.deinit();
             column.prev = try prevRoot(aa, &prev_iter, prefix, col_from);
         }

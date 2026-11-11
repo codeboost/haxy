@@ -1,0 +1,189 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "diff": {
+     "path": "",
+     "route": {
+      "repo": {
+       "base_oid": "<commit:change-22>",
+       "identity": "alice:open",
+       "ref_or_oid": "object",
+       "value": "<commit:shout>"
+      }
+     },
+     "window": {
+      "has_more": true,
+      "hunks": [
+       {
+        "path": "docs/long.txt",
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "197  line 197\n198  line 198\n199  line 199\n200 -line 200\n200 +LINE 200\n201  line 201\n202  line 202\n203  line 203"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "397  line 397\n398  line 398\n399  line 399\n400 -line 400\n400 +LINE 400\n401  line 401\n402  line 402\n403  line 403"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "597  line 597\n598  line 598\n599  line 599\n600 -line 600\n600 +LINE 600\n601  line 601\n602  line 602\n603  line 603"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "797  line 797\n798  line 798\n799  line 799\n800 -line 800\n800 +LINE 800\n801  line 801\n802  line 802\n803  line 803"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": " 997  line 997\n 998  line 998\n 999  line 999\n1000 -line 1000\n1000 +LINE 1000\n1001  line 1001\n1002  line 1002\n1003  line 1003"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "1197  line 1197\n1198  line 1198\n1199  line 1199\n1200 -line 1200\n1200 +LINE 1200\n1201  line 1201\n1202  line 1202\n1203  line 1203"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "1397  line 1397\n1398  line 1398\n1399  line 1399\n1400 -line 1400\n1400 +LINE 1400\n1401  line 1401\n1402  line 1402\n1403  line 1403"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "1597  line 1597\n1598  line 1598\n1599  line 1599\n1600 -line 1600\n1600 +LINE 1600\n1601  line 1601\n1602  line 1602\n1603  line 1603"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "1797  line 1797\n1798  line 1798\n1799  line 1799\n1800 -line 1800\n1800 +LINE 1800\n1801  line 1801\n1802  line 1802\n1803  line 1803"
+       },
+       {
+        "path": null,
+        "prefixes": "   -+   ",
+        "status": "changed",
+        "text": "1997  line 1997\n1998  line 1998\n1999  line 1999\n2000 -line 2000\n2000 +LINE 2000\n2001  line 2001\n2002  line 2002\n2003  line 2003"
+       }
+      ],
+      "start": 0,
+      "truncated": false
+     }
+    }
+   },
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "object",
+    "ref_or_oid_value": "<commit:shout>",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_diff": {
+    "base_oid": "<commit:change-22>",
+    "name": "alice:open",
+    "patchrev_id": "",
+    "path": "",
+    "ref_or_oid": "object",
+    "start": 0,
+    "value": "<commit:shout>"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

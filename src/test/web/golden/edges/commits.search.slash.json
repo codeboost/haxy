@@ -1,0 +1,159 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": 8,
+     "commits": [
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "tok/slash commit",
+       "message_truncated": false,
+       "oid": "<commit:commit-slash>",
+       "parent_oid": "<commit:commit-uni>",
+       "stats": {
+        "bytes_added": 0,
+        "bytes_removed": 1,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 7,
+        "lines_added": 0,
+        "lines_changed": 1,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001140
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": "alice:open"
+      },
+      "read_access": "public",
+      "viewer": {
+       "email": "alice@example.test",
+       "role": "owner"
+      }
+     },
+     "message": false,
+     "next_start": null,
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "master",
+     "search": "tok/slash",
+     "search_available": true
+    }
+   },
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the long patch",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long talk",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:d-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long issue",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:i-long>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_commits": {
+    "base_oid": "",
+    "from": "",
+    "merge": "",
+    "message": false,
+    "name": "alice:open",
+    "ref_or_oid": "branch",
+    "search": "tok%2Fslash",
+    "value": "master"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

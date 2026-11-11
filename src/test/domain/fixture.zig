@@ -578,3 +578,294 @@ pub fn Local(comptime kind: rp.RepoKind, comptime hash_kind: hash.HashKind) type
         }
     };
 }
+
+// a file a test commits: its path in the tree and its bytes
+pub const TreeFile = struct { path: []const u8, contents: []const u8 };
+
+// commit `files` with `message` on `branch` of the server repo `location`,
+// starting the branch from master when it doesn't exist yet
+pub fn commitServerFiles(server: *Server, location: evt.RepoLocation, branch: []const u8, files: []const TreeFile, message: []const u8) !void {
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try server.repoPath(location) });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| {
+            // server repos are bare, so give this one a worktree for the commit
+            try repo.addConfig(io, allocator, .{ .name = "core.bare", .value = "false" });
+            defer repo.addConfig(io, allocator, .{ .name = "core.bare", .value = "true" }) catch {};
+            try commitFilesOn(repo, branch, files, message);
+        },
+    }
+}
+
+// commit `files` with `message` on `branch` of a `Local` repo of `kind`,
+// starting the branch from master when it doesn't exist yet
+pub fn commitLocalFiles(comptime kind: rp.RepoKind, local: anytype, branch: []const u8, files: []const TreeFile, message: []const u8) !void {
+    var repo = try rp.Repo(kind, @TypeOf(local.*).repo_opts).open(io, allocator, .{ .path = local.path });
+    defer repo.deinit(io, allocator);
+    try commitFilesOn(&repo, branch, files, message);
+}
+
+// `commitOnBranch` for several files, which may sit in directories
+fn commitFilesOn(repo: anytype, branch: []const u8, files: []const TreeFile, message: []const u8) !void {
+    const on_master = std.mem.eql(u8, branch, "master");
+    if (!on_master) {
+        if (try repo.readRef(io, .{ .kind = .head, .name = branch }) == null) try repo.addBranch(io, .{ .name = branch });
+        var selected = try repo.switchDir(io, allocator, .{ .target = .{ .ref = .{ .kind = .head, .name = branch } } });
+        selected.deinit();
+    }
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(allocator);
+    for (files) |file| {
+        if (std.Io.Dir.path.dirname(file.path)) |dir| try repo.core.work_dir.createDirPath(io, dir);
+        const handle = try repo.core.work_dir.createFile(io, file.path, .{ .truncate = true });
+        defer handle.close(io);
+        try handle.writeStreamingAll(io, file.contents);
+        try paths.append(allocator, file.path);
+    }
+    try repo.add(io, allocator, paths.items);
+    _ = try repo.commit(io, allocator, .{ .message = message, .author = "tester <tester@example.test>" });
+    if (!on_master) {
+        var restored = try repo.switchDir(io, allocator, .{ .target = .{ .ref = .{ .kind = .head, .name = "master" } } });
+        restored.deinit();
+    }
+}
+
+pub const RefKind = enum { branch, tag };
+
+// add a branch or tag named each of `names` at HEAD of the server repo `location`
+pub fn addServerRefs(server: *Server, location: evt.RepoLocation, kind: RefKind, names: []const []const u8) !void {
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try server.repoPath(location) });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| try addRefsAtHead(repo, kind, names),
+    }
+}
+
+// add a branch or tag named each of `names` at HEAD of a `Local` repo of `kind`
+pub fn addLocalRefs(comptime kind: rp.RepoKind, local: anytype, ref_kind: RefKind, names: []const []const u8) !void {
+    var repo = try rp.Repo(kind, @TypeOf(local.*).repo_opts).open(io, allocator, .{ .path = local.path });
+    defer repo.deinit(io, allocator);
+    try addRefsAtHead(&repo, ref_kind, names);
+}
+
+fn addRefsAtHead(repo: anytype, kind: RefKind, names: []const []const u8) !void {
+    for (names) |name| switch (kind) {
+        .branch => try repo.addBranch(io, .{ .name = name }),
+        .tag => _ = try repo.addTag(io, allocator, .{ .name = name, .tagger = "tester <tester@example.test>", .message = name }),
+    };
+}
+
+// index the server repo's branch tips for the file finder, as a push does
+// (the fixtures commit directly)
+pub fn indexServerFiles(server: *Server, location: evt.RepoLocation) !void {
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try server.repoPath(location) });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| {
+            const opts = repo.self_repo_opts;
+            const Repo = rp.Repo(.xit, opts);
+            const Reindex = struct {
+                core: *Repo.Core,
+
+                pub fn run(ctx: @This(), cursor: *Repo.DB.Cursor(.read_write)) !void {
+                    var moment = try Repo.DB.HashMap(.read_write).init(cursor.*);
+                    const state = Repo.State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    _ = try hx.find.refreshInTransaction(opts, state, &moment, io, allocator, null);
+                }
+            };
+            try repo.core.db_file.lock(io, .exclusive);
+            defer repo.core.db_file.unlock(io);
+            const history = try Repo.DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+            try history.appendContext(.{ .slot = try history.getSlot(-1) }, Reindex{ .core = &repo.core });
+        },
+    }
+}
+
+// record `branch`'s tip against master as the patch revision `id` of the
+// server repo `location`, as publishing a patch leaves one in the repo
+pub fn addServerRevision(server: *Server, location: evt.RepoLocation, author: evt.CommitAuthor, id: Id, branch: []const u8) !void {
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try server.repoPath(location) });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| {
+            const opts = repo.self_repo_opts;
+            const base_oid = (try repo.readRef(io, .{ .kind = .head, .name = "master" })) orelse return error.TestExpectedBranch;
+            const source_oid = (try repo.readRef(io, .{ .kind = .head, .name = branch })) orelse return error.TestExpectedBranch;
+            const base_tree = try commitTree(opts, repo, &base_oid);
+            const head_tree = try commitTree(opts, repo, &source_oid);
+            const host: evt.Host = .{ .server = .{ .users_dir = server.users_dir, .admin_repo_path = server.admin.core.work_path } };
+            try evt.consume(host, .repo, .xit, opts, io, allocator, repo, evt.events_ref, &.{.{
+                .id = std.fmt.bytesToHex(id, .lower),
+                .author = author,
+                .tree_entries = &.{ .{ .tree = .{ .name = "base", .oid = &base_tree } }, .{ .tree = .{ .name = "head", .oid = &head_tree } } },
+                .event = .{ .patchrev = .{ .base_oid = &base_oid, .source_oid = &source_oid, .message = branch } },
+            }});
+        },
+    }
+}
+
+// index the server repo's branch and tag tips for commit search, as a push
+// does (the fixtures commit directly)
+pub fn indexServerCommits(server: *Server, location: evt.RepoLocation) !void {
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try server.repoPath(location) });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| {
+            const opts = repo.self_repo_opts;
+            const Repo = rp.Repo(.xit, opts);
+            const Reindex = struct {
+                core: *Repo.Core,
+
+                pub fn run(ctx: @This(), cursor: *Repo.DB.Cursor(.read_write)) !void {
+                    var moment = try Repo.DB.HashMap(.read_write).init(cursor.*);
+                    const state = Repo.State(.read_write){ .core = ctx.core, .extra = .{ .moment = &moment } };
+                    _ = try hx.search_commit.refreshInTransaction(opts, state, &moment, io, allocator, &.{}, null);
+                }
+            };
+            try repo.core.db_file.lock(io, .exclusive);
+            defer repo.core.db_file.unlock(io);
+            const history = try Repo.DB.ArrayList(.read_write).init(repo.core.db.rootCursor());
+            try history.appendContext(.{ .slot = try history.getSlot(-1) }, Reindex{ .core = &repo.core });
+        },
+    }
+}
+
+// merge `branch` into master of the server repo `location` with a merge
+// commit, which needs the two to have parted
+pub fn mergeServerBranch(server: *Server, location: evt.RepoLocation, branch: []const u8) !void {
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = try server.repoPath(location) });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| {
+            // server repos are bare, so give this one a worktree for the merge
+            try repo.addConfig(io, allocator, .{ .name = "core.bare", .value = "false" });
+            defer repo.addConfig(io, allocator, .{ .name = "core.bare", .value = "true" }) catch {};
+            // the merge commit is authored from the config
+            try repo.addConfig(io, allocator, .{ .name = "user.name", .value = tester.name });
+            try repo.addConfig(io, allocator, .{ .name = "user.email", .value = tester.email });
+            var merge = try repo.merge(io, allocator, .{ .kind = .full, .action = .{ .new = .{ .source = &.{.{ .ref = .{ .kind = .head, .name = branch } }} } } }, null);
+            defer merge.deinit();
+            if (merge.result != .success) return error.TestExpectedMerge;
+        },
+    }
+}
+
+// the oid `branch` of a `Local` repo of `kind` points at, in `aa`
+pub fn localBranchOid(comptime kind: rp.RepoKind, local: anytype, aa: std.mem.Allocator, branch: []const u8) ![]const u8 {
+    var repo = try rp.Repo(kind, @TypeOf(local.*).repo_opts).open(io, allocator, .{ .path = local.path });
+    defer repo.deinit(io, allocator);
+    const oid = (try repo.readRef(io, .{ .kind = .head, .name = branch })) orelse return error.TestExpectedBranch;
+    return try aa.dupe(u8, &oid);
+}
+
+// commit `files` with `message` on the patch branch of the fork `id` that
+// `user` made, which the fork's HEAD names, as a push to the fork does
+pub fn commitForkFiles(server: *Server, user: Id, id: Id, files: []const TreeFile, message: []const u8) !void {
+    const path = try hx.fork.forkPath(server.arena.allocator(), server.users_dir, &user, &id);
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = path, .require_repo_root = true });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| {
+            // the fork copied its bare target's config
+            try repo.addConfig(io, allocator, .{ .name = "core.bare", .value = "false" });
+            defer repo.addConfig(io, allocator, .{ .name = "core.bare", .value = "true" }) catch {};
+            var paths: std.ArrayList([]const u8) = .empty;
+            defer paths.deinit(allocator);
+            for (files) |file| {
+                if (std.Io.Dir.path.dirname(file.path)) |dir| try repo.core.work_dir.createDirPath(io, dir);
+                const handle = try repo.core.work_dir.createFile(io, file.path, .{ .truncate = true });
+                defer handle.close(io);
+                try handle.writeStreamingAll(io, file.contents);
+                try paths.append(allocator, file.path);
+            }
+            try repo.add(io, allocator, paths.items);
+            _ = try repo.commit(io, allocator, .{ .message = message, .author = "tester <tester@example.test>" });
+        },
+    }
+}
+
+// the oid the patch branch of the fork `id` that `user` made points at, in `aa`
+pub fn forkHead(server: *Server, aa: std.mem.Allocator, user: Id, id: Id) ![]const u8 {
+    const path = try hx.fork.forkPath(server.arena.allocator(), server.users_dir, &user, &id);
+    var any_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, .{ .path = path, .require_repo_root = true });
+    defer any_repo.deinit(io, allocator);
+    switch (any_repo) {
+        inline else => |*repo| {
+            const oid = (try repo.readRef(io, hx.fork.ref)) orelse return error.TestExpectedBranch;
+            return try aa.dupe(u8, &oid);
+        },
+    }
+}
+
+// delete the loose object a local git repo's master tree names at `path`, so
+// the tree still names what can no longer be read
+pub fn removeGitObject(local: anytype, path: []const u8) !void {
+    const opts = @TypeOf(local.*).repo_opts;
+    var repo = try rp.Repo(.git, opts).open(io, allocator, .{ .path = local.path });
+    defer repo.deinit(io, allocator);
+    const master = (try repo.readRef(io, .{ .kind = .head, .name = "master" })) orelse return error.TestExpectedBranch;
+    var moment = try repo.core.latestMoment();
+    const state = rp.Repo(.git, opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
+    var tree_dir = try xit.tree.TreeDir(.git, opts).init(state, io, allocator, &master, std.Io.Dir.path.dirname(path) orelse "");
+    defer tree_dir.deinit();
+    const entry = tree_dir.entries.get(std.Io.Dir.path.basename(path)) orelse return error.TestExpectedEntry;
+    const oid = std.fmt.bytesToHex(entry.oid, .lower);
+    var name_buffer: [128]u8 = undefined;
+    const object_path = try std.fmt.bufPrint(&name_buffer, ".git/objects/{s}/{s}", .{ oid[0..2], oid[2..] });
+    var dir = try std.Io.Dir.cwd().openDir(io, local.path, .{});
+    defer dir.close(io);
+    try dir.deleteFile(io, object_path);
+}
+
+// overwrite the loose object `oid` names in a local git repo with bytes that
+// don't inflate, so reading it fails as storage does, not as a missing object
+pub fn corruptGitObject(local: anytype, oid: []const u8) !void {
+    var name_buffer: [128]u8 = undefined;
+    const object_path = try std.fmt.bufPrint(&name_buffer, ".git/objects/{s}/{s}", .{ oid[0..2], oid[2..] });
+    var dir = try std.Io.Dir.cwd().openDir(io, local.path, .{});
+    defer dir.close(io);
+    // loose objects are read-only, so replace the file
+    try dir.deleteFile(io, object_path);
+    const file = try dir.createFile(io, object_path, .{});
+    defer file.close(io);
+    try file.writeStreamingAll(io, "not a zlib stream");
+}
+
+// the oid of the tree the commit `oid` of a `Local` repo of `kind` names, in `aa`
+pub fn localCommitTree(comptime kind: rp.RepoKind, local: anytype, aa: std.mem.Allocator, oid: []const u8) ![]const u8 {
+    const opts = @TypeOf(local.*).repo_opts;
+    var repo = try rp.Repo(kind, opts).open(io, allocator, .{ .path = local.path });
+    defer repo.deinit(io, allocator);
+    var moment = try repo.core.latestMoment();
+    const state = rp.Repo(kind, opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
+    var object = try xit.object.Object(kind, opts).initCommit(state, io, allocator, oid[0..comptime hash.hexLen(opts.hash)]);
+    defer object.deinit();
+    return try aa.dupe(u8, &object.content.commit.tree);
+}
+
+// remove `paths` from master of a `Local` repo of `kind` in one commit with `message`
+pub fn removeLocalFiles(comptime kind: rp.RepoKind, local: anytype, paths: []const []const u8, message: []const u8) !void {
+    var repo = try rp.Repo(kind, @TypeOf(local.*).repo_opts).open(io, allocator, .{ .path = local.path });
+    defer repo.deinit(io, allocator);
+    try repo.remove(io, allocator, paths, .{});
+    _ = try repo.commit(io, allocator, .{ .message = message, .author = "tester <tester@example.test>" });
+}
+
+// delete a local git repo's refs directory, so listing its branches fails
+pub fn removeGitRefs(local: anytype) !void {
+    var dir = try std.Io.Dir.cwd().openDir(io, local.path, .{});
+    defer dir.close(io);
+    try dir.deleteTree(io, ".git/refs");
+}
+
+// overwrite a local git repo's HEAD with a ref line too long to hold, so
+// reading it fails while the repo still opens
+pub fn corruptGitHead(local: anytype) !void {
+    var dir = try std.Io.Dir.cwd().openDir(io, local.path, .{});
+    defer dir.close(io);
+    const file = try dir.createFile(io, ".git/HEAD", .{ .truncate = true });
+    defer file.close(io);
+    var line: [xit.ref.MAX_REF_CONTENT_SIZE + 64]u8 = @splat('a');
+    @memcpy(line[0.."ref: refs/heads/".len], "ref: refs/heads/");
+    try file.writeStreamingAll(io, &line);
+}

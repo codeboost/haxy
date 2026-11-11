@@ -1,0 +1,620 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": null
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": {
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "master",
+    "description_page": false,
+    "drafts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "alice:open",
+    "labels": [
+     "lab%41",
+     "lab+plus",
+     "labA",
+     "labé",
+     "long"
+    ],
+    "merged": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:commit-slash>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-a>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 18,
+        "created_timestamp": 1700002640,
+        "event": {
+         "description": "",
+         "labels": "labA",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-a>",
+          "source_oid": "<commit:branch tokA>",
+          "squash_oid": "<commit:p-a.squash_oid>"
+         },
+         "source_branch": "tokA",
+         "status": {
+          "merged": {
+           "patchrev_id": "<patchrev:merge p-a>",
+           "revision": "source"
+          }
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "tokA patch"
+        },
+        "removed": false,
+        "updated_order": 24
+       },
+       "revision_oid": "<commit:branch tokA>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 4,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:commit-slash>",
+       "can_modify": false,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 53,
+           "created_timestamp": 1700004560,
+           "event": {
+            "body": "comment 1 on p-long",
+            "parent_id": "<patch:p-long>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 53
+          },
+          "id": "<comment:p-long.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 54,
+           "created_timestamp": 1700004620,
+           "event": {
+            "body": "comment 2 on p-long",
+            "parent_id": "<patch:p-long>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 54
+          },
+          "id": "<comment:p-long.c02>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 55,
+           "created_timestamp": 1700004680,
+           "event": {
+            "body": "comment 3 on p-long",
+            "parent_id": "<comment:p-long.c02>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 55
+          },
+          "id": "<comment:p-long.c03>",
+          "parent_author": {
+           "user_name": "alice"
+          }
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 56,
+           "created_timestamp": 1700004740,
+           "event": {
+            "body": "comment 4 on p-long",
+            "parent_id": "<patch:p-long>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 56
+          },
+          "id": "<comment:p-long.c04>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 57,
+           "created_timestamp": 1700004800,
+           "event": {
+            "body": "comment 5 on p-long",
+            "parent_id": "<patch:p-long>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 57
+          },
+          "id": "<comment:p-long.c05>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 58,
+           "created_timestamp": 1700004860,
+           "event": {
+            "body": "comment 6 on p-long",
+            "parent_id": "<comment:p-long.c05>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 58
+          },
+          "id": "<comment:p-long.c06>",
+          "parent_author": {
+           "user_name": "bob"
+          }
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 59,
+           "created_timestamp": 1700004920,
+           "event": {
+            "body": "comment 7 on p-long",
+            "parent_id": "<patch:p-long>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 59
+          },
+          "id": "<comment:p-long.c07>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 60,
+           "created_timestamp": 1700004980,
+           "event": {
+            "body": "comment 8 on p-long",
+            "parent_id": "<patch:p-long>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 60
+          },
+          "id": "<comment:p-long.c08>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 61,
+           "created_timestamp": 1700005040,
+           "event": {
+            "body": "comment 9 on p-long",
+            "parent_id": "<comment:p-long.c08>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 61
+          },
+          "id": "<comment:p-long.c09>",
+          "parent_author": {
+           "user_name": "alice"
+          }
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 62,
+           "created_timestamp": 1700005100,
+           "event": {
+            "body": "comment 10 on p-long",
+            "parent_id": "<patch:p-long>",
+            "thread_id": "<patch:p-long>"
+           },
+           "removed": false,
+           "updated_order": 62
+          },
+          "id": "<comment:p-long.c10>",
+          "parent_author": null
+         }
+        ],
+        "count": 12,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-long>",
+       "mergeability": {
+        "source": "conflict",
+        "squash": "conflict"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 28,
+        "created_timestamp": 1700003060,
+        "event": {
+         "description": "",
+         "labels": "long",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-long>",
+          "source_oid": "<commit:branch tok/slash>",
+          "squash_oid": "<commit:p-long.squash_oid>"
+         },
+         "source_branch": "tok/slash",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "the long patch"
+        },
+        "removed": false,
+        "updated_order": 28
+       },
+       "revision_oid": "<commit:branch tok/slash>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:commit-slash>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-uni>",
+       "mergeability": {
+        "source": "conflict",
+        "squash": "conflict"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 22,
+        "created_timestamp": 1700002760,
+        "event": {
+         "description": "",
+         "labels": "labé",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-uni>",
+          "source_oid": "<commit:branch tokétoile>",
+          "squash_oid": "<commit:p-uni.squash_oid>"
+         },
+         "source_branch": "tokétoile",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "tokétoile patch"
+        },
+        "removed": false,
+        "updated_order": 22
+       },
+       "revision_oid": "<commit:branch tokétoile>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:commit-slash>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-plus>",
+       "mergeability": {
+        "source": "conflict",
+        "squash": "conflict"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 20,
+        "created_timestamp": 1700002700,
+        "event": {
+         "description": "",
+         "labels": "lab+plus",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-plus>",
+          "source_oid": "<commit:branch tok+plus>",
+          "squash_oid": "<commit:p-plus.squash_oid>"
+         },
+         "source_branch": "tok+plus",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "tok+plus patch"
+        },
+        "removed": false,
+        "updated_order": 20
+       },
+       "revision_oid": "<commit:branch tok+plus>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:commit-slash>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-pct>",
+       "mergeability": {
+        "source": "conflict",
+        "squash": "conflict"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 16,
+        "created_timestamp": 1700002580,
+        "event": {
+         "description": "",
+         "labels": "lab%41",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-pct>",
+          "source_oid": "<commit:branch tok%41>",
+          "squash_oid": "<commit:p-pct.squash_oid>"
+         },
+         "source_branch": "tok%41",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "tok%41 patch"
+        },
+        "removed": false,
+        "updated_order": 16
+       },
+       "revision_oid": "<commit:branch tok%41>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": "<bytes:repo:alice:open>",
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "drafts",
+    "viewer": null
+   },
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_patches": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "",
+    "start": false,
+    "theirs": "",
+    "view": "drafts"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

@@ -96,7 +96,8 @@ pub const Page = union(PageKind) {
             .user => blk: {
                 const haxy_moment = session.haxy_moment orelse return error.NoMoment;
                 break :blk switch (route) {
-                    .user_repos => |u| .{ .user = try User.init(arena, session, haxy_moment, u.name, u.start, u.search.slice(), 0, .{}) },
+                    // the route holds the search url-encoded; the page reads it decoded
+                    .user_repos => |u| .{ .user = try User.init(arena, session, haxy_moment, u.name, u.start, std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, u.search.slice())), 0, .{}) },
                     .user_forks => |u| .{ .user = try User.init(arena, session, haxy_moment, u.name, 0, "", u.start, .{}) },
                     .user_repo_new, .user_user_new => |name| .{ .user = try User.init(arena, session, haxy_moment, name, 0, "", 0, .{}) },
                     .user_user => |u| .{ .user = try User.init(arena, session, haxy_moment, u.name, 0, "", 0, u.tab) },
@@ -2139,15 +2140,26 @@ pub fn ResolvedRefOrOid(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.
         // the route layer — which splits on '/' — stores them encoded). duped
         // into `aa`.
         value: []const u8,
+        // the same name or oid decoded, duped into `aa`
+        name: []const u8,
         // the commit oid it points at
         oid: [hex_len]u8,
 
         const Self = @This();
 
-        // resolve a requested ref/oid (null = the repo's default branch) to a
-        // concrete ref/oid plus the commit oid it points at. `requested_value` is
-        // the url-encoded form (as it appears in the route). null when it doesn't
-        // resolve (an unknown branch/tag, or a malformed/unknown oid).
+        // whether a git repo's loose ref path for `name` is a directory of
+        // refs, which names no ref: reading it fails where a missing file
+        // would just be absent
+        fn isRefDir(repo: *rp.Repo(repo_kind, repo_opts), io: std.Io, kind: rf.RefKind, name: []const u8) bool {
+            if (comptime repo_kind != .git) return false;
+            var path_buffer: [rf.MAX_REF_CONTENT_SIZE]u8 = undefined;
+            const path = (rf.Ref{ .kind = kind, .name = name }).toPath(&path_buffer) catch return false;
+            const stat = repo.core.repo_dir.statFile(io, path, .{}) catch return false;
+            return stat.kind == .directory;
+        }
+
+        // `resolve` for a route's `requested_value`, which holds a named ref
+        // url-encoded
         pub fn init(
             repo: *rp.Repo(repo_kind, repo_opts),
             io: std.Io,
@@ -2155,12 +2167,26 @@ pub fn ResolvedRefOrOid(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.
             requested_ref_or_oid: ?RoutablePage.RefOrOid,
             requested_value: []const u8,
         ) !?Self {
-            var ref_or_oid: RoutablePage.RefOrOid = requested_ref_or_oid orelse .branch;
-            // the decoded ref name / oid to look up. a named ref arrives url-encoded.
-            var value: []const u8 = if (requested_ref_or_oid == null)
+            const value = if (requested_ref_or_oid == null)
                 requested_value
             else
                 std.Uri.percentDecodeInPlace(try aa.dupe(u8, requested_value));
+            return try resolve(repo, io, aa, requested_ref_or_oid, value);
+        }
+
+        // resolve a requested ref/oid (null = the repo's default branch) to a
+        // concrete ref/oid plus the commit oid it points at. `requested_value` is
+        // the decoded ref name or oid. null when it doesn't resolve (an unknown
+        // branch/tag, or a malformed/unknown oid).
+        pub fn resolve(
+            repo: *rp.Repo(repo_kind, repo_opts),
+            io: std.Io,
+            aa: std.mem.Allocator,
+            requested_ref_or_oid: ?RoutablePage.RefOrOid,
+            requested_value: []const u8,
+        ) !?Self {
+            var ref_or_oid: RoutablePage.RefOrOid = requested_ref_or_oid orelse .branch;
+            var value: []const u8 = requested_value;
             // no ref named: fall back to HEAD's branch (or its oid when detached).
             var head_buf: [rf.MAX_REF_CONTENT_SIZE]u8 = undefined;
             if (requested_ref_or_oid == null) {
@@ -2184,12 +2210,24 @@ pub fn ResolvedRefOrOid(comptime repo_kind: rp.RepoKind, comptime repo_opts: rp.
                 },
                 .branch, .tag => {
                     const ref_kind: rf.RefKind = if (ref_or_oid == .branch) .head else .tag;
-                    oid = (repo.readRef(io, .{ .kind = ref_kind, .name = value }) catch null) orelse return null;
+                    // a storage failure is not a missing ref
+                    oid = (repo.readRef(io, .{ .kind = ref_kind, .name = value }) catch |err|
+                        if (namesNoRef(err) or (@as(anyerror, err) == error.ReadFailed and isRefDir(repo, io, ref_kind, value))) null else return err) orelse return null;
                 },
             }
             // store url-encoded so the route layer can hold the value verbatim.
-            return .{ .ref_or_oid = ref_or_oid, .value = try urlEncodeRef(aa, value), .oid = oid };
+            return .{ .ref_or_oid = ref_or_oid, .value = try urlEncodeRef(aa, value), .name = try aa.dupe(u8, value), .oid = oid };
         }
+    };
+}
+
+// whether reading a ref by a requested name failed because the name names no
+// ref: one that can't be a ref name or path, one below a ref, or a directory
+// of refs. anything else is the storage failing.
+fn namesNoRef(err: anyerror) bool {
+    return switch (err) {
+        error.InvalidRef, error.NoSpaceLeft, error.NameTooLong, error.BadPathName, error.NotDir, error.IsDir => true,
+        else => false,
     };
 }
 
@@ -2776,6 +2814,28 @@ pub const Session = struct {
                 now,
             ),
         };
+    }
+
+    // the context a page is built with: the session's own moment and the
+    // account it checked there, so the page decides as the session does, with
+    // no second moment read. the account's record is read from that same
+    // moment; a session naming one the moment holds removed (an id set without
+    // a check) is logged out here, so the page and `data` agree.
+    pub fn pageCtx(self: *Self, arena: *std.heap.ArenaAllocator) !domain.Ctx {
+        const io = self.io orelse return error.UnavailableHere;
+        const now = try self.nowSeconds();
+        switch (self.data.host_kind) {
+            .local => return domain.Ctx.initLocal(io, arena.child_allocator, arena, self.local orelse return error.UnavailableHere, now),
+            .server => {
+                const admin_repo = self.admin_repo orelse return error.UnavailableHere;
+                const users_dir = self.users_dir orelse return error.UnavailableHere;
+                const moment = self.haxy_moment orelse return error.UnavailableHere;
+                const user_id = self.userId();
+                const user = if (user_id) |id| try activeUser(moment, arena, id) else null;
+                if (user_id != null and user == null) self.logOut();
+                return domain.Ctx.initServerVouched(io, arena.child_allocator, arena, admin_repo, users_dir, moment, user_id, user, now);
+            },
+        }
     }
 
     // where this session's event writes go. a server session always has a users dir and an admin repo

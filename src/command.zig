@@ -40,7 +40,7 @@ fn commandHelp(command_kind: CommandKind) Help {
         .mcp => .{
             .name = "mcp",
             .descrip =
-            \\an mcp server on stdin and stdout, serving issues, patches, discussions, repos, members, branches, ssh keys and notifications as tools.
+            \\an mcp server on stdin and stdout, serving repos with their files, refs, commits, diffs and event history, issues, patches, discussions, users and their forks, members, branches, ssh keys and notifications as tools.
             ,
             .example =
             \\haxy mcp

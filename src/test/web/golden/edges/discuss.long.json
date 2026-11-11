@@ -1,0 +1,545 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "lab",
+     "lab%41",
+     "lab+plus",
+     "lab/slash",
+     "labA",
+     "labé",
+     "long"
+    ],
+    "recent": {
+     "count": 7,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 41,
+           "created_timestamp": 1700003840,
+           "event": {
+            "body": "comment 1 on d-long",
+            "parent_id": "<discuss:d-long>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 41
+          },
+          "id": "<comment:d-long.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 42,
+           "created_timestamp": 1700003900,
+           "event": {
+            "body": "comment 2 on d-long",
+            "parent_id": "<discuss:d-long>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 42
+          },
+          "id": "<comment:d-long.c02>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 43,
+           "created_timestamp": 1700003960,
+           "event": {
+            "body": "comment 3 on d-long",
+            "parent_id": "<comment:d-long.c02>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 43
+          },
+          "id": "<comment:d-long.c03>",
+          "parent_author": {
+           "user_name": "alice"
+          }
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 44,
+           "created_timestamp": 1700004020,
+           "event": {
+            "body": "comment 4 on d-long",
+            "parent_id": "<discuss:d-long>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 44
+          },
+          "id": "<comment:d-long.c04>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 45,
+           "created_timestamp": 1700004080,
+           "event": {
+            "body": "comment 5 on d-long",
+            "parent_id": "<discuss:d-long>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 45
+          },
+          "id": "<comment:d-long.c05>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 46,
+           "created_timestamp": 1700004140,
+           "event": {
+            "body": "comment 6 on d-long",
+            "parent_id": "<comment:d-long.c05>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 46
+          },
+          "id": "<comment:d-long.c06>",
+          "parent_author": {
+           "user_name": "bob"
+          }
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 47,
+           "created_timestamp": 1700004200,
+           "event": {
+            "body": "comment 7 on d-long",
+            "parent_id": "<discuss:d-long>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 47
+          },
+          "id": "<comment:d-long.c07>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 48,
+           "created_timestamp": 1700004260,
+           "event": {
+            "body": "comment 8 on d-long",
+            "parent_id": "<discuss:d-long>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 48
+          },
+          "id": "<comment:d-long.c08>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 49,
+           "created_timestamp": 1700004320,
+           "event": {
+            "body": "comment 9 on d-long",
+            "parent_id": "<comment:d-long.c08>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 49
+          },
+          "id": "<comment:d-long.c09>",
+          "parent_author": {
+           "user_name": "alice"
+          }
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 50,
+           "created_timestamp": 1700004380,
+           "event": {
+            "body": "comment 10 on d-long",
+            "parent_id": "<discuss:d-long>",
+            "thread_id": "<discuss:d-long>"
+           },
+           "removed": false,
+           "updated_order": 50
+          },
+          "id": "<comment:d-long.c10>",
+          "parent_author": null
+         }
+        ],
+        "count": 12,
+        "start": 0
+       },
+       "id": "<discuss:d-long>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 26,
+        "created_timestamp": 1700003000,
+        "event": {
+         "description": "",
+         "labels": "long",
+         "title": "the long talk"
+        },
+        "removed": false,
+        "updated_order": 26
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:d-slash>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 12,
+        "created_timestamp": 1700002400,
+        "event": {
+         "description": "",
+         "labels": "lab/slash",
+         "title": "tok/slash talk"
+        },
+        "removed": false,
+        "updated_order": 12
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:d-uni>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 10,
+        "created_timestamp": 1700002280,
+        "event": {
+         "description": "",
+         "labels": "labé",
+         "title": "tokétoile talk"
+        },
+        "removed": false,
+        "updated_order": 10
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:d-space>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 8,
+        "created_timestamp": 1700002160,
+        "event": {
+         "description": "",
+         "labels": "lab",
+         "title": "tok plus talk"
+        },
+        "removed": false,
+        "updated_order": 8
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:d-plus>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 6,
+        "created_timestamp": 1700002040,
+        "event": {
+         "description": "",
+         "labels": "lab+plus",
+         "title": "tok+plus talk"
+        },
+        "removed": false,
+        "updated_order": 6
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:d-a>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 4,
+        "created_timestamp": 1700001920,
+        "event": {
+         "description": "",
+         "labels": "labA",
+         "title": "tokA talk"
+        },
+        "removed": false,
+        "updated_order": 4
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:d-pct>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 2,
+        "created_timestamp": 1700001800,
+        "event": {
+         "description": "",
+         "labels": "lab%41",
+         "title": "tok%41 talk"
+        },
+        "removed": false,
+        "updated_order": 2
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "<discuss:d-long>",
+    "view": "recent",
+    "viewer": {
+     "email": "bob@example.test",
+     "role": "write"
+    }
+   },
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "bob@example.test",
+     "role": "write"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": null,
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the long patch",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long talk",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:d-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long issue",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:i-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "tok%41 issue",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:i-pct>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_discussions": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "<discuss:d-long>",
+    "start": false,
+    "view": "recent"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 2,
+  "user_email": "bob@example.test",
+  "user_id": "<bytes:user:bob>",
+  "user_name": "bob"
+ }
+}

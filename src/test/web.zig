@@ -22,4 +22,5 @@ comptime {
     _ = @import("web/attach.zig");
     _ = @import("web/connection.zig");
     _ = @import("web/patch_edit.zig");
+    _ = @import("web/pages.zig");
 }

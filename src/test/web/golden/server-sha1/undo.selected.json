@@ -1,0 +1,162 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": {
+    "count": 226,
+    "failure": null,
+    "handle": {
+     "location": {
+      "repo": "alice:open"
+     },
+     "read_access": "public",
+     "viewer": {
+      "email": "alice@example.test",
+      "role": "owner"
+     }
+    },
+    "identity": "alice:open",
+    "items": [
+     {
+      "action": "commit",
+      "buttons": [],
+      "description": "commit -m \"initial import\"",
+      "form": "form:/alice:open/undo/3/undo",
+      "index": 3,
+      "link": "ai:/alice:open/undo/3",
+      "timestamp": 1700000780,
+      "undone": false
+     },
+     {
+      "action": "add",
+      "buttons": [],
+      "description": "add README.md notes.txt logo.png src/main.zig src/lib/util.zig docs/guide.md docs/long.txt",
+      "form": "form:/alice:open/undo/2/undo",
+      "index": 2,
+      "link": "ai:/alice:open/undo/2",
+      "timestamp": 1700000780,
+      "undone": false
+     },
+     {
+      "action": "config",
+      "buttons": [],
+      "description": "config add core.bare",
+      "form": "form:/alice:open/undo/1/undo",
+      "index": 1,
+      "link": "ai:/alice:open/undo/1",
+      "timestamp": 1700000720,
+      "undone": false
+     },
+     {
+      "action": "reset_add",
+      "buttons": [],
+      "description": "reset-add master",
+      "form": "form:/alice:open/undo/0/undo",
+      "index": 0,
+      "link": "ai:/alice:open/undo/0",
+      "timestamp": 1700000060,
+      "undone": false
+     }
+    ],
+    "next": null
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": false,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_undo": {
+    "index": 3,
+    "name": "alice:open"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

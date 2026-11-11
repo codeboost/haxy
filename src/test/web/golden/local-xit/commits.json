@@ -1,0 +1,160 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": null,
+     "commits": [
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "say it again",
+       "message_truncated": false,
+       "oid": "<commit:again>",
+       "parent_oid": "<commit:files>",
+       "stats": null,
+       "timestamp": 1700000240
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "add files",
+       "message_truncated": false,
+       "oid": "<commit:files>",
+       "parent_oid": "<commit:here-first>",
+       "stats": null,
+       "timestamp": 1700000180
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "first",
+       "message_truncated": false,
+       "oid": "<commit:here-first>",
+       "parent_oid": "0000000000000000000000000000000000000000",
+       "stats": null,
+       "timestamp": 1700000120
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": ""
+      },
+      "read_access": "private",
+      "viewer": {
+       "email": "",
+       "role": "owner"
+      }
+     },
+     "message": false,
+     "next_start": null,
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "master",
+     "search": null,
+     "search_available": false
+    }
+   },
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": ""
+    },
+    "read_access": "private",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "snapshot-repo",
+    "owner_name": "",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬀 🬮 🬠 🬞🬂🬏 🬒🬂🬟 🬑🬂🬀 🬐 🬠 🬑🬂🬟 🬂🬰🬂     🬒🬂🬟 🬒🬂🬂 🬒🬂🬟 🬑🬂🬟\n🬇🬋🬃 🬃🬇🬇 🬋🬋🬋 🬋🬋🬃 🬇🬋🬃 🬋🬋🬋 🬃 🬇  🬋  🬇🬋🬃 🬋🬋🬃 🬋🬋🬃 🬋🬋🬃 🬃 🬇\n🬞🬭🬑 🬐 🬡 🬐 🬠 🬐   🬞🬭🬑 🬐 🬠 🬟🬭🬑  🬰      🬐🬁🬞 🬮🬭🬭 🬐   🬟🬭🬑"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 0,
+    "event": {
+     "description": "",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "snapshot-repo",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "private",
+     "user_id": "00000000000000000000000000000000"
+    },
+    "removed": false,
+    "updated_order": 0
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_commits": {
+    "base_oid": "",
+    "from": "",
+    "merge": "",
+    "message": false,
+    "name": "",
+    "ref_or_oid": null,
+    "search": "",
+    "value": ""
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": null,
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "local",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

@@ -1,0 +1,299 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": ""
+    },
+    "read_access": "private",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "snapshot-repo",
+    "owner_name": "",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬀 🬮 🬠 🬞🬂🬏 🬒🬂🬟 🬑🬂🬀 🬐 🬠 🬑🬂🬟 🬂🬰🬂     🬒🬂🬟 🬒🬂🬂 🬒🬂🬟 🬑🬂🬟\n🬇🬋🬃 🬃🬇🬇 🬋🬋🬋 🬋🬋🬃 🬇🬋🬃 🬋🬋🬋 🬃 🬇  🬋  🬇🬋🬃 🬋🬋🬃 🬋🬋🬃 🬋🬋🬃 🬃 🬇\n🬞🬭🬑 🬐 🬡 🬐 🬠 🬐   🬞🬭🬑 🬐 🬠 🬟🬭🬑  🬰      🬐🬁🬞 🬮🬭🬭 🬐   🬟🬭🬑"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:flaky-door>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 4,
+        "created_timestamp": 1700000660,
+        "event": {
+         "description": "",
+         "labels": "",
+         "status": "closed",
+         "title": "the door sticks"
+        },
+        "removed": false,
+        "updated_order": 5
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflicted>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 11,
+        "created_timestamp": 1700001020,
+        "event": {
+         "description": "one\nOURS\nthree\n",
+         "labels": "a ours",
+         "status": "open",
+         "title": "ours"
+        },
+        "removed": false,
+        "updated_order": 14
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "",
+    "labels": [
+     "a",
+     "bug",
+     "ours"
+    ],
+    "open": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflicted>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 11,
+        "created_timestamp": 1700001020,
+        "event": {
+         "description": "one\nOURS\nthree\n",
+         "labels": "a ours",
+         "status": "open",
+         "title": "ours"
+        },
+        "removed": false,
+        "updated_order": 14
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "email": "tester@example.test"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "tester@example.test",
+           "created_order": 2,
+           "created_timestamp": 1700000540,
+           "event": {
+            "body": "a bucket helps",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 2
+          },
+          "id": "<comment:leaky-roof.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "email": "tester@example.test"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "tester@example.test",
+           "created_order": 3,
+           "created_timestamp": 1700000600,
+           "event": {
+            "body": "where?",
+            "parent_id": "<comment:leaky-roof.c01>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 3
+          },
+          "id": "<comment:leaky-roof.c02>",
+          "parent_author": {
+           "email": "tester@example.test"
+          }
+         }
+        ],
+        "count": 2,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:leaky-roof>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700000480,
+        "event": {
+         "description": "it drips",
+         "labels": "bug",
+         "status": "open",
+         "title": "the roof leaks"
+        },
+        "removed": false,
+        "updated_order": 1
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "git"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "conflicts",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 0,
+    "event": {
+     "description": "",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "snapshot-repo",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "private",
+     "user_id": "00000000000000000000000000000000"
+    },
+    "removed": false,
+    "updated_order": 0
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_issues": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "",
+    "search": "",
+    "selected": "",
+    "start": false,
+    "theirs": "",
+    "view": "conflicts"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": null,
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "local",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

@@ -1,0 +1,324 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": null,
+     "commits": [
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "work on tokétoile",
+       "message_truncated": false,
+       "oid": "<commit:branch tokétoile>",
+       "parent_oid": "<commit:commit-slash>",
+       "stats": null,
+       "timestamp": 1700001380
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "tok/slash commit",
+       "message_truncated": false,
+       "oid": "<commit:commit-slash>",
+       "parent_oid": "<commit:commit-uni>",
+       "stats": {
+        "bytes_added": 0,
+        "bytes_removed": 1,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 7,
+        "lines_added": 0,
+        "lines_changed": 1,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001140
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "tokétoile commit",
+       "message_truncated": false,
+       "oid": "<commit:commit-uni>",
+       "parent_oid": "<commit:commit-space>",
+       "stats": {
+        "bytes_added": 2,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 6,
+        "lines_added": 0,
+        "lines_changed": 1,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001080
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "tok plus commit",
+       "message_truncated": false,
+       "oid": "<commit:commit-space>",
+       "parent_oid": "<commit:commit-plus>",
+       "stats": {
+        "bytes_added": 0,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 5,
+        "lines_added": 0,
+        "lines_changed": 1,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001020
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "tok+plus commit",
+       "message_truncated": false,
+       "oid": "<commit:commit-plus>",
+       "parent_oid": "<commit:commit-a>",
+       "stats": {
+        "bytes_added": 4,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 4,
+        "lines_added": 0,
+        "lines_changed": 1,
+        "lines_removed": 0
+       },
+       "timestamp": 1700000960
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "tokA commit",
+       "message_truncated": false,
+       "oid": "<commit:commit-a>",
+       "parent_oid": "<commit:commit-pct>",
+       "stats": {
+        "bytes_added": 0,
+        "bytes_removed": 2,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 3,
+        "lines_added": 0,
+        "lines_changed": 1,
+        "lines_removed": 0
+       },
+       "timestamp": 1700000900
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "tok%41 commit",
+       "message_truncated": false,
+       "oid": "<commit:commit-pct>",
+       "parent_oid": "<commit:edges-initial>",
+       "stats": {
+        "bytes_added": 7,
+        "bytes_removed": 0,
+        "files_added": 1,
+        "files_changed": 0,
+        "files_removed": 0,
+        "first_parent_depth": 2,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700000840
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "edges import",
+       "message_truncated": false,
+       "oid": "<commit:edges-initial>",
+       "parent_oid": "0000000000000000000000000000000000000000",
+       "stats": {
+        "bytes_added": 108,
+        "bytes_removed": 0,
+        "files_added": 9,
+        "files_changed": 0,
+        "files_removed": 0,
+        "first_parent_depth": 1,
+        "lines_added": 9,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700000780
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": "alice:open"
+      },
+      "read_access": "public",
+      "viewer": {
+       "email": "alice@example.test",
+       "role": "owner"
+      }
+     },
+     "message": false,
+     "next_start": null,
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "tok%C3%A9toile",
+     "search": null,
+     "search_available": true
+    }
+   },
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "tok%C3%A9toile",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the long patch",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long talk",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:d-long>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the long issue",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:i-long>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_commits": {
+    "base_oid": "",
+    "from": "",
+    "merge": "",
+    "message": false,
+    "name": "alice:open",
+    "ref_or_oid": "branch",
+    "search": "",
+    "value": "tok%C3%A9toile"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

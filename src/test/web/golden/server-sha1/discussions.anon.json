@@ -1,0 +1,653 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "chat",
+     "plans"
+    ],
+    "recent": {
+     "count": 21,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-20>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 74,
+        "created_timestamp": 1700007380,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 20"
+        },
+        "removed": false,
+        "updated_order": 74
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-19>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 73,
+        "created_timestamp": 1700007320,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 19"
+        },
+        "removed": false,
+        "updated_order": 73
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-18>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 72,
+        "created_timestamp": 1700007260,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 18"
+        },
+        "removed": false,
+        "updated_order": 72
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-17>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 71,
+        "created_timestamp": 1700007200,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 17"
+        },
+        "removed": false,
+        "updated_order": 71
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-16>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 70,
+        "created_timestamp": 1700007140,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 16"
+        },
+        "removed": false,
+        "updated_order": 70
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-15>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 69,
+        "created_timestamp": 1700007080,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 15"
+        },
+        "removed": false,
+        "updated_order": 69
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-14>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 68,
+        "created_timestamp": 1700007020,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 14"
+        },
+        "removed": false,
+        "updated_order": 68
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-13>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 67,
+        "created_timestamp": 1700006960,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 13"
+        },
+        "removed": false,
+        "updated_order": 67
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-12>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 66,
+        "created_timestamp": 1700006900,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 12"
+        },
+        "removed": false,
+        "updated_order": 66
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-11>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 65,
+        "created_timestamp": 1700006840,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 11"
+        },
+        "removed": false,
+        "updated_order": 65
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-10>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 64,
+        "created_timestamp": 1700006780,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 10"
+        },
+        "removed": false,
+        "updated_order": 64
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-09>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 63,
+        "created_timestamp": 1700006720,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 9"
+        },
+        "removed": false,
+        "updated_order": 63
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-08>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 62,
+        "created_timestamp": 1700006660,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 8"
+        },
+        "removed": false,
+        "updated_order": 62
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-07>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 61,
+        "created_timestamp": 1700006600,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 7"
+        },
+        "removed": false,
+        "updated_order": 61
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-06>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 60,
+        "created_timestamp": 1700006540,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 6"
+        },
+        "removed": false,
+        "updated_order": 60
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-05>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 59,
+        "created_timestamp": 1700006480,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 5"
+        },
+        "removed": false,
+        "updated_order": 59
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-04>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 58,
+        "created_timestamp": 1700006420,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 4"
+        },
+        "removed": false,
+        "updated_order": 58
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-03>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 57,
+        "created_timestamp": 1700006360,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 3"
+        },
+        "removed": false,
+        "updated_order": 57
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-02>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 56,
+        "created_timestamp": 1700006300,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 2"
+        },
+        "removed": false,
+        "updated_order": 56
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-01>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 55,
+        "created_timestamp": 1700006240,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 1"
+        },
+        "removed": false,
+        "updated_order": 55
+       }
+      }
+     ],
+     "more": false,
+     "next_id": "<discuss:roadmap>",
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "view": "recent",
+    "viewer": null
+   },
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": null
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_discussions": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "",
+    "start": false,
+    "view": "recent"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

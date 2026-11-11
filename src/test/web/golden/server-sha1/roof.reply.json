@@ -1,0 +1,520 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:stuck-window>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 22,
+        "created_timestamp": 1700004200,
+        "event": {
+         "description": "it will not open",
+         "labels": "ui",
+         "status": "closed",
+         "title": "the window is stuck"
+        },
+        "removed": false,
+        "updated_order": 23
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:flaky-door>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 20,
+        "created_timestamp": 1700004080,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "status": "closed",
+         "title": "the door sticks"
+        },
+        "removed": false,
+        "updated_order": 21
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "<comment:leaky-roof.c03>",
+    "comment_page": {
+     "replies": {
+      "comments": [
+       {
+        "author": {
+         "user_name": "bob"
+        },
+        "can_modify": true,
+        "comment": {
+         "author_email": "bob@example.test",
+         "created_order": 7,
+         "created_timestamp": 1700003240,
+         "event": {
+          "body": "over the kitchen",
+          "parent_id": "<comment:leaky-roof.c03>",
+          "thread_id": "<issue:leaky-roof>"
+         },
+         "removed": false,
+         "updated_order": 7
+        },
+        "id": "<comment:leaky-roof.c04>",
+        "parent_author": {
+         "user_name": "alice"
+        }
+       }
+      ],
+      "count": 1,
+      "start": 0
+     },
+     "selected": {
+      "author": {
+       "user_name": "alice"
+      },
+      "can_modify": true,
+      "comment": {
+       "author_email": "alice@example.test",
+       "created_order": 6,
+       "created_timestamp": 1700003180,
+       "event": {
+        "body": "where exactly?",
+        "parent_id": "<comment:leaky-roof.c01>",
+        "thread_id": "<issue:leaky-roof>"
+       },
+       "removed": false,
+       "updated_order": 6
+      },
+      "id": "<comment:leaky-roof.c03>",
+      "parent_author": {
+       "user_name": "bob"
+      }
+     }
+    },
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "bug",
+     "docs",
+     "roof",
+     "ui"
+    ],
+    "open": {
+     "count": 23,
+     "items": [
+      {
+       "assignees": [
+        {
+         "email": "bob@example.test",
+         "name": "bob"
+        }
+       ],
+       "attachments": [
+        {
+         "id": "<attach:roof-photo>",
+         "name": "photo.png"
+        },
+        {
+         "id": "<attach:roof-notes>",
+         "name": "notes.txt"
+        }
+       ],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 4,
+           "created_timestamp": 1700003060,
+           "event": {
+            "body": "i see it too",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 4
+          },
+          "id": "<comment:leaky-roof.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "frank"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "frank@example.test",
+           "created_order": 5,
+           "created_timestamp": 1700003120,
+           "event": {
+            "body": "a bucket helps (edited)",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 16
+          },
+          "id": "<comment:leaky-roof.c02>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 6,
+           "created_timestamp": 1700003180,
+           "event": {
+            "body": "where exactly?",
+            "parent_id": "<comment:leaky-roof.c01>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 6
+          },
+          "id": "<comment:leaky-roof.c03>",
+          "parent_author": {
+           "user_name": "bob"
+          }
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 7,
+           "created_timestamp": 1700003240,
+           "event": {
+            "body": "over the kitchen",
+            "parent_id": "<comment:leaky-roof.c03>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 7
+          },
+          "id": "<comment:leaky-roof.c04>",
+          "parent_author": {
+           "user_name": "alice"
+          }
+         },
+         {
+          "author": {
+           "user_name": "carol"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "carol@example.test",
+           "created_order": 8,
+           "created_timestamp": 1700003360,
+           "event": {
+            "body": "i can fix roofs",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": true,
+           "updated_order": 17
+          },
+          "id": "<comment:leaky-roof.c05>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 9,
+           "created_timestamp": 1700003420,
+           "event": {
+            "body": "it got worse",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 9
+          },
+          "id": "<comment:leaky-roof.c06>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "erin"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "erin@example.test",
+           "created_order": 10,
+           "created_timestamp": 1700003480,
+           "event": {
+            "body": "erin was here",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 10
+          },
+          "id": "<comment:leaky-roof.c07>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "frank"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "frank@example.test",
+           "created_order": 11,
+           "created_timestamp": 1700003540,
+           "event": {
+            "body": "ordering tiles",
+            "parent_id": "<comment:leaky-roof.c06>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 11
+          },
+          "id": "<comment:leaky-roof.c08>",
+          "parent_author": {
+           "user_name": "bob"
+          }
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 12,
+           "created_timestamp": 1700003600,
+           "event": {
+            "body": "tiles came",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 12
+          },
+          "id": "<comment:leaky-roof.c09>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 13,
+           "created_timestamp": 1700003660,
+           "event": {
+            "body": "thanks all",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 13
+          },
+          "id": "<comment:leaky-roof.c10>",
+          "parent_author": null
+         }
+        ],
+        "count": 13,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:leaky-roof>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700002880,
+        "event": {
+         "description": "water comes in **when it rains**\n\nsee the photo",
+         "labels": "bug roof",
+         "status": "open",
+         "title": "the roof leaks"
+        },
+        "removed": false,
+        "updated_order": 1
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": "<issue:issue-19>"
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "<issue:leaky-roof>",
+    "theirs_picks": "",
+    "view": "new_comment",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": "<tab>",
+   "undo": "<tab>",
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_issues": {
+    "attachment": "",
+    "comment": "<comment:leaky-roof.c03>",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "<issue:leaky-roof>",
+    "start": false,
+    "theirs": "",
+    "view": "new_comment"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 2,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

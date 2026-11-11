@@ -1,0 +1,113 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "diff": {
+     "path": "",
+     "route": {
+      "patchrev": {
+       "base_oid": "<commit:again>",
+       "id": "<patchrev:p-open>",
+       "identity": ""
+      }
+     },
+     "window": {
+      "has_more": false,
+      "hunks": [
+       {
+        "path": "feature.txt",
+        "prefixes": "",
+        "status": "added",
+        "text": ""
+       }
+      ],
+      "start": 0,
+      "truncated": false
+     }
+    }
+   },
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": ""
+    },
+    "read_access": "private",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "snapshot-repo",
+    "owner_name": "",
+    "patches_search": null,
+    "ref_or_oid": "object",
+    "ref_or_oid_value": "84937bb1a72870f5c51af4bc454af3d8e482e30d",
+    "title": {
+     "content": "🬑🬂🬀 🬮 🬠 🬞🬂🬏 🬒🬂🬟 🬑🬂🬀 🬐 🬠 🬑🬂🬟 🬂🬰🬂     🬒🬂🬟 🬒🬂🬂 🬒🬂🬟 🬑🬂🬟\n🬇🬋🬃 🬃🬇🬇 🬋🬋🬋 🬋🬋🬃 🬇🬋🬃 🬋🬋🬋 🬃 🬇  🬋  🬇🬋🬃 🬋🬋🬃 🬋🬋🬃 🬋🬋🬃 🬃 🬇\n🬞🬭🬑 🬐 🬡 🬐 🬠 🬐   🬞🬭🬑 🬐 🬠 🬟🬭🬑  🬰      🬐🬁🬞 🬮🬭🬭 🬐   🬟🬭🬑"
+    }
+   },
+   "issues": "<tab>",
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 0,
+    "event": {
+     "description": "",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "snapshot-repo",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "private",
+     "user_id": "00000000000000000000000000000000"
+    },
+    "removed": false,
+    "updated_order": 0
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_diff": {
+    "base_oid": "",
+    "name": "",
+    "patchrev_id": "<patchrev:p-open>",
+    "path": "",
+    "ref_or_oid": null,
+    "start": 0,
+    "value": ""
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": null,
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "local",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

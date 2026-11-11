@@ -1,0 +1,96 @@
+{
+ "page": {
+  "home": {
+   "about": {
+    "text": "Welcome to your Haxy instance!\n\nEdit `admin/ABOUT.md` in the server dir to change what this page says.",
+    "title": "HAXY"
+   },
+   "header": {
+    "title": {
+     "content": "🬐 🬠 🬞🬂🬏 🬟 🬑 🬟 🬑\n🬋🬋🬋 🬋🬋🬋  🬋   🬋 \n🬐 🬠 🬐 🬠 🬑 🬟  🬰 "
+    }
+   },
+   "quit": {},
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   },
+   "users": {
+    "next_start": null,
+    "search": "user1",
+    "start": 0,
+    "users": [
+     {
+      "name": "user10"
+     },
+     {
+      "name": "user11"
+     },
+     {
+      "name": "user12"
+     },
+     {
+      "name": "user13"
+     },
+     {
+      "name": "user14"
+     },
+     {
+      "name": "user15"
+     },
+     {
+      "name": "user16"
+     }
+    ]
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "home_users": {
+    "search": "user1",
+    "start": 0
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

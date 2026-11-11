@@ -1,0 +1,791 @@
+{
+ "page": {
+  "repo": {
+   "changes": "<tab>",
+   "discussions": "<tab>",
+   "events": "<tab>",
+   "files": "<tab>",
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "carol@example.test",
+     "role": "read"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:stuck-window>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 22,
+        "created_timestamp": 1700004200,
+        "event": {
+         "description": "it will not open",
+         "labels": "ui",
+         "status": "closed",
+         "title": "the window is stuck"
+        },
+        "removed": false,
+        "updated_order": 23
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:flaky-door>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 20,
+        "created_timestamp": 1700004080,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "status": "closed",
+         "title": "the door sticks"
+        },
+        "removed": false,
+        "updated_order": 21
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "bug",
+     "docs",
+     "roof",
+     "ui"
+    ],
+    "open": {
+     "count": 23,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-21>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 48,
+        "created_timestamp": 1700005760,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 21"
+        },
+        "removed": false,
+        "updated_order": 48
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-20>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 47,
+        "created_timestamp": 1700005700,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 20"
+        },
+        "removed": false,
+        "updated_order": 47
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-19>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 46,
+        "created_timestamp": 1700005640,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 19"
+        },
+        "removed": false,
+        "updated_order": 46
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-18>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 45,
+        "created_timestamp": 1700005580,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 18"
+        },
+        "removed": false,
+        "updated_order": 45
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-17>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 44,
+        "created_timestamp": 1700005520,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 17"
+        },
+        "removed": false,
+        "updated_order": 44
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-16>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 43,
+        "created_timestamp": 1700005460,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 16"
+        },
+        "removed": false,
+        "updated_order": 43
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-15>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 42,
+        "created_timestamp": 1700005400,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 15"
+        },
+        "removed": false,
+        "updated_order": 42
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-14>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 41,
+        "created_timestamp": 1700005340,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 14"
+        },
+        "removed": false,
+        "updated_order": 41
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-13>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 40,
+        "created_timestamp": 1700005280,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 13"
+        },
+        "removed": false,
+        "updated_order": 40
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-12>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 39,
+        "created_timestamp": 1700005220,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 12"
+        },
+        "removed": false,
+        "updated_order": 39
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-11>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 38,
+        "created_timestamp": 1700005160,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 11"
+        },
+        "removed": false,
+        "updated_order": 38
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-10>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 37,
+        "created_timestamp": 1700005100,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 10"
+        },
+        "removed": false,
+        "updated_order": 37
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-09>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 36,
+        "created_timestamp": 1700005040,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 9"
+        },
+        "removed": false,
+        "updated_order": 36
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-08>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 35,
+        "created_timestamp": 1700004980,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 8"
+        },
+        "removed": false,
+        "updated_order": 35
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-07>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 34,
+        "created_timestamp": 1700004920,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 7"
+        },
+        "removed": false,
+        "updated_order": 34
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-06>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 33,
+        "created_timestamp": 1700004860,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 6"
+        },
+        "removed": false,
+        "updated_order": 33
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-05>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 32,
+        "created_timestamp": 1700004800,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 5"
+        },
+        "removed": false,
+        "updated_order": 32
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-04>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 31,
+        "created_timestamp": 1700004740,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 4"
+        },
+        "removed": false,
+        "updated_order": 31
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-03>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 30,
+        "created_timestamp": 1700004680,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 3"
+        },
+        "removed": false,
+        "updated_order": 30
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-02>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 29,
+        "created_timestamp": 1700004620,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 2"
+        },
+        "removed": false,
+        "updated_order": 29
+       }
+      }
+     ],
+     "more": false,
+     "next_id": "<issue:issue-01>",
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": {
+     "email": "carol@example.test",
+     "role": "read"
+    }
+   },
+   "patches": "<tab>",
+   "quit": {},
+   "refs": "<tab>",
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_issues": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "",
+    "start": false,
+    "theirs": "",
+    "view": "open"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 2,
+  "user_email": "carol@example.test",
+  "user_id": "<bytes:user:carol>",
+  "user_name": "carol"
+ }
+}

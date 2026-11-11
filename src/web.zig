@@ -128,7 +128,19 @@ pub fn handleConnection(
     var recv_buffer: [4096]u8 = @splat(0);
     var conn_br = stream.reader(io, &recv_buffer);
     var conn_bw = stream.writer(io, &send_buffer);
-    var http_server = std.http.Server.init(&conn_br.interface, &conn_bw.interface);
+    try serveConnection(io, allocator, &conn_br.interface, &conn_bw.interface, host, err);
+}
+
+// the request loop over any reader and writer, so tests can drive it from memory
+pub fn serveConnection(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    in: *std.Io.Reader,
+    out: *std.Io.Writer,
+    host: Host,
+    err: *std.Io.Writer,
+) !void {
+    var http_server = std.http.Server.init(in, out);
 
     // serve multiple requests on a single connection so HTTP/1.1 keep-alive
     // works — important for browser-native form POST: after the 303 the
@@ -1270,6 +1282,9 @@ fn handleThreadNew(
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const aa = arena.allocator();
+    // no session is told to log in before anything is said about the repo,
+    // as it always was, and before any admin repo i/o
+    if (!hasSession(request, host)) return respondLoginRequired(request);
     // the context reads the session cookie, which the body read invalidates
     var admin_repo: ?AdminRepo = null;
     defer if (admin_repo) |*repo| repo.deinit(io, allocator);
@@ -1330,6 +1345,9 @@ fn handlePatchNew(
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const aa = arena.allocator();
+    // no session is told to log in before anything is said about the repo,
+    // as it always was, and before any admin repo i/o
+    if (!hasSession(request, host)) return respondLoginRequired(request);
     // the context reads the session cookie, which the body read invalidates
     var admin_repo: ?AdminRepo = null;
     defer if (admin_repo) |*repo| repo.deinit(io, allocator);
@@ -1627,8 +1645,8 @@ fn sendAttachment(
     if (object_reader.header().kind != .blob) return respondAttachmentNotFound(request);
 
     const content_type = attachmentContentType(record.name);
-    const encoded_name = try ui.urlEncodeRef(allocator, record.name);
-    defer allocator.free(encoded_name);
+    // urlEncodeRef returns less than it allocated, so only an arena can own it
+    const encoded_name = try ui.urlEncodeRef(arena.allocator(), record.name);
     const disposition = try allocator.print("{s}; filename*=UTF-8''{s}", .{ if (content_type == null) "attachment" else "inline", encoded_name });
     defer allocator.free(disposition);
 
@@ -1711,6 +1729,9 @@ fn handleAttach(
     host: Host,
 ) !void {
     const parts = attachTargetParts(base) orelse return respondAttachmentTargetNotFound(request);
+    // no session is told to log in before anything is said about the target,
+    // as it always was, and before any admin repo i/o
+    if (!hasSession(request, host)) return respondLoginRequired(request);
     const kind = domain.ThreadKind.fromEventKind(parts.kind) orelse return respondAttachmentTargetNotFound(request);
 
     var arena = std.heap.ArenaAllocator.init(allocator);

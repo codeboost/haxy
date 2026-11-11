@@ -44,7 +44,9 @@ pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, tab: ui.Routa
     if (session.io == null or session.users_dir == null) return error.NoMoment;
     const aa = arena.allocator();
 
-    var ctx = try session.ctx(arena);
+    // the page's own context: the session's moment and the account it
+    // checked there, so the list agrees with the page it heads
+    var ctx = try session.pageCtx(arena);
     const listed = (domain.ListNotifications{ .start = tab.start }).run(&ctx) catch |err| switch (err) {
         // a removed account has no notifications to show
         error.LoginRequired => return result,

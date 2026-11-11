@@ -351,18 +351,18 @@ pub const DraftsOwner = struct {
     user_id: [evt.event_id_size]u8,
     name: []const u8,
 
-    // the session's logged-in user, or null when logged out
-    pub fn ofSession(session: *const ui.Session) ?DraftsOwner {
-        return .{ .user_id = session.userId() orelse return null, .name = session.data.user_name orelse return null };
+    // the logged-in user, or null when logged out
+    pub fn of(user_id: ?[evt.event_id_size]u8, name: ?[]const u8) ?DraftsOwner {
+        return .{ .user_id = user_id orelse return null, .name = name orelse return null };
     }
 };
 
-// an empty listing, for the wasm / no-repo paths.
+// an empty listing, for the wasm / no-repo paths. `search` is decoded.
 pub fn emptyResult(aa: std.mem.Allocator, identity: []const u8, search: []const u8, selected_id: []const u8, comment_id: []const u8, comments_start: usize, theirs_picks: []const u8, view: ui.RoutablePage.PatchesView) !Self {
     return .{
         .identity = try aa.dupe(u8, identity),
         .default_target_branch = "",
-        .search = if (search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, search)),
+        .search = if (search.len == 0) null else try aa.dupe(u8, search),
         .selected_id = try aa.dupe(u8, selected_id),
         .comment_id = try aa.dupe(u8, comment_id),
         .comments_start = comments_start,
@@ -440,22 +440,8 @@ pub fn init(
     // the early returns below still let the viewer write
     empty.viewer = viewer;
 
-    const aa = arena.allocator();
-    const DB = evt.EventDB(repo_opts.hash);
     const rooted = empty.selected_id.len != 0;
-    const drafts_window = if (admin_moment) |admin|
-        if (repo_id_maybe) |repo_id|
-            if (drafts_owner) |owner|
-                if (users_dir) |dir|
-                    try loadDraftWindow(repo_kind, repo_opts, arena, io, dir, owner, admin, &repo_id, empty.selected_id, repo)
-                else
-                    Window.empty
-            else
-                Window.empty
-        else
-            Window.empty
-    else
-        Window.empty;
+    const drafts_window = try loadDraftsWindow(repo_kind, repo_opts, arena, io, admin_moment, users_dir, drafts_owner, repo_id_maybe, empty.selected_id, repo);
     var draft_selected = false;
     if (rooted) for (drafts_window.items) |item| {
         if (std.mem.eql(u8, item.id, empty.selected_id)) {
@@ -472,40 +458,23 @@ pub fn init(
 
     // a repo with no consumed events has no moment yet.
     const gpa = arena.child_allocator;
-    var event_db_maybe: ?evt.LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, gpa, repo.core.repo_dir) else null;
-    defer if (event_db_maybe) |*event_db| event_db.deinit(io, gpa);
-    const haxy_moment = (if (event_db_maybe) |*event_db|
-        evt.currentMomentFromDb(repo_opts.hash, event_db.db)
-    else if (repo_kind == .git)
-        return empty
-    else
-        evt.currentMoment(repo_opts, repo)) catch {
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (event_db.moment(repo)) {
+        .none => return empty,
+        .no_events => {
+            if (strict) return error.NotFound;
+            return empty;
+        },
+        .ok => |moment| moment,
+    };
+
+    const terms = try readSearch(repo_opts.hash, arena, empty.search orelse "");
+
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse {
         if (strict) return error.NotFound;
         return empty;
     };
-
-    // each status's listing intersects every label's set.
-    // patches have no assignees, so an assignee term lists nothing.
-    const filters = try srch_thrd.parseFilters(aa, empty.search orelse "");
-    const extra_sets: ?[]const DB.SortedSet(.read_only) = if (filters.assignees.len == 0) &.{} else null;
-    const open_sets = try thread.statusSets(Self, repo_opts.hash, aa, haxy_moment, filters.labels, extra_sets, .open);
-    const closed_sets = try thread.statusSets(Self, repo_opts.hash, aa, haxy_moment, filters.labels, extra_sets, .closed);
-    const merged_sets = try thread.statusSets(Self, repo_opts.hash, aa, haxy_moment, filters.labels, extra_sets, .merged);
-
-    const event_id_to_patch_cursor = try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Patch.record_map_key)) orelse {
-        if (strict) return error.NotFound;
-        return empty;
-    };
-    const event_id_to_patch = try DB.HashMap(.read_only).init(event_id_to_patch_cursor);
-
-    // the conflicted patches' container: a set view for membership and
-    // windowing, a map view for the resolve entry, over the same cursor.
-    var conflict_set: ?DB.SortedSet(.read_only) = null;
-    var conflicts_map: ?DB.SortedMap(.read_only) = null;
-    if (try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Patch.conflicts_key))) |cursor| {
-        conflict_set = try DB.SortedSet(.read_only).init(cursor);
-        conflicts_map = try DB.SortedMap(.read_only).init(cursor);
-    }
 
     // a named patch roots its own status's window at itself (the conflicts
     // view's window instead); the other windows start at the beginning.
@@ -515,66 +484,36 @@ pub fn init(
     var merged_root: ?[]const u8 = null;
     var conflicts_root: ?[]const u8 = null;
     var conflict_data: ?Conflict = null;
-    if (rooted and !draft_selected) {
-        const id_bytes = evt.parseEventId(empty.selected_id) catch return error.NotFound;
-        const patch_cursor = try event_id_to_patch.getCursor(hash.hashInt(repo_opts.hash, &id_bytes)) orelse return error.NotFound;
-        const patch_map = try DB.HashMap(.read_only).init(patch_cursor);
-        const patch_event = try evt.read(evt.Patch.Record, DB, repo_opts.hash, arena, patch_map);
-        const order_key = try aa.dupe(u8, &evt.orderKeyDesc(patch_event.created_order, &id_bytes));
-
+    const thread_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
+    const selected: ?Selected = if (strict) try loadThread(repo_kind, repo_opts, arena, repo, io, admin_moment, tables, terms, empty.selected_id, view, thread_comments_start, viewer) else null;
+    if (selected) |thread_selected| {
+        const status = thread_selected.entry.record.event.status;
         if (view == .conflicts) {
-            // the id roots the conflicts window, so it must be conflicted
-            const set = conflict_set orelse return error.NotFound;
-            if (!try set.contains(order_key)) return error.NotFound;
-            conflicts_root = order_key;
+            conflicts_root = thread_selected.order_key;
         } else {
-            // the named patch must be in every set its window intersects (a
-            // filtered url can name a patch the filters leave out).
-            const sets = switch (patch_event.event.status) {
-                .open => open_sets,
-                .closed => closed_sets,
-                .merged => merged_sets,
-            };
-            if (!try thread.inEverySet(DB, sets, order_key)) return error.NotFound;
-
-            switch (patch_event.event.status) {
-                .open => open_root = order_key,
-                .closed => closed_root = order_key,
-                .merged => merged_root = order_key,
+            switch (status) {
+                .open => open_root = thread_selected.order_key,
+                .closed => closed_root = thread_selected.order_key,
+                .merged => merged_root = thread_selected.order_key,
             }
             // form urls keep their view; otherwise the patch's status picks it.
-            if (view != .edit and view != .merge and view != .new_comment and view != .edit_comment and view != .remove) resolved_view = switch (patch_event.event.status) {
+            if (view != .edit and view != .merge and view != .new_comment and view != .edit_comment and view != .remove) resolved_view = switch (status) {
                 .open => .open,
                 .closed => .closed,
                 .merged => .merged,
             };
-
             // a resolve url shows the resolve view only while the patch still
-            // has a conflict entry; otherwise the status list stands. the
-            // wasm client renders from the snapshot, so the diff machinery
-            // this pulls in is gated out of its build.
-            if (comptime !wasm) {
-                if (view == .resolve) {
-                    if (conflicts_map) |map| {
-                        if (try map.getCursor(order_key)) |conflict_cursor| {
-                            const conflict_entry = try DB.HashMap(.read_only).init(conflict_cursor);
-                            conflict_data = try thread.readConflict(Self, repo_kind, repo_opts, arena, repo, io, admin_moment, haxy_moment, &id_bytes, patch_event, conflict_entry);
-                            resolved_view = .resolve;
-                        }
-                    }
-                }
-            }
+            // has a conflict entry; otherwise the status list stands.
+            conflict_data = thread_selected.conflict;
+            if (conflict_data != null) resolved_view = .resolve;
         }
     }
-    const thread_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
-    var open_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, open_sets, open_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    var closed_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, closed_sets, closed_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    var merged_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, merged_sets, merged_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    var conflicts_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, if (conflict_set) |*set| set[0..1] else &.{}, conflicts_root, conflict_set, empty.selected_id, thread_comments_start, "", viewer);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &open_window);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &closed_window);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &merged_window);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &conflicts_window);
+
+    const selected_entry: ?*const PatchWithId = if (selected) |*thread_selected| &thread_selected.entry else null;
+    const open_window = try loadWindow(false, repo_kind, repo_opts, arena, repo, io, admin_moment, users_dir, tables, terms, .{ .status = .open }, open_root, selected_entry, viewer);
+    const closed_window = try loadWindow(false, repo_kind, repo_opts, arena, repo, io, admin_moment, users_dir, tables, terms, .{ .status = .closed }, closed_root, selected_entry, viewer);
+    const merged_window = try loadWindow(false, repo_kind, repo_opts, arena, repo, io, admin_moment, users_dir, tables, terms, .{ .status = .merged }, merged_root, selected_entry, viewer);
+    const conflicts_window = try loadWindow(false, repo_kind, repo_opts, arena, repo, io, admin_moment, users_dir, tables, terms, .conflicts, conflicts_root, selected_entry, viewer);
     if (view == .conflicts and conflicts_window.count > 0) resolved_view = .conflicts;
 
     const comment_page = if (empty.comment_id.len == 0)
@@ -606,7 +545,237 @@ pub fn init(
     };
 }
 
+// a search's terms, as the listings apply them
+pub fn Search(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        // the words the listings are narrowed to, "" for none
+        words: []const u8,
+        labels: []const []const u8,
+        // patches have no assignees, so an assignee term lists nothing (null)
+        extra_sets: ?[]const evt.EventDB(hash_kind).SortedSet(.read_only),
+
+        // the sets `status`'s listing intersects: every label's set
+        pub fn statusSets(
+            self: @This(),
+            aa: std.mem.Allocator,
+            haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+            status: Status,
+        ) ![]const evt.EventDB(hash_kind).SortedSet(.read_only) {
+            return try thread.statusSets(Self, hash_kind, aa, haxy_moment, self.labels, self.extra_sets, status);
+        }
+    };
+}
+
+// the decoded `search`'s terms
+pub fn readSearch(comptime hash_kind: hash.HashKind, arena: *std.heap.ArenaAllocator, search: []const u8) !Search(hash_kind) {
+    const filters = try srch_thrd.parseFilters(arena.allocator(), search);
+    return .{
+        .words = filters.words,
+        .labels = filters.labels,
+        .extra_sets = if (filters.assignees.len == 0) &.{} else null,
+    };
+}
+
+// the published listing a window shows: a status's patches, or the
+// conflicted ones
+pub const List = union(enum) {
+    status: Status,
+    conflicts,
+};
+
+// one window of `list`'s patches that the search matches (the conflicts list
+// ignores it), starting at `root_key` (null for the first window), with each
+// patch's fork, revision and mergeability. `selected`, read with its comment
+// window, stands in for its own entry. a page shows mergeability or a commit
+// count it can't read as unknown; a `strict` window fails instead.
+pub fn loadWindow(
+    comptime strict: bool,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    // where server users live, for fork-backed patches; null in local mode
+    users_dir: ?[]const u8,
+    tables: thread.Tables(Self, repo_opts.hash),
+    terms: Search(repo_opts.hash),
+    list: List,
+    root_key: ?[]const u8,
+    selected: ?*const PatchWithId,
+    viewer: ?ui.Viewer,
+) !Window {
+    var loaded = switch (list) {
+        .status => |status| try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, tables, try terms.statusSets(arena.allocator(), tables.moment, status), root_key, selected, terms.words, viewer),
+        .conflicts => try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, tables, if (tables.conflict_set) |*set| set[0..1] else &.{}, root_key, selected, "", viewer),
+    };
+    try setPatchDetails(strict, repo_kind, repo_opts, io, arena, admin_moment, users_dir, tables.moment, repo, &loaded);
+    return loaded;
+}
+
+// the published patch a url selects, read for its detail pane
+pub const Selected = struct {
+    // without its fork, revision and mergeability, which its window adds
+    entry: PatchWithId,
+    // the key the window holding it is rooted at
+    order_key: []const u8,
+    // its conflict, read for the resolve view while it has one
+    conflict: ?Conflict = null,
+};
+
+// the published patch `id` names, with the window of its comments starting
+// at `comments_start`. not found when it names no patch, one the search leaves
+// out of its status's list, or for the conflicts view one without a conflict.
+pub fn loadThread(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    tables: thread.Tables(Self, repo_opts.hash),
+    terms: Search(repo_opts.hash),
+    id: []const u8,
+    view: ui.RoutablePage.PatchesView,
+    comments_start: usize,
+    viewer: ?ui.Viewer,
+) !Selected {
+    const aa = arena.allocator();
+    const DB = evt.EventDB(repo_opts.hash);
+    const id_bytes = evt.parseEventId(id) catch return error.NotFound;
+    const patch_cursor = try tables.records.getCursor(hash.hashInt(repo_opts.hash, &id_bytes)) orelse return error.NotFound;
+    const patch_map = try DB.HashMap(.read_only).init(patch_cursor);
+    const patch_event = try evt.read(evt.Patch.Record, DB, repo_opts.hash, arena, patch_map);
+    const order_key = evt.orderKeyDesc(patch_event.created_order, &id_bytes);
+
+    var conflict: ?Conflict = null;
+    if (view == .conflicts) {
+        // the id roots the conflicts window, so it must be conflicted
+        const set = tables.conflict_set orelse return error.NotFound;
+        if (!try set.contains(&order_key)) return error.NotFound;
+    } else {
+        // the named patch must be in every set its window intersects (a
+        // filtered url can name a patch the filters leave out).
+        const sets = try terms.statusSets(aa, tables.moment, patch_event.event.status.kind());
+        if (!try thread.inEverySet(DB, sets, &order_key)) return error.NotFound;
+
+        // the wasm client renders from the snapshot, so the diff machinery
+        // this pulls in is gated out of its build.
+        if (comptime !wasm) {
+            if (view == .resolve) {
+                if (tables.conflicts_map) |map| {
+                    if (try map.getCursor(&order_key)) |conflict_cursor| {
+                        const conflict_entry = try DB.HashMap(.read_only).init(conflict_cursor);
+                        conflict = try thread.readConflict(Self, repo_kind, repo_opts, arena, repo, io, admin_moment, tables.moment, &id_bytes, patch_event, conflict_entry);
+                    }
+                }
+            }
+        }
+    }
+
+    return .{
+        .entry = (try thread.loadEntry(Self, repo_opts.hash, arena, admin_moment, tables, &order_key, comments_start, viewer)) orelse return error.NotFound,
+        .order_key = try aa.dupe(u8, &order_key),
+        .conflict = conflict,
+    };
+}
+
+// one window of the published `list`'s patches that the decoded `search`
+// matches, starting at the patch `from` names ("" = the first window). not
+// found when `from` names no patch of the list the search leaves in.
+pub fn readWindow(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    users_dir: ?[]const u8,
+    search: []const u8,
+    list: List,
+    from: []const u8,
+    viewer: ?ui.Viewer,
+) !Window {
+    const rooted = from.len != 0;
+    const gpa = arena.child_allocator;
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (try event_db.momentStrict(repo)) {
+        .none, .no_events => return if (rooted) error.NotFound else .empty,
+        .ok => |moment| moment,
+    };
+    const terms = try readSearch(repo_opts.hash, arena, search);
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse return if (rooted) error.NotFound else .empty;
+    const view: ui.RoutablePage.PatchesView = switch (list) {
+        .status => |status| switch (status) {
+            .open => .open,
+            .closed => .closed,
+            .merged => .merged,
+        },
+        .conflicts => .conflicts,
+    };
+    const selected: ?Selected = if (rooted) try loadThread(repo_kind, repo_opts, arena, repo, io, admin_moment, tables, terms, from, view, 0, viewer) else null;
+    if (selected) |thread_selected| switch (list) {
+        .status => |status| if (thread_selected.entry.record.event.status.kind() != status) return error.NotFound,
+        .conflicts => {},
+    };
+    return try loadWindow(
+        true,
+        repo_kind,
+        repo_opts,
+        arena,
+        repo,
+        io,
+        admin_moment,
+        users_dir,
+        tables,
+        terms,
+        list,
+        if (selected) |thread_selected| thread_selected.order_key else null,
+        if (selected) |*thread_selected| &thread_selected.entry else null,
+        viewer,
+    );
+}
+
+// the patch `id` names, one of the drafts owner's drafts of the repo or a
+// published one, with the window of its comments starting at `comments_start`
+pub fn readThread(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    users_dir: ?[]const u8,
+    drafts_owner: ?DraftsOwner,
+    repo_id_maybe: ?[evt.event_id_size]u8,
+    id: []const u8,
+    comments_start: usize,
+    viewer: ?ui.Viewer,
+) !PatchWithId {
+    // a draft lives in its fork, so it is looked up first
+    if (admin_moment) |admin| if (repo_id_maybe) |repo_id| if (drafts_owner) |owner| if (users_dir) |dir| {
+        if (try loadDraft(repo_kind, repo_opts, arena, io, dir, owner, admin, &repo_id, id, repo)) |entry| return entry;
+    };
+
+    const gpa = arena.child_allocator;
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (try event_db.momentStrict(repo)) {
+        .none, .no_events => return error.NotFound,
+        .ok => |moment| moment,
+    };
+    const terms = try readSearch(repo_opts.hash, arena, "");
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse return error.NotFound;
+    const selected = try loadThread(repo_kind, repo_opts, arena, repo, io, admin_moment, tables, terms, id, .open, comments_start, viewer);
+    const items = [_]PatchWithId{selected.entry};
+    var detail: Window = .{ .items = &items, .prev_id = null, .next_id = null, .count = 1 };
+    try setPatchDetails(true, repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &detail);
+    return detail.items[0];
+}
+
 fn setPatchDetails(
+    comptime strict: bool,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     io: std.Io,
@@ -659,7 +828,9 @@ fn setPatchDetails(
         if (comptime repo_kind == .xit) {
             var moment = try repo.core.latestMoment();
             const state = rp.Repo(.xit, repo_opts).State(.read_only){ .core = &repo.core, .extra = .{ .moment = &moment } };
-            item.mergeability = pch.readMergeability(repo_opts, state, io, arena, &id, item.record.event) catch .{};
+            // readMergeability already reads a missing check as unknown, so
+            // what it fails with is storage
+            item.mergeability = pch.readMergeability(repo_opts, state, io, arena, &id, item.record.event) catch |err| if (strict) return err else .{};
         }
         const target_oid = try repo.readRef(io, .{ .kind = .head, .name = target_branch });
         item.no_changes = if (target_oid) |oid| std.mem.eql(u8, &oid, revision.source_oid) else false;
@@ -667,7 +838,111 @@ fn setPatchDetails(
     target.items = items;
 }
 
+// one window of the drafts owner's drafts of the repo, starting at the draft
+// `selected_id` names ("" or none of theirs = the first window). empty
+// without a logged-in server user. the page leaves out a draft whose fork it
+// can't read; `readDraftsWindow` is the same window for a read, which fails
+// instead.
+pub fn loadDraftsWindow(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    users_dir: ?[]const u8,
+    drafts_owner: ?DraftsOwner,
+    repo_id_maybe: ?[evt.event_id_size]u8,
+    selected_id: []const u8,
+    target_repo: *rp.Repo(repo_kind, repo_opts),
+) !Window {
+    return try draftsWindow(false, repo_kind, repo_opts, arena, io, admin_moment, users_dir, drafts_owner, repo_id_maybe, selected_id, target_repo);
+}
+
+// `loadDraftsWindow`, leaving out only a draft whose fork is gone
+pub fn readDraftsWindow(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    users_dir: ?[]const u8,
+    drafts_owner: ?DraftsOwner,
+    repo_id_maybe: ?[evt.event_id_size]u8,
+    selected_id: []const u8,
+    target_repo: *rp.Repo(repo_kind, repo_opts),
+) !Window {
+    return try draftsWindow(true, repo_kind, repo_opts, arena, io, admin_moment, users_dir, drafts_owner, repo_id_maybe, selected_id, target_repo);
+}
+
+// the window `loadDraftsWindow` and `readDraftsWindow` share
+fn draftsWindow(
+    comptime strict: bool,
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    users_dir: ?[]const u8,
+    drafts_owner: ?DraftsOwner,
+    repo_id_maybe: ?[evt.event_id_size]u8,
+    selected_id: []const u8,
+    target_repo: *rp.Repo(repo_kind, repo_opts),
+) !Window {
+    const admin = admin_moment orelse return .empty;
+    const repo_id = repo_id_maybe orelse return .empty;
+    const owner = drafts_owner orelse return .empty;
+    const dir = users_dir orelse return .empty;
+    return try loadDraftWindow(strict, repo_kind, repo_opts, arena, io, dir, owner, admin, &repo_id, selected_id, target_repo);
+}
+
+// whether opening a fork failed because it is gone
+fn isMissingFork(err: anyerror) bool {
+    return err == error.RepoNotFound or err == error.FileNotFound;
+}
+
+// the owner's draft of the repo `id` names, or null when it names none of
+// theirs or its fork is gone. not found when `id` is no id, or names a draft
+// of theirs of another repo. a fork that can't be read is the read's error.
+fn loadDraft(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    users_dir: []const u8,
+    owner: DraftsOwner,
+    admin_moment: evt.AdminDB.HashMap(.read_only),
+    repo_id: *const [evt.event_id_size]u8,
+    id: []const u8,
+    target_repo: *rp.Repo(repo_kind, repo_opts),
+) !?PatchWithId {
+    // the owner's drafts live in their user repo
+    var user_repo = (try evt.openUserRepo(io, arena.child_allocator, users_dir, &owner.user_id)) orelse return null;
+    defer user_repo.deinit(io, arena.child_allocator);
+    const user_moment = (try evt.userMoment(&user_repo)) orelse return null;
+    const drafts_cursor = try user_moment.getCursor(hash.hashInt(evt.user_repo_opts.hash, evt.Fork.repo_to_draft_id_set_key)) orelse return null;
+    const drafts = try evt.UserDB.HashMap(.read_only).init(drafts_cursor);
+    const set_cursor = try drafts.getCursor(hash.hashInt(evt.user_repo_opts.hash, repo_id)) orelse return null;
+    const set = try evt.UserDB.SortedSet(.read_only).init(set_cursor);
+    const aa = arena.allocator();
+
+    const id_bytes = evt.parseEventId(id) catch return error.NotFound;
+    const record = (try evt.Fork.readById(evt.UserDB, evt.user_repo_opts.hash, user_moment, arena, &id_bytes)) orelse return null;
+    if (record.removed or record.event.stage != .draft) return null;
+    if (!try set.contains(&evt.orderKeyDesc(record.created_order, &id_bytes))) return error.NotFound;
+
+    const path = try fork.forkPath(aa, users_dir, &owner.user_id, &id_bytes);
+    // a fork shares its target's hash kind
+    var fork_repo = rp.Repo(.xit, .{ .hash = repo_opts.hash }).open(io, arena.child_allocator, .{ .path = path, .require_repo_root = true }) catch |err| {
+        if (isMissingFork(err)) return null;
+        return err;
+    };
+    defer fork_repo.deinit(io, arena.child_allocator);
+    const fork_identity = try aa.print("{s}:{s}", .{ owner.name, record.event.repo_name });
+    return try draftEntry(true, repo_kind, repo_opts, arena, io, admin_moment, &fork_repo, target_repo, id_bytes, fork_identity);
+}
+
 fn loadDraftWindow(
+    comptime strict: bool,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -730,11 +1005,14 @@ fn loadDraftWindow(
         }
         const path = try fork.forkPath(aa, users_dir, &user_id, &id);
         // a fork shares its target's hash kind
-        var fork_repo = rp.Repo(.xit, .{ .hash = repo_opts.hash }).open(io, arena.child_allocator, .{ .path = path, .require_repo_root = true }) catch continue;
+        var fork_repo = rp.Repo(.xit, .{ .hash = repo_opts.hash }).open(io, arena.child_allocator, .{ .path = path, .require_repo_root = true }) catch |err| {
+            if (strict and !isMissingFork(err)) return err;
+            continue;
+        };
         defer fork_repo.deinit(io, arena.child_allocator);
         const record = (try evt.Fork.readById(evt.UserDB, evt.user_repo_opts.hash, user_moment, arena, &id)) orelse continue;
         const fork_identity = try aa.print("{s}:{s}", .{ user_name, record.event.repo_name });
-        const entry = (try loadDraftEntry(repo_kind, repo_opts, arena, io, admin_moment, &fork_repo, target_repo, id, fork_identity)) orelse continue;
+        const entry = (try draftEntry(strict, repo_kind, repo_opts, arena, io, admin_moment, &fork_repo, target_repo, id, fork_identity)) orelse continue;
         try items.append(aa, entry);
     }
     return .{
@@ -745,7 +1023,27 @@ fn loadDraftWindow(
     };
 }
 
+// the draft `id` in its opened fork, or null when the fork holds no such
+// patch. the page shows a fork it can't read as no draft, and an unreadable
+// newest revision as an unknown commit count.
 pub fn loadDraftEntry(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    fork_repo: *rp.Repo(.xit, .{ .hash = repo_opts.hash }),
+    target_repo: *rp.Repo(repo_kind, repo_opts),
+    id: [evt.event_id_size]u8,
+    fork_identity: []const u8,
+) !?PatchWithId {
+    return try draftEntry(false, repo_kind, repo_opts, arena, io, admin_moment, fork_repo, target_repo, id, fork_identity);
+}
+
+// the entry `loadDraftEntry` reads; a `strict` one fails where the page
+// falls back
+fn draftEntry(
+    comptime strict: bool,
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
@@ -759,12 +1057,21 @@ pub fn loadDraftEntry(
     const aa = arena.allocator();
     const id_hex = std.fmt.bytesToHex(id, .lower);
     const fork_oid = (try fork_repo.readRef(io, fork.ref)) orelse return null;
-    const moment = evt.currentMoment(.{ .hash = repo_opts.hash }, fork_repo) catch return null;
+    // a fork with no events holds no draft
+    const moment = evt.currentMoment(.{ .hash = repo_opts.hash }, fork_repo) catch |err| {
+        if (strict and !thread.isNoEvents(err)) return err;
+        return null;
+    };
     const patch = (try evt.Patch.readById(evt.EventDB(repo_opts.hash), repo_opts.hash, moment, arena, &id)) orelse return null;
     const target_branch = patch.event.target_branch;
     const target_oid = try target_repo.readRef(io, .{ .kind = .head, .name = target_branch });
     const commit_count: ?u64 = blk: {
-        const newest = evt.PatchRev.readNewest(evt.EventDB(repo_opts.hash), repo_opts.hash, moment, arena) catch break :blk null;
+        // a draft with no revision yet reads as null, so what this fails
+        // with is storage
+        const newest = evt.PatchRev.readNewest(evt.EventDB(repo_opts.hash), repo_opts.hash, moment, arena) catch |err| {
+            if (strict) return err;
+            break :blk null;
+        };
         break :blk if (newest) |revision| revision.record.commit_count else 0;
     };
     return .{

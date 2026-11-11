@@ -169,11 +169,11 @@ pub fn selectedThread(self: *const Self) ?*const IssueWithId {
     return null;
 }
 
-// an empty listing, for the wasm / no-repo paths.
+// an empty listing, for the wasm / no-repo paths. `search` is decoded.
 pub fn emptyResult(aa: std.mem.Allocator, identity: []const u8, search: []const u8, selected_id: []const u8, comment_id: []const u8, comments_start: usize, theirs_picks: []const u8, view: ui.RoutablePage.IssuesView) !Self {
     return .{
         .identity = try aa.dupe(u8, identity),
-        .search = if (search.len == 0) null else std.Uri.percentDecodeInPlace(try aa.dupe(u8, search)),
+        .search = if (search.len == 0) null else try aa.dupe(u8, search),
         .selected_id = try aa.dupe(u8, selected_id),
         .comment_id = try aa.dupe(u8, comment_id),
         .comments_start = comments_start,
@@ -220,66 +220,30 @@ pub fn init(
     // the early returns below still let the viewer write
     empty.viewer = viewer;
 
-    const aa = arena.allocator();
-    const DB = evt.EventDB(repo_opts.hash);
     // an explicitly named issue that doesn't exist is a bad url (NotFound ->
     // 404); the bare route falls through to an empty listing.
     const rooted = empty.selected_id.len != 0;
 
     // a repo with no consumed events has no moment yet.
     const gpa = arena.child_allocator;
-    var event_db_maybe: ?evt.LocalEventDB(repo_opts.hash) = if (repo_kind == .git) try evt.LocalEventDB(repo_opts.hash).openReadOnly(io, gpa, repo.core.repo_dir) else null;
-    defer if (event_db_maybe) |*event_db| event_db.deinit(io, gpa);
-    const haxy_moment = (if (event_db_maybe) |*event_db|
-        evt.currentMomentFromDb(repo_opts.hash, event_db.db)
-    else if (repo_kind == .git)
-        return empty
-    else
-        evt.currentMoment(repo_opts, repo)) catch {
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (event_db.moment(repo)) {
+        .none => return empty,
+        .no_events => {
+            if (rooted) return error.NotFound;
+            return empty;
+        },
+        .ok => |moment| moment,
+    };
+
+    const terms = try readSearch(repo_opts.hash, arena, admin_moment, haxy_moment, empty.search orelse "");
+    empty.assignee_unknown = terms.assignee_unknown;
+
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse {
         if (rooted) return error.NotFound;
         return empty;
     };
-
-    const filters = try srch_thrd.parseFilters(aa, empty.search orelse "");
-
-    // a name resolves to its user's email. an unknown name or an email no
-    // issue carries lists nothing.
-    var assignee_sets: ?[]const DB.SortedSet(.read_only) = &.{};
-    if (filters.assignees.len != 0) {
-        const by_assignee: ?DB.HashMap(.read_only) = if (try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Assignment.assignee_to_issue_id_set_key))) |cursor| try DB.HashMap(.read_only).init(cursor) else null;
-        var sets: std.ArrayList(DB.SortedSet(.read_only)) = .empty;
-        for (filters.assignees) |assignee| {
-            const email = switch (try ui.assigneeEmail(admin_moment, arena, assignee)) {
-                .email => |email| email,
-                .failure => {
-                    empty.assignee_unknown = true;
-                    continue;
-                },
-            };
-            const set_cursor = (if (by_assignee) |map| try map.getCursor(hash.hashInt(repo_opts.hash, email)) else null) orelse continue;
-            try sets.append(aa, try DB.SortedSet(.read_only).init(set_cursor));
-        }
-        assignee_sets = if (sets.items.len == filters.assignees.len) sets.items else null;
-    }
-
-    // each status's listing intersects every filter's set
-    const open_sets = try thread.statusSets(Self, repo_opts.hash, aa, haxy_moment, filters.labels, assignee_sets, .open);
-    const closed_sets = try thread.statusSets(Self, repo_opts.hash, aa, haxy_moment, filters.labels, assignee_sets, .closed);
-
-    const event_id_to_issue_cursor = try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Issue.record_map_key)) orelse {
-        if (rooted) return error.NotFound;
-        return empty;
-    };
-    const event_id_to_issue = try DB.HashMap(.read_only).init(event_id_to_issue_cursor);
-
-    // the conflicted issues' container: a set view for membership and
-    // windowing, a map view for the resolve entry, over the same cursor.
-    var conflict_set: ?DB.SortedSet(.read_only) = null;
-    var conflicts_map: ?DB.SortedMap(.read_only) = null;
-    if (try haxy_moment.getCursor(hash.hashInt(repo_opts.hash, evt.Issue.conflicts_key))) |cursor| {
-        conflict_set = try DB.SortedSet(.read_only).init(cursor);
-        conflicts_map = try DB.SortedMap(.read_only).init(cursor);
-    }
 
     // a named issue roots its own status's window at itself (the conflicts
     // view's window instead); the other windows start at the beginning.
@@ -288,59 +252,33 @@ pub fn init(
     var closed_root: ?[]const u8 = null;
     var conflicts_root: ?[]const u8 = null;
     var conflict_data: ?Conflict = null;
-    if (rooted) {
-        const id_bytes = evt.parseEventId(empty.selected_id) catch return error.NotFound;
-        const issue_cursor = try event_id_to_issue.getCursor(hash.hashInt(repo_opts.hash, &id_bytes)) orelse return error.NotFound;
-        const issue_map = try DB.HashMap(.read_only).init(issue_cursor);
-        const issue_event = try evt.read(evt.Issue.Record, DB, repo_opts.hash, arena, issue_map);
-        const order_key = try aa.dupe(u8, &evt.orderKeyDesc(issue_event.created_order, &id_bytes));
-
+    const thread_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
+    const selected: ?Selected = if (rooted) try loadThread(repo_kind, repo_opts, arena, repo, io, admin_moment, tables, terms, empty.selected_id, view, thread_comments_start, viewer) else null;
+    if (selected) |thread_selected| {
+        const status = thread_selected.entry.record.event.status;
         if (view == .conflicts) {
-            // the id roots the conflicts window, so it must be conflicted
-            const set = conflict_set orelse return error.NotFound;
-            if (!try set.contains(order_key)) return error.NotFound;
-            conflicts_root = order_key;
+            conflicts_root = thread_selected.order_key;
         } else {
-            // the named issue must be in every set its window intersects (a
-            // filtered url can name an issue the filters leave out).
-            const sets = switch (issue_event.event.status) {
-                .open => open_sets,
-                .closed => closed_sets,
-            };
-            if (!try thread.inEverySet(DB, sets, order_key)) return error.NotFound;
-
-            switch (issue_event.event.status) {
-                .open => open_root = order_key,
-                .closed => closed_root = order_key,
+            switch (status) {
+                .open => open_root = thread_selected.order_key,
+                .closed => closed_root = thread_selected.order_key,
             }
             // form urls keep their view; otherwise the issue's status picks it.
-            if (view != .edit and view != .new_comment and view != .edit_comment and view != .remove) resolved_view = switch (issue_event.event.status) {
+            if (view != .edit and view != .new_comment and view != .edit_comment and view != .remove) resolved_view = switch (status) {
                 .open => .open,
                 .closed => .closed,
             };
-
             // a resolve url shows the resolve view only while the issue still
-            // has a conflict entry; otherwise the status list stands. the
-            // wasm client renders from the snapshot, so the diff machinery
-            // this pulls in is gated out of its build.
-            if (comptime !wasm) {
-                if (view == .resolve) {
-                    if (conflicts_map) |map| {
-                        if (try map.getCursor(order_key)) |conflict_cursor| {
-                            const conflict_entry = try DB.HashMap(.read_only).init(conflict_cursor);
-                            conflict_data = try thread.readConflict(Self, repo_kind, repo_opts, arena, repo, io, admin_moment, haxy_moment, &id_bytes, issue_event, conflict_entry);
-                            resolved_view = .resolve;
-                        }
-                    }
-                }
-            }
+            // has a conflict entry; otherwise the status list stands.
+            conflict_data = thread_selected.conflict;
+            if (conflict_data != null) resolved_view = .resolve;
         }
     }
 
-    const thread_comments_start = if (empty.comment_id.len == 0) comments_start else 0;
-    const open_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, open_sets, open_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    const closed_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, closed_sets, closed_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
-    const conflicts_window = try thread.loadWindow(Self, .issue, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_issue, if (conflict_set) |*set| set[0..1] else &.{}, conflicts_root, conflict_set, empty.selected_id, thread_comments_start, "", viewer);
+    const selected_entry: ?*const IssueWithId = if (selected) |*thread_selected| &thread_selected.entry else null;
+    const open_window = try loadWindow(repo_opts.hash, arena, admin_moment, tables, terms, .{ .status = .open }, open_root, selected_entry, viewer);
+    const closed_window = try loadWindow(repo_opts.hash, arena, admin_moment, tables, terms, .{ .status = .closed }, closed_root, selected_entry, viewer);
+    const conflicts_window = try loadWindow(repo_opts.hash, arena, admin_moment, tables, terms, .conflicts, conflicts_root, selected_entry, viewer);
     if (view == .conflicts and conflicts_window.count > 0) resolved_view = .conflicts;
 
     const comment_page = if (empty.comment_id.len == 0)
@@ -368,6 +306,216 @@ pub fn init(
         .description_page = empty.description_page,
         .labels = labels,
     };
+}
+
+// a search's terms, as the listings apply them
+pub fn Search(comptime hash_kind: hash.HashKind) type {
+    return struct {
+        // the words the listings are narrowed to, "" for none
+        words: []const u8,
+        labels: []const []const u8,
+        // the issue set of each assignee term, null when one of them lists
+        // nothing
+        assignee_sets: ?[]const evt.EventDB(hash_kind).SortedSet(.read_only),
+        // whether an assignee term names no user, which lists nothing
+        assignee_unknown: bool = false,
+
+        // the sets `status`'s listing intersects
+        pub fn statusSets(
+            self: @This(),
+            aa: std.mem.Allocator,
+            haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+            status: Status,
+        ) ![]const evt.EventDB(hash_kind).SortedSet(.read_only) {
+            return try thread.statusSets(Self, hash_kind, aa, haxy_moment, self.labels, self.assignee_sets, status);
+        }
+    };
+}
+
+// the decoded `search`'s terms, resolved against the repo
+pub fn readSearch(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    haxy_moment: evt.EventDB(hash_kind).HashMap(.read_only),
+    search: []const u8,
+) !Search(hash_kind) {
+    const aa = arena.allocator();
+    const DB = evt.EventDB(hash_kind);
+    const filters = try srch_thrd.parseFilters(aa, search);
+    var terms: Search(hash_kind) = .{ .words = filters.words, .labels = filters.labels, .assignee_sets = &.{} };
+
+    // a name resolves to its user's email. an unknown name or an email no
+    // issue carries lists nothing.
+    if (filters.assignees.len != 0) {
+        const by_assignee: ?DB.HashMap(.read_only) = if (try haxy_moment.getCursor(hash.hashInt(hash_kind, evt.Assignment.assignee_to_issue_id_set_key))) |cursor| try DB.HashMap(.read_only).init(cursor) else null;
+        var sets: std.ArrayList(DB.SortedSet(.read_only)) = .empty;
+        for (filters.assignees) |assignee| {
+            const email = switch (try ui.assigneeEmail(admin_moment, arena, assignee)) {
+                .email => |email| email,
+                .failure => {
+                    terms.assignee_unknown = true;
+                    continue;
+                },
+            };
+            const set_cursor = (if (by_assignee) |map| try map.getCursor(hash.hashInt(hash_kind, email)) else null) orelse continue;
+            try sets.append(aa, try DB.SortedSet(.read_only).init(set_cursor));
+        }
+        terms.assignee_sets = if (sets.items.len == filters.assignees.len) sets.items else null;
+    }
+    return terms;
+}
+
+// the listing a window shows: a status's issues, or the conflicted ones
+pub const List = union(enum) {
+    status: Status,
+    conflicts,
+};
+
+// one window of `list`'s issues that the search matches (the conflicts list
+// ignores it), starting at `root_key` (null for the first window). `selected`,
+// read with its comment window, stands in for its own entry.
+pub fn loadWindow(
+    comptime hash_kind: hash.HashKind,
+    arena: *std.heap.ArenaAllocator,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    tables: thread.Tables(Self, hash_kind),
+    terms: Search(hash_kind),
+    list: List,
+    root_key: ?[]const u8,
+    selected: ?*const IssueWithId,
+    viewer: ?ui.Viewer,
+) !Window {
+    return switch (list) {
+        .status => |status| try thread.loadWindow(Self, .issue, hash_kind, arena, admin_moment, tables, try terms.statusSets(arena.allocator(), tables.moment, status), root_key, selected, terms.words, viewer),
+        .conflicts => try thread.loadWindow(Self, .issue, hash_kind, arena, admin_moment, tables, if (tables.conflict_set) |*set| set[0..1] else &.{}, root_key, selected, "", viewer),
+    };
+}
+
+// the issue a url selects, read for its detail pane
+pub const Selected = struct {
+    entry: IssueWithId,
+    // the key the window holding it is rooted at
+    order_key: []const u8,
+    // its conflict, read for the resolve view while it has one
+    conflict: ?Conflict = null,
+};
+
+// the issue `id` names, with the window of its comments starting at
+// `comments_start`. not found when it names no issue, one the search leaves
+// out of its status's list, or for the conflicts view one without a conflict.
+pub fn loadThread(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    tables: thread.Tables(Self, repo_opts.hash),
+    terms: Search(repo_opts.hash),
+    id: []const u8,
+    view: ui.RoutablePage.IssuesView,
+    comments_start: usize,
+    viewer: ?ui.Viewer,
+) !Selected {
+    const aa = arena.allocator();
+    const DB = evt.EventDB(repo_opts.hash);
+    const id_bytes = evt.parseEventId(id) catch return error.NotFound;
+    const issue_cursor = try tables.records.getCursor(hash.hashInt(repo_opts.hash, &id_bytes)) orelse return error.NotFound;
+    const issue_map = try DB.HashMap(.read_only).init(issue_cursor);
+    const issue_event = try evt.read(evt.Issue.Record, DB, repo_opts.hash, arena, issue_map);
+    const order_key = evt.orderKeyDesc(issue_event.created_order, &id_bytes);
+
+    var conflict: ?Conflict = null;
+    if (view == .conflicts) {
+        // the id roots the conflicts window, so it must be conflicted
+        const set = tables.conflict_set orelse return error.NotFound;
+        if (!try set.contains(&order_key)) return error.NotFound;
+    } else {
+        // the named issue must be in every set its window intersects (a
+        // filtered url can name an issue the filters leave out).
+        const sets = try terms.statusSets(aa, tables.moment, issue_event.event.status);
+        if (!try thread.inEverySet(DB, sets, &order_key)) return error.NotFound;
+
+        // the wasm client renders from the snapshot, so the diff machinery
+        // this pulls in is gated out of its build.
+        if (comptime !wasm) {
+            if (view == .resolve) {
+                if (tables.conflicts_map) |map| {
+                    if (try map.getCursor(&order_key)) |conflict_cursor| {
+                        const conflict_entry = try DB.HashMap(.read_only).init(conflict_cursor);
+                        conflict = try thread.readConflict(Self, repo_kind, repo_opts, arena, repo, io, admin_moment, tables.moment, &id_bytes, issue_event, conflict_entry);
+                    }
+                }
+            }
+        }
+    }
+
+    return .{
+        .entry = (try thread.loadEntry(Self, repo_opts.hash, arena, admin_moment, tables, &order_key, comments_start, viewer)) orelse return error.NotFound,
+        .order_key = try aa.dupe(u8, &order_key),
+        .conflict = conflict,
+    };
+}
+
+// one window of `status`'s issues that the decoded `search` matches, starting
+// at the issue `from` names ("" = the first window). not found when `from`
+// names no issue of the status the search leaves in.
+pub fn readWindow(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    search: []const u8,
+    status: Status,
+    from: []const u8,
+    viewer: ?ui.Viewer,
+) !Window {
+    const rooted = from.len != 0;
+    const gpa = arena.child_allocator;
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (try event_db.momentStrict(repo)) {
+        .none => return if (rooted) error.NotFound else .empty,
+        .no_events => return if (rooted) error.NotFound else .empty,
+        .ok => |moment| moment,
+    };
+    const terms = try readSearch(repo_opts.hash, arena, admin_moment, haxy_moment, search);
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse return if (rooted) error.NotFound else .empty;
+    const view: ui.RoutablePage.IssuesView = switch (status) {
+        .open => .open,
+        .closed => .closed,
+    };
+    const selected: ?Selected = if (rooted) try loadThread(repo_kind, repo_opts, arena, repo, io, admin_moment, tables, terms, from, view, 0, viewer) else null;
+    if (selected) |thread_selected| if (thread_selected.entry.record.event.status != status) return error.NotFound;
+    return try loadWindow(repo_opts.hash, arena, admin_moment, tables, terms, .{ .status = status }, if (selected) |thread_selected| thread_selected.order_key else null, if (selected) |*thread_selected| &thread_selected.entry else null, viewer);
+}
+
+// the issue `id` names, with the window of its comments starting at
+// `comments_start`
+pub fn readThread(
+    comptime repo_kind: rp.RepoKind,
+    comptime repo_opts: rp.RepoOpts(repo_kind),
+    arena: *std.heap.ArenaAllocator,
+    repo: *rp.Repo(repo_kind, repo_opts),
+    io: std.Io,
+    admin_moment: ?evt.AdminDB.HashMap(.read_only),
+    id: []const u8,
+    comments_start: usize,
+    viewer: ?ui.Viewer,
+) !IssueWithId {
+    const gpa = arena.child_allocator;
+    var event_db = try thread.EventDb(repo_kind, repo_opts).open(io, gpa, repo);
+    defer event_db.deinit(io, gpa);
+    const haxy_moment = switch (try event_db.momentStrict(repo)) {
+        .none, .no_events => return error.NotFound,
+        .ok => |moment| moment,
+    };
+    const terms = try readSearch(repo_opts.hash, arena, admin_moment, haxy_moment, "");
+    const tables = (try thread.Tables(Self, repo_opts.hash).read(haxy_moment)) orelse return error.NotFound;
+    return (try loadThread(repo_kind, repo_opts, arena, repo, io, admin_moment, tables, terms, id, .open, comments_start, viewer)).entry;
 }
 
 pub const View = thread.View(.issue, Self);

@@ -274,6 +274,9 @@ pub const Annotations = struct {
 
     // a read, which in local mode refreshes the repo first, and that writes
     pub const read: Annotations = .{ .readOnlyHint = false, .destructiveHint = false, .idempotentHint = true };
+    // a read that never runs in local mode, so nothing refreshes and nothing
+    // is written
+    pub const server_read: Annotations = .{ .readOnlyHint = true, .destructiveHint = false, .idempotentHint = true };
     // a write that adds to what is there
     pub const add: Annotations = .{ .readOnlyHint = false, .destructiveHint = false, .idempotentHint = false };
     // a write that adds to what is there, where a repeat fails without writing
@@ -311,6 +314,19 @@ pub const tools = [_]Tool{
     .{ .Operation = domain.ListPatches, .annotations = .read },
     .{ .Operation = domain.GetPatch, .annotations = .read },
     .{ .Operation = domain.ListNotifications, .annotations = .read },
+    .{ .Operation = domain.GetRepo, .annotations = .read },
+    .{ .Operation = domain.ListFiles, .annotations = .read },
+    .{ .Operation = ReadFileTool, .annotations = .read },
+    .{ .Operation = domain.ListRefs, .annotations = .read },
+    .{ .Operation = domain.ListCommits, .annotations = .read },
+    .{ .Operation = domain.GetCommit, .annotations = .read },
+    .{ .Operation = domain.Diff, .annotations = .read },
+    .{ .Operation = domain.ListDiscussions, .annotations = .read },
+    .{ .Operation = domain.ListEvents, .annotations = .read },
+    // server only: a local call is refused before any refresh
+    .{ .Operation = domain.ListUsers, .annotations = .server_read },
+    .{ .Operation = domain.ListRepos, .annotations = .server_read },
+    .{ .Operation = domain.ListForks, .annotations = .server_read },
     // each call opens another thread
     .{ .Operation = domain.CreateThread, .annotations = .add },
     // the update commits again even when nothing changed
@@ -466,6 +482,49 @@ pub const AttachTool = struct {
             }).run(ctx);
         }
     };
+};
+
+// the `read_file` tool: domain.ReadFile without `find`, the file finder's
+// prefix, which only narrows which path the page may read and reads nothing
+// else, so a caller has nothing to set it to
+pub const ReadFileTool = struct {
+    pub const tool_name = domain.ReadFile.tool_name;
+    pub const tool_description = domain.ReadFile.tool_description;
+    pub const tool_schema_notes = blk: {
+        const notes = domain.ReadFile.tool_schema_notes;
+        break :blk .{
+            .repo = notes.repo,
+            .ref_kind = notes.ref_kind,
+            .ref = notes.ref,
+            .path = notes.path,
+            .line = notes.line,
+            // the operation's note names `find`, which this tool doesn't offer
+            .patchrev = "A patch revision's hex event id, to read its file instead of a ref's; not with ref_kind or ref.",
+            .fork_id = notes.fork_id,
+        };
+    };
+
+    repo: []const u8,
+    ref_kind: @FieldType(domain.ReadFile, "ref_kind") = null,
+    ref: []const u8 = "",
+    path: []const u8,
+    line: @FieldType(domain.ReadFile, "line") = 0,
+    patchrev: []const u8 = "",
+    fork_id: []const u8 = "",
+
+    pub fn run(self: ReadFileTool, ctx: *domain.Ctx) !domain.ReadFile.Result {
+        var input: domain.ReadFile = .{ .repo = self.repo, .path = self.path };
+        inline for (@typeInfo(ReadFileTool).@"struct".field_names) |name| @field(input, name) = @field(self, name);
+        return try input.run(ctx);
+    }
+
+    comptime {
+        // every other field of the operation is offered
+        for (@typeInfo(domain.ReadFile).@"struct".field_names) |name| {
+            if (std.mem.eql(u8, name, "find")) continue;
+            if (!@hasField(ReadFileTool, name) or @FieldType(ReadFileTool, name) != @FieldType(domain.ReadFile, name)) @compileError("read_file doesn't offer ReadFile." ++ name ++ " as it is");
+        }
+    }
 };
 
 // tools/list's result

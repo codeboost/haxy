@@ -9,13 +9,14 @@ const fixture = @import("domain/fixture.zig");
 comptime {
     _ = @import("mcp/cli.zig");
     _ = @import("mcp/stdio.zig");
+    _ = @import("mcp/reads.zig");
 }
 
 const io = std.testing.io;
 const allocator = std.testing.allocator;
 
 // the reply `server` writes for `line`, which the caller frees
-fn reply(server: *mcp.Server, line: []const u8) ![]u8 {
+pub fn reply(server: *mcp.Server, line: []const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     try server.handle(line, &out.writer);
@@ -24,7 +25,7 @@ fn reply(server: *mcp.Server, line: []const u8) ![]u8 {
 
 // `actual` holds exactly one json-rpc message, a line ending in "\n", equal
 // to `expected` as json values (key order and spacing don't matter)
-fn expectJsonLine(expected: []const u8, actual: []const u8) !void {
+pub fn expectJsonLine(expected: []const u8, actual: []const u8) !void {
     if (actual.len == 0 or actual[actual.len - 1] != '\n' or std.mem.indexOfScalar(u8, actual, '\n') != actual.len - 1) {
         std.debug.print("expected one line, got: {s}\n", .{actual});
         return error.TestExpectedOneLine;
@@ -32,7 +33,7 @@ fn expectJsonLine(expected: []const u8, actual: []const u8) !void {
     try expectJson(expected, actual[0 .. actual.len - 1]);
 }
 
-fn expectJson(expected: []const u8, actual: []const u8) !void {
+pub fn expectJson(expected: []const u8, actual: []const u8) !void {
     const want = try std.json.parseFromSlice(std.json.Value, allocator, expected, .{});
     defer want.deinit();
     const got = std.json.parseFromSlice(std.json.Value, allocator, actual, .{}) catch |err| {
@@ -46,7 +47,7 @@ fn expectJson(expected: []const u8, actual: []const u8) !void {
     }
 }
 
-fn jsonEql(a: std.json.Value, b: std.json.Value) bool {
+pub fn jsonEql(a: std.json.Value, b: std.json.Value) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
     return switch (a) {
         .null => true,
@@ -184,7 +185,7 @@ test "mcp: a line that isn't json is a parse error and one without a version or 
 }
 
 // the `tools` array of a tools/list reply, for the caller to deinit
-fn listTools(server: *mcp.Server) !std.json.Parsed(std.json.Value) {
+pub fn listTools(server: *mcp.Server) !std.json.Parsed(std.json.Value) {
     const out = try reply(server,
         \\{"jsonrpc":"2.0","id":2,"method":"tools/list"}
     );
@@ -219,10 +220,11 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
         try names.appendSlice(allocator, tool.object.get("name").?.string);
         try names.append(allocator, ' ');
     }
-    try std.testing.expectEqualStrings("refresh_local list_issues get_issue get_discussion list_patches get_patch list_notifications create_thread edit_thread resolve_conflict set_thread_status create_comment edit_comment attach assign unassign subscribe mute publish_patch create_repo update_repo_settings grant promote revoke demote protect_branch unprotect_branch set_default_branch sync add_key mark_notification_read dismiss_notification ", names.items);
+    try std.testing.expectEqualStrings("refresh_local list_issues get_issue get_discussion list_patches get_patch list_notifications get_repo list_files read_file list_refs list_commits get_commit get_diff list_discussions list_events list_users list_repos list_forks create_thread edit_thread resolve_conflict set_thread_status create_comment edit_comment attach assign unassign subscribe mute publish_patch create_repo update_repo_settings grant promote revoke demote protect_branch unprotect_branch set_default_branch sync add_key mark_notification_read dismiss_notification ", names.items);
 
     // every tool's annotations cover the whole call, which in local mode
-    // refreshes the repo first, so no tool is read-only
+    // refreshes the repo first, so only the server-only reads, which never
+    // refresh, are read-only
     {
         var annotations: std.ArrayList(u8) = .empty;
         defer annotations.deinit(allocator);
@@ -243,6 +245,18 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
             \\  "list_patches": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
             \\  "get_patch": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
             \\  "list_notifications": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "get_repo": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_files": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "read_file": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_refs": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_commits": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "get_commit": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "get_diff": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_discussions": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_events": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_users": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_repos": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_forks": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
             \\  "create_thread": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false },
             \\  "edit_thread": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
             \\  "resolve_conflict": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
@@ -359,7 +373,7 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
             \\    "type": "object",
             \\    "properties": {
             \\      "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
-            \\      "view": { "type": "string", "enum": ["open", "closed", "merged", "drafts", "conflicts"], "description": "Which patches: open, closed, merged, drafts (the acting user's unpublished drafts, server only) or conflicts." },
+            \\      "view": { "type": "string", "enum": ["open", "closed", "merged", "drafts", "conflicts"], "description": "Which patches: open, closed, merged, drafts (the acting user's unpublished drafts, which take no search) or conflicts. Local repos have no drafts, so their drafts window is always empty." },
             \\      "search": { "type": "string", "description": "Words to find, with label:x filters." },
             \\      "from": { "type": "string", "description": "The id of the first patch of the window to list; \"\" or omitted lists the first window." }
             \\    },
@@ -395,7 +409,7 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
 }
 
 // an mcp server over the fixture's data, acting as `user`
-fn serverMode(server: *fixture.Server, user: ?fixture.Id) mcp.Server {
+pub fn serverMode(server: *fixture.Server, user: ?fixture.Id) mcp.Server {
     return .{ .io = io, .gpa = allocator, .mode = .{ .server = .{
         .admin_repo_path = server.admin.core.work_path,
         .users_dir = server.users_dir,
@@ -847,6 +861,7 @@ test "mcp: tools/list lists exactly the registered tools in each mode, and never
     defer local.deinit();
     var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
     const always = "refresh_local list_issues get_issue get_discussion list_patches get_patch list_notifications " ++
+        "get_repo list_files read_file list_refs list_commits get_commit get_diff list_discussions list_events list_users list_repos list_forks " ++
         "create_thread edit_thread resolve_conflict set_thread_status create_comment edit_comment attach assign unassign subscribe mute publish_patch " ++
         "create_repo update_repo_settings grant promote revoke demote protect_branch unprotect_branch set_default_branch sync add_key mark_notification_read dismiss_notification ";
     const flagged = "merge_patch remove_thread remove_comment remove_attachment undo remove_key ";
@@ -854,14 +869,14 @@ test "mcp: tools/list lists exactly the registered tools in each mode, and never
         const names = try toolNames(&server);
         defer allocator.free(names);
         try std.testing.expectEqualStrings(always, names);
-        try std.testing.expectEqual(32, std.mem.count(u8, names, " "));
+        try std.testing.expectEqual(44, std.mem.count(u8, names, " "));
     }
     server.allow_destructive = true;
     {
         const names = try toolNames(&server);
         defer allocator.free(names);
         try std.testing.expectEqualStrings(always ++ flagged, names);
-        try std.testing.expectEqual(38, std.mem.count(u8, names, " "));
+        try std.testing.expectEqual(50, std.mem.count(u8, names, " "));
         // each takes the account password, which tool arguments never carry
         for ([_][]const u8{ " delete_repo ", " delete_user ", " register_user ", " update_user_settings ", " delete_fork " }) |name| {
             try std.testing.expect(std.mem.indexOf(u8, names, name) == null);
@@ -1170,7 +1185,7 @@ test "mcp: the password guard refuses any input with a field naming a password" 
 }
 
 // the input schema `tools/list` gives the tool `name`, as json
-fn toolSchema(tools: std.json.Value, name: []const u8) ![]u8 {
+pub fn toolSchema(tools: std.json.Value, name: []const u8) ![]u8 {
     for (tools.array.items) |tool| {
         if (std.mem.eql(u8, tool.object.get("name").?.string, name)) {
             return try std.json.Stringify.valueAlloc(allocator, tool.object.get("inputSchema").?, .{});
@@ -1255,7 +1270,7 @@ test "mcp: the new tools' schemas carry enums from other modules, nullable roles
 
 // the reply to a tools/call of `name` with `arguments`, a json object, under
 // the request id 1, which the caller frees
-fn call(server: *mcp.Server, name: []const u8, arguments: []const u8) ![]u8 {
+pub fn call(server: *mcp.Server, name: []const u8, arguments: []const u8) ![]u8 {
     const line = try std.fmt.allocPrint(allocator,
         \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{s}","arguments":{s}}}}}
     , .{ name, arguments });
@@ -1264,7 +1279,7 @@ fn call(server: *mcp.Server, name: []const u8, arguments: []const u8) ![]u8 {
 }
 
 // a tools/call of `name` with `arguments` answers `result`, a json value
-fn expectCall(server: *mcp.Server, name: []const u8, arguments: []const u8, result: []const u8) !void {
+pub fn expectCall(server: *mcp.Server, name: []const u8, arguments: []const u8, result: []const u8) !void {
     const out = try call(server, name, arguments);
     defer allocator.free(out);
     const expected = try std.fmt.allocPrint(allocator,
@@ -1275,7 +1290,7 @@ fn expectCall(server: *mcp.Server, name: []const u8, arguments: []const u8, resu
 }
 
 // a tools/call of `name` with `arguments` answers a tool error saying `text`
-fn expectToolError(server: *mcp.Server, name: []const u8, arguments: []const u8, text: []const u8) !void {
+pub fn expectToolError(server: *mcp.Server, name: []const u8, arguments: []const u8, text: []const u8) !void {
     const result = try std.fmt.allocPrint(allocator,
         \\{{"content":[{{"type":"text","text":"{s}"}}],"isError":true}}
     , .{text});
@@ -1651,7 +1666,7 @@ test "mcp: a user removed between two list_notifications calls is logged out fro
 
 // how many issues the local repo's event db holds, read without bringing it
 // up to date first
-fn consumedIssueCount(local: anytype) !usize {
+pub fn consumedIssueCount(local: anytype) !usize {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var ctx = local.ctx(&arena);

@@ -1,6 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const evt = @import("../event.zig");
-const pch = @import("../patch.zig");
 const notify = @import("../notify.zig");
 const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
@@ -31,6 +31,8 @@ pub const Settings = @import("./Repo/Settings.zig");
 pub const Members = @import("./Repo/Members.zig");
 pub const Branches = @import("./Repo/Branches.zig");
 pub const Quit = @import("./Quit.zig");
+
+const wasm = builtin.target.cpu.arch == .wasm32;
 
 header: Header,
 repo: evt.Repo.Record,
@@ -79,6 +81,8 @@ pub fn init(
         .repo_diff => |*d| d.value.slice(),
         else => "",
     };
+    // the loaders read the named ref decoded; the empty tabs show the route's form
+    const requested_ref = if (requested_ref_or_oid == null) requested_ref_value else try decodeParam(arena, requested_ref_value);
     const patchrev_id: []const u8 = switch (route) {
         .repo_files => |*f| f.patchrev_id.slice(),
         .repo_diff => |*d| d.patchrev_id.slice(),
@@ -92,20 +96,20 @@ pub fn init(
         .repo_files => |f| f.line,
         else => 0,
     };
-    const files_find: []const u8 = switch (route) {
+    const files_find = try decodeParam(arena, switch (route) {
         .repo_files => |*f| f.find.slice(),
         else => "",
-    };
+    });
     // the commits view's pane shows the whole message of the commit it walks from
     const commits_message = route == .repo_commits and route.repo_commits.message;
     const commits_base_oid: []const u8 = switch (route) {
         .repo_commits => |*c| c.base_oid.slice(),
         else => "",
     };
-    const commits_search: []const u8 = switch (route) {
+    const commits_search = try decodeParam(arena, switch (route) {
         .repo_commits => |*c| c.search.slice(),
         else => "",
-    };
+    });
     const commits_from: []const u8 = switch (route) {
         .repo_commits => |*c| c.from.slice(),
         else => "",
@@ -114,24 +118,26 @@ pub fn init(
         .repo_commits => |*c| c.merge.slice(),
         else => "",
     };
-    // the refs tab windows one column at a time: `refs_from` (a url-encoded
-    // ref name) roots `refs_kind`'s column, the other stays at its first window.
+    // the refs tab windows one column at a time: `refs_from` (a ref name, which
+    // the route holds url-encoded) roots `refs_kind`'s column, the other stays
+    // at its first window.
     const refs_kind: ui.RoutablePage.RefKind = switch (route) {
         .repo_refs => |r| r.kind,
         else => .branch,
     };
-    const refs_from: []const u8 = switch (route) {
+    const refs_route_from: []const u8 = switch (route) {
         .repo_refs => |*r| r.from.slice(),
         else => "",
     };
-    const refs_search: []const u8 = switch (route) {
+    const refs_from = try decodeParam(arena, refs_route_from);
+    const refs_search = try decodeParam(arena, switch (route) {
         .repo_refs => |*r| r.search.slice(),
         else => "",
-    };
-    const discussions_search: []const u8 = switch (route) {
+    });
+    const discussions_search = try decodeParam(arena, switch (route) {
         .repo_discussions => |*t| t.search.slice(),
         else => "",
-    };
+    });
     const discussions_selected: []const u8 = switch (route) {
         .repo_discussions => |*t| t.selected.slice(),
         else => "",
@@ -150,10 +156,10 @@ pub fn init(
     };
     // the issues tab's search, the issue its window is rooted at, and the view
     // it shows.
-    const issues_search: []const u8 = switch (route) {
+    const issues_search = try decodeParam(arena, switch (route) {
         .repo_issues => |*i| i.search.slice(),
         else => "",
-    };
+    });
     const issues_selected: []const u8 = switch (route) {
         .repo_issues => |*i| i.selected.slice(),
         else => "",
@@ -174,10 +180,10 @@ pub fn init(
         .repo_issues => |i| i.comments_start,
         else => 0,
     };
-    const patches_search: []const u8 = switch (route) {
+    const patches_search = try decodeParam(arena, switch (route) {
         .repo_patches => |*p| p.search.slice(),
         else => "",
-    };
+    });
     const patches_selected: []const u8 = switch (route) {
         .repo_patches => |*p| p.selected.slice(),
         else => "",
@@ -226,59 +232,46 @@ pub fn init(
         else => "",
     };
 
-    // where the on-disk repo lives (null keeps the views' empty fallback), plus
-    // the repo and owner-name metadata the header shows. local mode already
-    // knows all three; the server paths resolve them from the admin db.
-    var source: ?ui.RepoSource = null;
-    var repo_id_maybe: ?[evt.event_id_size]u8 = null;
+    // one context for the whole page, over the session's own moment and the
+    // account it checked there: it resolves the repo, so the page and the
+    // operations share one visibility rule, and the notify buttons and the
+    // read mark run with it. a session with no filesystem (wasm) has none.
+    var ctx_maybe: ?domain.Ctx = if (comptime wasm) null else session.pageCtx(arena) catch |err| switch (err) {
+        error.UnavailableHere => null,
+        else => |e| return e,
+    };
+    const resolved: domain.Resolved = if (ctx_maybe) |*ctx|
+        // local routes elide the identity, and local mode has its one repo
+        (try domain.resolveRepo(ctx, if (session.local != null) "" else repo_identity.identity)) orelse return error.NotFound
+    else if (session.local) |local|
+        try localResolved(arena, local)
+    else
+        return error.NoMoment;
+    // where the on-disk repo lives, plus the repo and owner-name metadata the
+    // header shows
+    const source: ui.RepoSource = resolved.source;
+    const repo_id_maybe: ?[evt.event_id_size]u8 = resolved.id;
+    const repo = resolved.record;
+    // the page reads the admin db at the session's moment, which its context holds
+    const haxy_moment: ?DB.HashMap(.read_only) = if (ctx_maybe) |ctx| ctx.moment else session.haxy_moment;
     // local mode has no owner
     var owner_id: [evt.event_id_size]u8 = @splat(0);
-    var repo: evt.Repo.Record = undefined;
-    // local mode owns its repo
-    var role: evt.Repo.Role = .owner;
-    var owner_name: []const u8 = undefined;
-    if (session.local) |local| {
-        source = local;
-        // local routes elide the identity, so the display name comes from the
-        // repo's directory rather than the route.
-        repo = .{
-            .event = .{
-                .user_id = @splat('0'),
-                .name = try arena.allocator().dupe(u8, std.Io.Dir.path.basename(local.path)),
-                .description = "",
-                // local mode shows every tab
-                .discuss_role = .read,
-                .issue_role = .read,
-                .patch_role = .read,
-            },
-        };
-        owner_name = "";
-    } else {
-        const haxy_moment = session.haxy_moment orelse return error.NoMoment;
-        const io = session.io orelse return error.NoMoment;
-        const users_dir = session.users_dir orelse return error.NoMoment;
-        const found = (try evt.readRepoByOwnerAndName(io, arena.child_allocator, arena, haxy_moment, users_dir, repo_identity.owner, repo_identity.name, session.userId())) orelse return error.NotFound;
-        // a repo the session can't read doesn't exist to it
-        role = found.role orelse return error.NotFound;
-        repo = found.repo;
-        repo_id_maybe = found.event_id;
-
+    var owner_name: []const u8 = "";
+    if (session.local == null) {
         // resolve the creating user so the header can show their name to the left
         // of the repo title.
         owner_id = try evt.parseEventId(&repo.event.user_id);
-        const owner = (try evt.User.readById(DB, hash_kind, haxy_moment, arena, &owner_id)) orelse return error.NotFound;
+        const owner = (try evt.User.readById(DB, hash_kind, haxy_moment orelse unreachable, arena, &owner_id)) orelse return error.NotFound;
         owner_name = owner.event.name;
-
-        // the repo's working copy lives in its owner's dir.
-        source = .{
-            .path = try evt.repoPath(arena.allocator(), users_dir, &owner_id, &found.event_id),
-            .repo_kind = .xit,
-        };
     }
+
+    // the viewer's account as the session checked it
+    const viewer_id: ?[evt.event_id_size]u8 = if (ctx_maybe) |ctx| ctx.user_id else session.userId();
+    const viewer_name: ?[]const u8 = if (ctx_maybe) |ctx| (if (ctx.user) |user| user.event.name else null) else session.data.user_name;
 
     const handle = ui.RepoHandle{
         .location = .{ .repo = try arena.allocator().dupe(u8, repo_identity.identity) },
-        .viewer = try ui.Viewer.init(session, arena, role),
+        .viewer = if (ctx_maybe) |*ctx| pageViewer(ctx, resolved) else try ui.Viewer.init(session, arena, resolved.role),
         .read_access = repo.event.read_access,
     };
 
@@ -300,10 +293,10 @@ pub fn init(
     var undo_data: ?Undo = null;
     // only the owner sees the settings, which show the repo's hash kind
     var settings: ?Settings = null;
-    const files, const changes, const refs, var discussions, var issues, var patches, const events = blk: {
+    const files, const changes, var refs, var discussions, var issues, var patches, const events = blk: {
         read: {
             const io = session.io orelse break :read;
-            const src = source orelse break :read;
+            const src = source;
             const gpa = arena.child_allocator;
             switch (src.repo_kind) {
                 inline else => |repo_kind| {
@@ -313,15 +306,16 @@ pub fn init(
                         inline else => |*opened| {
                             // local mode: bring the event db up to date with the events branch
                             if (session.local != null) {
-                                try evt.consume(.local, .repo, repo_kind, opened.self_repo_opts, io, gpa, opened, evt.events_ref, &.{});
-                                try pch.refreshBranches(.local, repo_kind, opened.self_repo_opts, io, gpa, opened, null);
+                                // a local session with a filesystem has a context
+                                const ctx = if (ctx_maybe) |*ctx| ctx else return error.UnavailableHere;
+                                try (domain.RefreshLocal{}).runOpen(ctx, repo_kind, opened.self_repo_opts, opened, resolved);
                             }
                             if (session.data.host_kind == .server and handle.canUndo()) {
                                 // a server page always resolved its repo id
                                 const repo_id = repo_id_maybe orelse unreachable;
                                 const identity = try arena.allocator().dupe(u8, repo_identity.identity);
                                 // only the repo's creator may delete it, never a granted owner
-                                const creator = if (session.userId()) |user_id| std.mem.eql(u8, &user_id, &owner_id) else false;
+                                const creator = if (viewer_id) |user_id| std.mem.eql(u8, &user_id, &owner_id) else false;
                                 // the branch HEAD names, which the branches tab shows as the default
                                 var head_buffer: [xit.ref.MAX_REF_CONTENT_SIZE]u8 = undefined;
                                 const default_branch = if (opened.head(io, &head_buffer)) |head| switch (head) {
@@ -343,14 +337,14 @@ pub fn init(
                                         .repo_delete => .delete,
                                         else => .settings,
                                     },
-                                    .members = try Members.init(io, gpa, arena, session.haxy_moment orelse return error.NoMoment, session.users_dir orelse return error.NoMoment, repo_identity.identity, &owner_id, &repo_id, members_route.start, if (members_route.confirm) |action| .{ .action = action, .name = members_route.user.slice() } else null),
+                                    .members = try Members.init(io, gpa, arena, haxy_moment orelse return error.NoMoment, session.users_dir orelse return error.NoMoment, repo_identity.identity, &owner_id, &repo_id, members_route.start, if (members_route.confirm) |action| .{ .action = action, .name = members_route.user.slice() } else null),
                                     .branches = try Branches.init(arena, repo_identity.identity, repo.event, default_branch),
                                     .delete = if (creator) .{ .target = .{ .repo = identity } } else null,
                                 };
                             }
                             // tabs switch in-page, so every tab's data is read here
                             if (repo_kind == .xit and session.data.host_kind == .server and handle.canWrite()) {
-                                undo_data = Undo.init(opened.self_repo_opts, arena, opened, session.haxy_moment, repo_identity.identity, undo_index, handle) catch |err| switch (err) {
+                                undo_data = Undo.init(opened.self_repo_opts, arena, opened, haxy_moment, repo_identity.identity, undo_index, handle) catch |err| switch (err) {
                                     // a transaction the page can't show
                                     error.OutOfMemory, error.NotFound => return err,
                                     else => .{ .identity = try arena.allocator().dupe(u8, repo_identity.identity), .handle = handle, .failure = @errorName(err) },
@@ -358,7 +352,7 @@ pub fn init(
                             }
                             // a merge: route stands for the log of what the merge brought in
                             const ref_or_oid: ?ui.RoutablePage.RefOrOid, const ref_value, const base_oid = if (commits_merge.len == 0)
-                                .{ requested_ref_or_oid, requested_ref_value, commits_base_oid }
+                                .{ requested_ref_or_oid, requested_ref, commits_base_oid }
                             else merged: {
                                 const merged = try Commits.resolveMerge(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, commits_merge);
                                 break :merged .{ .object, merged.oid, merged.base_oid };
@@ -366,21 +360,21 @@ pub fn init(
                             const files_data = if (patchrev_id.len != 0)
                                 try Files.initPatchRev(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, handle, patchrev_id, files_dir, files_line)
                             else
-                                try Files.init(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, handle, ref_or_oid, ref_value, files_dir, files_line, files_find);
+                                try Files.load(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, handle, ref_or_oid, ref_value, files_dir, files_line, files_find);
                             const changes_data: Changes = if (route == .repo_diff)
                                 .{ .diff = try Diff.init(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, route.repo_diff) }
                             else if (patchrev_id.len != 0) diff: {
                                 const diff_route = ui.RoutablePage.repoPatchRevDiffRoute(repo_identity.identity, patchrev_id, 0, "") orelse return error.RouteTooLong;
                                 break :diff .{ .diff = try Diff.init(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, diff_route.repo_diff) };
-                            } else .{ .commits = try Commits.init(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, session.haxy_moment, handle, ref_or_oid, ref_value, commits_message, base_oid, commits_search, commits_from) };
+                            } else .{ .commits = try Commits.load(repo_kind, opened.self_repo_opts, arena, opened, io, gpa, haxy_moment, handle, ref_or_oid, ref_value, commits_message, base_oid, commits_search, commits_from) };
                             const target_branch = if (files_data.ref_or_oid == .branch) files_data.ref_or_oid_value else "";
-                            var discussions_data = try Discussions.init(repo_kind, opened.self_repo_opts, arena, opened, io, session.haxy_moment, repo_identity.identity, discussions_search, discussions_selected, discussions_comment, discussions_comments_start, discussions_view, tabViewer(handle, repo, .discuss));
-                            var issues_data = try Issues.init(repo_kind, opened.self_repo_opts, arena, opened, io, session.haxy_moment, repo_identity.identity, issues_search, issues_selected, issues_comment, issues_comments_start, issues_theirs, issues_view, tabViewer(handle, repo, .issue));
-                            var patches_data = try Patches.init(repo_kind, opened.self_repo_opts, arena, opened, io, session.haxy_moment, session.users_dir, Patches.DraftsOwner.ofSession(session), repo_id_maybe, repo_identity.identity, target_branch, patches_search, patches_selected, patches_comment, patches_comments_start, patches_theirs, patches_view, tabViewer(handle, repo, .patch));
+                            var discussions_data = try Discussions.init(repo_kind, opened.self_repo_opts, arena, opened, io, haxy_moment, repo_identity.identity, discussions_search, discussions_selected, discussions_comment, discussions_comments_start, discussions_view, tabViewer(handle, repo, .discuss));
+                            var issues_data = try Issues.init(repo_kind, opened.self_repo_opts, arena, opened, io, haxy_moment, repo_identity.identity, issues_search, issues_selected, issues_comment, issues_comments_start, issues_theirs, issues_view, tabViewer(handle, repo, .issue));
+                            var patches_data = try Patches.init(repo_kind, opened.self_repo_opts, arena, opened, io, haxy_moment, session.users_dir, Patches.DraftsOwner.of(viewer_id, viewer_name), repo_id_maybe, repo_identity.identity, target_branch, patches_search, patches_selected, patches_comment, patches_comments_start, patches_theirs, patches_view, tabViewer(handle, repo, .patch));
                             if (repo_kind == .xit and session.data.host_kind == .server) {
                                 // a server page always resolved its repo id
                                 const repo_id = repo_id_maybe orelse unreachable;
-                                readNotify(opened.self_repo_opts, session, arena, opened, &owner_id, &repo_id, viewed_thread, &discussions_data, &issues_data, &patches_data) catch |err| {
+                                readNotify(opened.self_repo_opts, if (ctx_maybe) |*ctx| ctx else unreachable, arena, opened, &owner_id, &repo_id, viewed_thread, &discussions_data, &issues_data, &patches_data) catch |err| {
                                     std.log.warn("failed to read thread notifications: {s}", .{@errorName(err)});
                                 };
                             }
@@ -391,7 +385,7 @@ pub fn init(
                                 discussions_data,
                                 issues_data,
                                 patches_data,
-                                try Events.init(repo_kind, opened.self_repo_opts, arena, opened, io, session.haxy_moment, repo_identity.identity, repo.event, events_view, events_kind, events_selected, events_moment, session.local != null, session.data.sync_failure),
+                                try Events.init(repo_kind, opened.self_repo_opts, arena, opened, io, haxy_moment, repo_identity.identity, repo.event, events_view, events_kind, events_selected, events_moment, session.local != null, session.data.sync_failure),
                             };
                         },
                     }
@@ -412,6 +406,8 @@ pub fn init(
     if (route == .repo_undo and undo_data == null) return error.NotFound;
     if ((route == .repo_settings or route == .repo_members or route == .repo_branches or route == .repo_delete) and settings == null) return error.NotFound;
     if (settings) |value| if (route == .repo_delete and value.delete == null) return error.NotFound;
+    // the page shows its route's own form of the window root
+    refs.from = try arena.allocator().dupe(u8, refs_route_from);
     discussions.repo_source = source;
     issues.repo_source = source;
     patches.repo_source = source;
@@ -440,7 +436,7 @@ pub fn init(
 // set the viewer's notify button on every listed thread and mark the viewed thread's notif read
 fn readNotify(
     comptime repo_opts: rp.RepoOpts(.xit),
-    session: *ui.Session,
+    ctx: *domain.Ctx,
     arena: *std.heap.ArenaAllocator,
     repo: *rp.Repo(.xit, repo_opts),
     owner_id: *const [evt.event_id_size]u8,
@@ -450,8 +446,6 @@ fn readNotify(
     issues: *Issues,
     patches: *Patches,
 ) !void {
-    if (session.userId() == null) return;
-    var ctx = try session.ctx(arena);
     // a removed account is dropped from the context
     const user_id = ctx.user_id orelse return;
     const server = switch (ctx.host) {
@@ -460,7 +454,7 @@ fn readNotify(
     };
 
     // drafts live in their forks, so they have no button
-    try domain.setNotifyActions(&ctx, owner_id, repo_id, .{
+    try domain.setNotifyActions(ctx, owner_id, repo_id, .{
         &discussions.recent,
         &issues.open,
         &issues.closed,
@@ -490,10 +484,45 @@ fn readNotify(
     (domain.MarkRead{
         .notification_id = &std.fmt.bytesToHex(notif_id, .lower),
         .last_child_id = &std.fmt.bytesToHex(last_child_id, .lower),
-    }).run(&ctx) catch |err| switch (err) {
+    }).run(ctx) catch |err| switch (err) {
         // a newer child arrived since the read above, which the page doesn't show
         error.NotificationOutOfDate => {},
         else => |e| return e,
+    };
+}
+
+// a route's url-encoded parameter, decoded once here for the loaders
+fn decodeParam(arena: *std.heap.ArenaAllocator, encoded: []const u8) ![]const u8 {
+    if (encoded.len == 0) return "";
+    return std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, encoded));
+}
+
+// who the page is built for, as the context sees them: null when logged out
+// or once their account is removed. local mode owns everything.
+fn pageViewer(ctx: *const domain.Ctx, resolved: domain.Resolved) ?ui.Viewer {
+    return switch (ctx.host) {
+        .local => .{ .role = .owner, .email = "" },
+        .server => .{ .role = resolved.role, .email = (ctx.user orelse return null).event.email },
+    };
+}
+
+// the local repo as `domain.resolveRepo` resolves it, for a session with no
+// context to resolve it with
+fn localResolved(arena: *std.heap.ArenaAllocator, local: ui.RepoSource) !domain.Resolved {
+    return .{
+        .record = .{
+            .event = .{
+                .user_id = @splat('0'),
+                .name = try arena.allocator().dupe(u8, std.Io.Dir.path.basename(local.path)),
+                .description = "",
+                // local mode shows every tab
+                .discuss_role = .read,
+                .issue_role = .read,
+                .patch_role = .read,
+            },
+        },
+        .role = .owner,
+        .source = local,
     };
 }
 

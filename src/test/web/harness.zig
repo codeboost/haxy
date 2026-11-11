@@ -24,6 +24,13 @@
 //! then removed), password `password`; ids, `open`, `secret`, `admin`,
 //! `users_dir`, `admin_repo_path`, `host()` for arranging data.
 //! `Local(.git|.xit).init()`: one commit, committer `tester`.
+//! `Server.initWith(hash_kind, .{ .io })` and `Local(kind).initWith(.{ .io,
+//! .child })` serve and arrange through another `std.Io` (the page snapshots
+//! give one with a fixed clock and seeded ids) and can put a local repo in a
+//! named child dir, since a local repo's dir name is shown. page snapshots:
+//! `pages.zig` over `world.zig`; the edges worlds (encoded searches, finds,
+//! ref cursors, long comment windows) had their goldens recorded at b123eaf,
+//! the code before phase 5, and are compared with today's.
 //! clients (own cookie jar; no Expires, Domain, Secure or positive Max-Age):
 //! `server.client()`, `server.clientAs("bob")`, `server.mintSession(&c, id)`,
 //! `local.client()`. `get`, `getJson`, `post(path, fields)`, `postWithheld`
@@ -66,6 +73,12 @@ pub const Server = struct {
     dave: Id,
     open: evt.RepoLocation,
     secret: evt.RepoLocation,
+    // what arranges data and serves requests; sessions keep the test io
+    io: std.Io,
+
+    pub const Options = struct {
+        io: std.Io = io,
+    };
 
     pub const alice_author: evt.CommitAuthor = .{ .name = "alice", .email = "alice@example.test" };
     pub const bob_author: evt.CommitAuthor = .{ .name = "bob", .email = "bob@example.test" };
@@ -74,17 +87,22 @@ pub const Server = struct {
 
     // heap allocated so the clients' host and the admin repo stay put
     pub fn init(comptime hash_kind: hash.HashKind) !*Server {
+        return initWith(hash_kind, .{});
+    }
+
+    pub fn initWith(comptime hash_kind: hash.HashKind, options: Options) !*Server {
         const self = try gpa.create(Server);
         errdefer gpa.destroy(self);
         self.temp = std.testing.tmpDir(.{});
         errdefer self.temp.cleanup();
         self.arena = std.heap.ArenaAllocator.init(gpa);
         errdefer self.arena.deinit();
+        self.io = options.io;
         const aa = self.arena.allocator();
         const base = try self.temp.dir.realPathFileAlloc(io, ".", aa);
         self.users_dir = try std.Io.Dir.path.join(aa, &.{ base, "users" });
         self.admin_repo_path = try std.Io.Dir.path.join(aa, &.{ base, "admin" });
-        self.admin = try evt.initAdminRepo(io, gpa, self.admin_repo_path);
+        self.admin = try evt.initAdminRepo(self.io, gpa, self.admin_repo_path);
         errdefer self.admin.deinit(io, gpa);
         self.session_store = try web.SessionStore.init(io, self.temp.dir);
         errdefer self.session_store.deinit();
@@ -94,20 +112,20 @@ pub const Server = struct {
         self.carol = try self.createUser(carol_author);
         self.dave = try self.createUser(dave_author);
 
-        self.open = try evt.createRepo(io, gpa, self.users_dir, &self.alice, alice_author, "open", "", .public, hash_kind, null);
-        self.secret = try evt.createRepo(io, gpa, self.users_dir, &self.alice, alice_author, "secret", "", .private, hash_kind, null);
+        self.open = try evt.createRepo(self.io, gpa, self.users_dir, &self.alice, alice_author, "open", "", .public, hash_kind, null);
+        self.secret = try evt.createRepo(self.io, gpa, self.users_dir, &self.alice, alice_author, "secret", "", .private, hash_kind, null);
         for ([_]evt.RepoLocation{ self.open, self.secret }) |location| {
             for ([_]*const Id{ &self.bob, &self.dave }) |user| {
-                try evt.grantRole(io, gpa, self.users_dir, &self.alice, &location.repo_id, user, .write, alice_author);
+                try evt.grantRole(self.io, gpa, self.users_dir, &self.alice, &location.repo_id, user, .write, alice_author);
             }
         }
-        try evt.deleteUser(io, gpa, self.users_dir, &self.admin, &self.dave, dave_author);
+        try evt.deleteUser(self.io, gpa, self.users_dir, &self.admin, &self.dave, dave_author);
         return self;
     }
 
     // an account with the cast's password
     pub fn createUser(self: *Server, author: evt.CommitAuthor) !Id {
-        return try evt.createUser(io, gpa, self.users_dir, &self.admin, author.name, author.email, password, password);
+        return try evt.createUser(self.io, gpa, self.users_dir, &self.admin, author.name, author.email, password, password);
     }
 
     pub fn deinit(self: *Server) void {
@@ -132,7 +150,9 @@ pub const Server = struct {
 
     // a logged-out browser
     pub fn client(self: *const Server) Client {
-        return Client.init(self.host());
+        var result = Client.init(self.host());
+        result.io = self.io;
+        return result;
     }
 
     // a browser logged in as `name` with the cast's password, through the login form
@@ -165,27 +185,42 @@ pub fn Local(comptime kind: rp.RepoKind) type {
     return struct {
         temp: std.testing.TmpDir,
         path: [:0]const u8,
+        // what arranges data and serves requests
+        io: std.Io = io,
 
         const Self = @This();
         pub const repo_opts: rp.RepoOpts(kind) = .{};
 
+        pub const Options = struct {
+            io: std.Io = io,
+            // the repo goes in this child of the temp dir rather than the temp
+            // dir itself, whose random name a page would show
+            child: ?[]const u8 = null,
+        };
+
         pub fn init() !Self {
+            return initWith(.{});
+        }
+
+        pub fn initWith(options: Options) !Self {
+            const local_io = options.io;
             var temp = std.testing.tmpDir(.{});
             errdefer temp.cleanup();
-            const path = try temp.dir.realPathFileAlloc(io, ".", gpa);
+            if (options.child) |child| try temp.dir.createDirPath(io, child);
+            const path = try temp.dir.realPathFileAlloc(io, options.child orelse ".", gpa);
             errdefer gpa.free(path);
-            var repo = try rp.Repo(kind, repo_opts).init(io, gpa, .{ .path = path });
-            defer repo.deinit(io, gpa);
-            try repo.addConfig(io, gpa, .{ .name = "user.name", .value = local_author.name });
-            try repo.addConfig(io, gpa, .{ .name = "user.email", .value = local_author.email });
+            var repo = try rp.Repo(kind, repo_opts).init(local_io, gpa, .{ .path = path });
+            defer repo.deinit(local_io, gpa);
+            try repo.addConfig(local_io, gpa, .{ .name = "user.name", .value = local_author.name });
+            try repo.addConfig(local_io, gpa, .{ .name = "user.email", .value = local_author.email });
             {
-                const file = try repo.core.work_dir.createFile(io, "readme.txt", .{});
-                defer file.close(io);
-                try file.writeStreamingAll(io, "hello\n");
+                const file = try repo.core.work_dir.createFile(local_io, "readme.txt", .{});
+                defer file.close(local_io);
+                try file.writeStreamingAll(local_io, "hello\n");
             }
-            try repo.add(io, gpa, &.{"readme.txt"});
-            _ = try repo.commit(io, gpa, .{ .message = "first", .author = "tester <tester@example.test>" });
-            return .{ .temp = temp, .path = path };
+            try repo.add(local_io, gpa, &.{"readme.txt"});
+            _ = try repo.commit(local_io, gpa, .{ .message = "first", .author = "tester <tester@example.test>" });
+            return .{ .temp = temp, .path = path, .io = local_io };
         }
 
         pub fn deinit(self: *Self) void {
@@ -198,7 +233,9 @@ pub fn Local(comptime kind: rp.RepoKind) type {
         }
 
         pub fn client(self: *const Self) Client {
-            return Client.init(self.host());
+            var result = Client.init(self.host());
+            result.io = self.io;
+            return result;
         }
     };
 }
@@ -270,6 +307,8 @@ pub const Client = struct {
     host: web.Host,
     arena: std.heap.ArenaAllocator,
     cookies: std.ArrayList(Cookie),
+    // what the server serves this client's requests with
+    io: std.Io = io,
 
     pub fn init(host: web.Host) Client {
         return .{ .host = host, .arena = std.heap.ArenaAllocator.init(gpa), .cookies = .empty };
@@ -400,7 +439,7 @@ pub const Client = struct {
         var log: std.Io.Writer.Allocating = .init(gpa);
         defer log.deinit();
 
-        const served = web.serveConnection(io, gpa, &in.interface, &out.interface, self.host, &log.writer);
+        const served = web.serveConnection(self.io, gpa, &in.interface, &out.interface, self.host, &log.writer);
         for (wires) |wire| if (wire.hook_err) |err| {
             std.debug.print("the hook between head and body failed: {t}\n", .{err});
             return err;

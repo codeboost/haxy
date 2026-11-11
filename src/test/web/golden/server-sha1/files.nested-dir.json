@@ -1,0 +1,2582 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": 27,
+     "commits": [
+      {
+       "author": {
+        "user_name": "frank"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": true,
+       "message": "a fix to squash",
+       "message_truncated": false,
+       "oid": "<commit:squash p-squashed.source_oid>",
+       "parent_oid": "<commit:fix/merge-1>",
+       "stats": {
+        "bytes_added": 13,
+        "bytes_removed": 0,
+        "files_added": 1,
+        "files_changed": 0,
+        "files_removed": 0,
+        "first_parent_depth": 27,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700007980
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "fix/merge 1",
+       "message_truncated": false,
+       "oid": "<commit:fix/merge-1>",
+       "parent_oid": "<commit:merge-side>",
+       "stats": {
+        "bytes_added": 12,
+        "bytes_removed": 0,
+        "files_added": 1,
+        "files_changed": 0,
+        "files_removed": 0,
+        "first_parent_depth": 26,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700002640
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": true,
+       "message": "merge side into master",
+       "message_truncated": false,
+       "oid": "<commit:merge-side>",
+       "parent_oid": "<commit:shout>",
+       "stats": {
+        "bytes_added": 0,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 0,
+        "files_removed": 0,
+        "first_parent_depth": 25,
+        "lines_added": 0,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700002400
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "shout every 200th line",
+       "message_truncated": false,
+       "oid": "<commit:shout>",
+       "parent_oid": "<commit:change-22>",
+       "stats": {
+        "bytes_added": 0,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 24,
+        "lines_added": 0,
+        "lines_changed": 25,
+        "lines_removed": 0
+       },
+       "timestamp": 1700002160
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 22\n\nthe 22th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-22>",
+       "parent_oid": "<commit:change-21>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 23,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700002100
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 21\n\nthe 21th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-21>",
+       "parent_oid": "<commit:change-20>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 22,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700002040
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 20\n\nthe 20th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-20>",
+       "parent_oid": "<commit:change-19>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 21,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001980
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 19\n\nthe 19th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-19>",
+       "parent_oid": "<commit:change-18>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 20,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001920
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 18\n\nthe 18th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-18>",
+       "parent_oid": "<commit:change-17>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 19,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001860
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 17\n\nthe 17th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-17>",
+       "parent_oid": "<commit:change-16>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 18,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001800
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 16\n\nthe 16th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-16>",
+       "parent_oid": "<commit:change-15>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 17,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001740
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 15\n\nthe 15th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-15>",
+       "parent_oid": "<commit:change-14>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 16,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001680
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 14\n\nthe 14th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-14>",
+       "parent_oid": "<commit:change-13>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 15,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001620
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 13\n\nthe 13th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-13>",
+       "parent_oid": "<commit:change-12>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 14,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001560
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 12\n\nthe 12th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-12>",
+       "parent_oid": "<commit:change-11>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 13,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001500
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 11\n\nthe 11th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-11>",
+       "parent_oid": "<commit:change-10>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 12,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001440
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 10\n\nthe 10th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-10>",
+       "parent_oid": "<commit:change-09>",
+       "stats": {
+        "bytes_added": 10,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 11,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001380
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 9\n\nthe 9th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-09>",
+       "parent_oid": "<commit:change-08>",
+       "stats": {
+        "bytes_added": 9,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 10,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001320
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 8\n\nthe 8th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-08>",
+       "parent_oid": "<commit:change-07>",
+       "stats": {
+        "bytes_added": 9,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 9,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001260
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 7\n\nthe 7th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-07>",
+       "parent_oid": "<commit:change-06>",
+       "stats": {
+        "bytes_added": 9,
+        "bytes_removed": 0,
+        "files_added": 0,
+        "files_changed": 1,
+        "files_removed": 0,
+        "first_parent_depth": 8,
+        "lines_added": 1,
+        "lines_changed": 0,
+        "lines_removed": 0
+       },
+       "timestamp": 1700001200
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": "alice:open"
+      },
+      "read_access": "public",
+      "viewer": null
+     },
+     "message": false,
+     "next_start": "<commit:change-06>",
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "master",
+     "search": null,
+     "search_available": true
+    }
+   },
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "chat",
+     "plans"
+    ],
+    "recent": {
+     "count": 21,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-20>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 74,
+        "created_timestamp": 1700007380,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 20"
+        },
+        "removed": false,
+        "updated_order": 74
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-19>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 73,
+        "created_timestamp": 1700007320,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 19"
+        },
+        "removed": false,
+        "updated_order": 73
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-18>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 72,
+        "created_timestamp": 1700007260,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 18"
+        },
+        "removed": false,
+        "updated_order": 72
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-17>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 71,
+        "created_timestamp": 1700007200,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 17"
+        },
+        "removed": false,
+        "updated_order": 71
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-16>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 70,
+        "created_timestamp": 1700007140,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 16"
+        },
+        "removed": false,
+        "updated_order": 70
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-15>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 69,
+        "created_timestamp": 1700007080,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 15"
+        },
+        "removed": false,
+        "updated_order": 69
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-14>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 68,
+        "created_timestamp": 1700007020,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 14"
+        },
+        "removed": false,
+        "updated_order": 68
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-13>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 67,
+        "created_timestamp": 1700006960,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 13"
+        },
+        "removed": false,
+        "updated_order": 67
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-12>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 66,
+        "created_timestamp": 1700006900,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 12"
+        },
+        "removed": false,
+        "updated_order": 66
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-11>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 65,
+        "created_timestamp": 1700006840,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 11"
+        },
+        "removed": false,
+        "updated_order": 65
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-10>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 64,
+        "created_timestamp": 1700006780,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 10"
+        },
+        "removed": false,
+        "updated_order": 64
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-09>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 63,
+        "created_timestamp": 1700006720,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 9"
+        },
+        "removed": false,
+        "updated_order": 63
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-08>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 62,
+        "created_timestamp": 1700006660,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 8"
+        },
+        "removed": false,
+        "updated_order": 62
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-07>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 61,
+        "created_timestamp": 1700006600,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 7"
+        },
+        "removed": false,
+        "updated_order": 61
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-06>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 60,
+        "created_timestamp": 1700006540,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 6"
+        },
+        "removed": false,
+        "updated_order": 60
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-05>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 59,
+        "created_timestamp": 1700006480,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 5"
+        },
+        "removed": false,
+        "updated_order": 59
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-04>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 58,
+        "created_timestamp": 1700006420,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 4"
+        },
+        "removed": false,
+        "updated_order": 58
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-03>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 57,
+        "created_timestamp": 1700006360,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 3"
+        },
+        "removed": false,
+        "updated_order": 57
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-02>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 56,
+        "created_timestamp": 1700006300,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "filler talk 2"
+        },
+        "removed": false,
+        "updated_order": 56
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "id": "<discuss:talk-01>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 55,
+        "created_timestamp": 1700006240,
+        "event": {
+         "description": "",
+         "labels": "chat",
+         "title": "filler talk 1"
+        },
+        "removed": false,
+        "updated_order": 55
+       }
+      }
+     ],
+     "more": false,
+     "next_id": "<discuss:roadmap>",
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "view": "recent",
+    "viewer": null
+   },
+   "events": {
+    "active": {
+     "count": 79,
+     "events": [
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:bob-fork>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:bob-fork>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:p-squashed>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:p-squashed>"
+      },
+      {
+       "author": {
+        "user_name": "frank"
+       },
+       "id": "<patchrev:squash p-squashed>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patchrev:p-squashed>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:p-merged>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:p-merged>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<patchrev:merge p-merged>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patchrev:p-merged>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:p-closed>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:p-closed>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patchrev:p-closed>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<comment:p-open.c02>",
+       "kind": "comment",
+       "view_url": "/alice:open/patch:<patch:p-open>/comment:<comment:p-open.c02>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<comment:p-open.c01>",
+       "kind": "comment",
+       "view_url": "/alice:open/patch:<patch:p-open>/comment:<comment:p-open.c01>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:p-open>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:p-open>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patchrev:p-open>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:p-stale>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:p-stale>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patchrev:p-stale>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<discuss:talk-20>",
+       "kind": "discuss",
+       "view_url": "/alice:open/discuss:<discuss:talk-20>"
+      },
+      {
+       "author": {
+        "user_name": "frank"
+       },
+       "id": "<discuss:talk-19>",
+       "kind": "discuss",
+       "view_url": "/alice:open/discuss:<discuss:talk-19>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<discuss:talk-18>",
+       "kind": "discuss",
+       "view_url": "/alice:open/discuss:<discuss:talk-18>"
+      },
+      {
+       "author": {
+        "user_name": "frank"
+       },
+       "id": "<discuss:talk-17>",
+       "kind": "discuss",
+       "view_url": "/alice:open/discuss:<discuss:talk-17>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<discuss:talk-16>",
+       "kind": "discuss",
+       "view_url": "/alice:open/discuss:<discuss:talk-16>"
+      }
+     ],
+     "next": {
+      "id": "<discuss:talk-15>",
+      "kind": "discuss"
+     }
+    },
+    "header": {
+     "sync_status": null
+    },
+    "identity": "alice:open",
+    "moment": null,
+    "removed": {
+     "count": 3,
+     "events": [
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<discuss:gone-talk>",
+       "kind": "discuss",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<issue:old-news>",
+       "kind": "issue",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "carol"
+       },
+       "id": "<comment:leaky-roof.c05>",
+       "kind": "comment",
+       "view_url": null
+      }
+     ],
+     "next": null
+    },
+    "selected": null,
+    "view": "active"
+   },
+   "files": {
+    "capped": false,
+    "dir": "src/lib",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "pub const answer = 42;",
+       ""
+      ],
+      "loaded": true,
+      "name": "util.zig",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": true,
+    "handle": {
+     "location": {
+      "repo": "alice:open"
+     },
+     "read_access": "public",
+     "viewer": null
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "selected_file": null
+   },
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": null
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "frank"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:stuck-window>",
+       "notify_action": null,
+       "record": {
+        "author_email": "frank@example.test",
+        "created_order": 22,
+        "created_timestamp": 1700004200,
+        "event": {
+         "description": "it will not open",
+         "labels": "ui",
+         "status": "closed",
+         "title": "the window is stuck"
+        },
+        "removed": false,
+        "updated_order": 23
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:flaky-door>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 20,
+        "created_timestamp": 1700004080,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "status": "closed",
+         "title": "the door sticks"
+        },
+        "removed": false,
+        "updated_order": 21
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "bug",
+     "docs",
+     "roof",
+     "ui"
+    ],
+    "open": {
+     "count": 23,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-21>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 48,
+        "created_timestamp": 1700005760,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 21"
+        },
+        "removed": false,
+        "updated_order": 48
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-20>",
+       "notify_action": null,
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 47,
+        "created_timestamp": 1700005700,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 20"
+        },
+        "removed": false,
+        "updated_order": 47
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-19>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 46,
+        "created_timestamp": 1700005640,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 19"
+        },
+        "removed": false,
+        "updated_order": 46
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-18>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 45,
+        "created_timestamp": 1700005580,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 18"
+        },
+        "removed": false,
+        "updated_order": 45
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-17>",
+       "notify_action": null,
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 44,
+        "created_timestamp": 1700005520,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 17"
+        },
+        "removed": false,
+        "updated_order": 44
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-16>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 43,
+        "created_timestamp": 1700005460,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 16"
+        },
+        "removed": false,
+        "updated_order": 43
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-15>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 42,
+        "created_timestamp": 1700005400,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 15"
+        },
+        "removed": false,
+        "updated_order": 42
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-14>",
+       "notify_action": null,
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 41,
+        "created_timestamp": 1700005340,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 14"
+        },
+        "removed": false,
+        "updated_order": 41
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-13>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 40,
+        "created_timestamp": 1700005280,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 13"
+        },
+        "removed": false,
+        "updated_order": 40
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-12>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 39,
+        "created_timestamp": 1700005220,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 12"
+        },
+        "removed": false,
+        "updated_order": 39
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-11>",
+       "notify_action": null,
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 38,
+        "created_timestamp": 1700005160,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 11"
+        },
+        "removed": false,
+        "updated_order": 38
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-10>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 37,
+        "created_timestamp": 1700005100,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 10"
+        },
+        "removed": false,
+        "updated_order": 37
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-09>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 36,
+        "created_timestamp": 1700005040,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 9"
+        },
+        "removed": false,
+        "updated_order": 36
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-08>",
+       "notify_action": null,
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 35,
+        "created_timestamp": 1700004980,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 8"
+        },
+        "removed": false,
+        "updated_order": 35
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-07>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 34,
+        "created_timestamp": 1700004920,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 7"
+        },
+        "removed": false,
+        "updated_order": 34
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-06>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 33,
+        "created_timestamp": 1700004860,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 6"
+        },
+        "removed": false,
+        "updated_order": 33
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-05>",
+       "notify_action": null,
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 32,
+        "created_timestamp": 1700004800,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 5"
+        },
+        "removed": false,
+        "updated_order": 32
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-04>",
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 31,
+        "created_timestamp": 1700004740,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 4"
+        },
+        "removed": false,
+        "updated_order": 31
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-03>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 30,
+        "created_timestamp": 1700004680,
+        "event": {
+         "description": "",
+         "labels": "docs",
+         "status": "open",
+         "title": "filler issue 3"
+        },
+        "removed": false,
+        "updated_order": 30
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "carol"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:issue-02>",
+       "notify_action": null,
+       "record": {
+        "author_email": "carol@example.test",
+        "created_order": 29,
+        "created_timestamp": 1700004620,
+        "event": {
+         "description": "",
+         "labels": "ui",
+         "status": "open",
+         "title": "filler issue 2"
+        },
+        "removed": false,
+        "updated_order": 29
+       }
+      }
+     ],
+     "more": false,
+     "next_id": "<issue:issue-01>",
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": null
+   },
+   "patches": {
+    "closed": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-closed>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 82,
+        "created_timestamp": 1700007680,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-closed>",
+          "source_oid": "<commit:fix/close-1>",
+          "squash_oid": "<commit:p-closed.squash_oid>"
+         },
+         "source_branch": "fix/close",
+         "status": {
+          "closed": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix to close"
+        },
+        "removed": false,
+        "updated_order": 83
+       },
+       "revision_oid": "<commit:fix/close-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "master",
+    "description_page": false,
+    "drafts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "alice:open",
+    "labels": [
+     "bug",
+     "feature",
+     "fork"
+    ],
+    "merged": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": 1,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-squashed>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 89,
+        "created_timestamp": 1700007920,
+        "event": {
+         "description": "",
+         "labels": "",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-squashed>",
+          "source_oid": "<commit:fix/squash-2>",
+          "squash_oid": "<commit:p-squashed.squash_oid>"
+         },
+         "source_branch": "fix/squash",
+         "status": {
+          "merged": {
+           "patchrev_id": "<patchrev:squash p-squashed>",
+           "revision": "squash"
+          }
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix to squash"
+        },
+        "removed": false,
+        "updated_order": 91
+       },
+       "revision_oid": "<commit:p-squashed.squash_oid>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-merged>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 85,
+        "created_timestamp": 1700007800,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-merged>",
+          "source_oid": "<commit:fix/merge-1>",
+          "squash_oid": "<commit:p-merged.squash_oid>"
+         },
+         "source_branch": "fix/merge",
+         "status": {
+          "merged": {
+           "patchrev_id": "<patchrev:merge p-merged>",
+           "revision": "source"
+          }
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix to merge"
+        },
+        "removed": false,
+        "updated_order": 87
+       },
+       "revision_oid": "<commit:fix/merge-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 3,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": true,
+       "fork_identity": "bob:open",
+       "id": "<patch:bob-fork>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 92,
+        "created_timestamp": 1700008280,
+        "event": {
+         "description": "made in bob's fork",
+         "labels": "fork",
+         "revision": null,
+         "source_branch": null,
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a fix from a fork"
+        },
+        "removed": false,
+        "updated_order": 92
+       },
+       "revision_oid": "",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:shout>",
+       "can_modify": false,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 79,
+           "created_timestamp": 1700007560,
+           "event": {
+            "body": "looks good",
+            "parent_id": "<patch:p-open>",
+            "thread_id": "<patch:p-open>"
+           },
+           "removed": false,
+           "updated_order": 79
+          },
+          "id": "<comment:p-open.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 80,
+           "created_timestamp": 1700007620,
+           "event": {
+            "body": "thanks",
+            "parent_id": "<comment:p-open.c01>",
+            "thread_id": "<patch:p-open>"
+           },
+           "removed": false,
+           "updated_order": 80
+          },
+          "id": "<comment:p-open.c02>",
+          "parent_author": {
+           "user_name": "alice"
+          }
+         }
+        ],
+        "count": 2,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-open>",
+       "mergeability": {
+        "source": "clean",
+        "squash": "clean"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 78,
+        "created_timestamp": 1700007500,
+        "event": {
+         "description": "two commits of **feature**",
+         "labels": "feature",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-open>",
+          "source_oid": "<commit:feature-2>",
+          "squash_oid": "<commit:p-open.squash_oid>"
+         },
+         "source_branch": "feature",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "the feature"
+        },
+        "removed": false,
+        "updated_order": 78
+       },
+       "revision_oid": "<commit:feature-2>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:merge-side>",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-stale>",
+       "mergeability": {
+        "source": "clean",
+        "squash": "clean"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 76,
+        "created_timestamp": 1700007440,
+        "event": {
+         "description": "made before master moved",
+         "labels": "bug",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-stale>",
+          "source_oid": "<commit:fix/stale-1>",
+          "squash_oid": "<commit:p-stale.squash_oid>"
+         },
+         "source_branch": "fix/stale",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "a stale fix"
+        },
+        "removed": false,
+        "updated_order": 76
+       },
+       "revision_oid": "<commit:fix/stale-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": "<bytes:repo:alice:open>",
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": null
+   },
+   "quit": {},
+   "refs": {
+    "branches": {
+     "names": [
+      "100%done",
+      "b/01",
+      "b/02",
+      "b/03",
+      "b/04",
+      "b/05",
+      "b/06",
+      "b/07",
+      "b/08",
+      "b/09",
+      "b/10",
+      "b/11",
+      "b/12",
+      "b/13",
+      "b/14",
+      "b/15",
+      "b/16",
+      "b/17",
+      "b/18",
+      "b/19",
+      "b/20",
+      "b/21",
+      "b/22",
+      "b/23",
+      "b/24",
+      "b/25",
+      "b/26",
+      "b/27",
+      "b/28",
+      "b/29",
+      "b/30",
+      "b/31",
+      "b/32",
+      "b/33",
+      "b/34",
+      "b/35",
+      "b/36",
+      "b/37",
+      "b/38",
+      "b/39",
+      "b/40",
+      "b/41",
+      "b/42",
+      "b/43",
+      "b/44",
+      "b/45",
+      "b/46",
+      "b/47",
+      "b/48",
+      "b/49"
+     ],
+     "next": "b/50",
+     "prev": null
+    },
+    "from": "",
+    "identity": "alice:open",
+    "kind": "branch",
+    "search": null,
+    "tags": {
+     "names": [
+      "v0.1",
+      "v1.0"
+     ],
+     "next": null,
+     "prev": null
+    }
+   },
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_files": {
+    "find": "",
+    "line": 0,
+    "name": "alice:open",
+    "patchrev_id": "",
+    "path": "src/lib",
+    "ref_kind": "branch",
+    "ref_value": "master"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

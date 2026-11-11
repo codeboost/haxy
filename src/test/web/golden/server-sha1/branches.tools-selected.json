@@ -1,0 +1,613 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": null,
+     "commits": [
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "develop the tool",
+       "message_truncated": false,
+       "oid": "<commit:tools-develop-1>",
+       "parent_oid": "<commit:tools-1>",
+       "stats": null,
+       "timestamp": 1700008580
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "a tool",
+       "message_truncated": false,
+       "oid": "<commit:tools-1>",
+       "parent_oid": "0000000000000000000000000000000000000000",
+       "stats": null,
+       "timestamp": 1700008520
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": "alice:tools"
+      },
+      "read_access": "public",
+      "viewer": {
+       "email": "alice@example.test",
+       "role": "owner"
+      }
+     },
+     "message": false,
+     "next_start": null,
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "develop",
+     "search": null,
+     "search_available": false
+    }
+   },
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:tools",
+    "labels": [],
+    "recent": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "view": "recent",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "events": {
+    "active": {
+     "count": 1,
+     "events": [
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<issue:tool-bug>",
+       "kind": "issue",
+       "view_url": "/alice:tools/issue:<issue:tool-bug>"
+      }
+     ],
+     "next": null
+    },
+    "header": {
+     "sync_status": null
+    },
+    "identity": "alice:tools",
+    "moment": null,
+    "removed": {
+     "count": 0,
+     "events": [],
+     "next": null
+    },
+    "selected": null,
+    "view": "active"
+   },
+   "files": {
+    "capped": false,
+    "dir": "",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "a better tool",
+       ""
+      ],
+      "loaded": true,
+      "name": "tool.txt",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": false,
+    "handle": {
+     "location": {
+      "repo": "alice:tools"
+     },
+     "read_access": "public",
+     "viewer": {
+      "email": "alice@example.test",
+      "role": "owner"
+     }
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "develop",
+    "selected_file": null
+   },
+   "handle": {
+    "location": {
+     "repo": "alice:tools"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "tools",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "develop",
+    "title": {
+     "content": "🬂🬰🬂 🬑🬂🬟 🬑🬂🬟 🬐   🬑🬂🬀\n 🬋  🬃 🬇 🬃 🬇 🬃   🬇🬋🬃\n 🬰  🬟🬭🬑 🬟🬭🬑 🬮🬭🬭 🬞🬭🬑"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "alice:tools",
+    "labels": [
+     "bug"
+    ],
+    "open": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:tool-bug>",
+       "notify_action": "subscribe",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700008760,
+        "event": {
+         "description": "",
+         "labels": "bug",
+         "status": "open",
+         "title": "the tool breaks"
+        },
+        "removed": false,
+        "updated_order": 1
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "patches": {
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "develop",
+    "description_page": false,
+    "drafts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "alice:tools",
+    "labels": [],
+    "merged": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": "<bytes:repo:alice:tools>",
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": null
+   },
+   "quit": {},
+   "refs": {
+    "branches": {
+     "names": [
+      "develop",
+      "haxy/events",
+      "master",
+      "release"
+     ],
+     "next": null,
+     "prev": null
+    },
+    "from": "",
+    "identity": "alice:tools",
+    "kind": "branch",
+    "search": null,
+    "tags": {
+     "names": [],
+     "next": null,
+     "prev": null
+    }
+   },
+   "repo": {
+    "created_order": 25,
+    "event": {
+     "description": "the tools repo",
+     "discuss_role": "read",
+     "issue_role": "write",
+     "name": "tools",
+     "patch_role": null,
+     "protected_branches": "release",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 28
+   },
+   "settings": {
+    "access": "public",
+    "branches": {
+     "default_branch": "develop",
+     "identity": "alice:tools",
+     "names": [
+      "release"
+     ]
+    },
+    "delete": {
+     "target": {
+      "repo": "alice:tools"
+     }
+    },
+    "description": "the tools repo",
+    "discuss_role": "read",
+    "hash_kind": "sha1",
+    "identity": "alice:tools",
+    "issue_role": "write",
+    "members": {
+     "confirm": null,
+     "identity": "alice:tools",
+     "next_start": null,
+     "rows": [
+      {
+       "name": "bob",
+       "role": "write"
+      }
+     ],
+     "start": 0
+    },
+    "name": "tools",
+    "patch_role": null,
+    "view": "branches"
+   },
+   "undo": {
+    "count": 15,
+    "failure": null,
+    "handle": {
+     "location": {
+      "repo": "alice:tools"
+     },
+     "read_access": "public",
+     "viewer": {
+      "email": "alice@example.test",
+      "role": "owner"
+     }
+    },
+    "identity": "alice:tools",
+    "items": [
+     {
+      "action": "undo",
+      "buttons": [
+       {
+        "label": " what was undone ",
+        "link": "a:/alice:tools/undo/13",
+        "text": "events (1)"
+       }
+      ],
+      "description": "events (1)",
+      "form": "form:/alice:tools/undo/14/undo",
+      "index": 14,
+      "link": "ai:/alice:tools/undo/14",
+      "timestamp": 1700008880,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:tools/events/active/moment:13",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:tools/undo/13/undo",
+      "index": 13,
+      "link": "ai:/alice:tools/undo/13",
+      "timestamp": 1700008820,
+      "undone": true
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:tools/events/active/moment:12",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:tools/undo/12/undo",
+      "index": 12,
+      "link": "ai:/alice:tools/undo/12",
+      "timestamp": 1700008760,
+      "undone": false
+     },
+     {
+      "action": "reset_add",
+      "buttons": [],
+      "description": "reset-add develop",
+      "form": "form:/alice:tools/undo/11/undo",
+      "index": 11,
+      "link": "ai:/alice:tools/undo/11",
+      "timestamp": 1700008640,
+      "undone": false
+     },
+     {
+      "action": "config",
+      "buttons": [],
+      "description": "config add core.bare",
+      "form": "form:/alice:tools/undo/10/undo",
+      "index": 10,
+      "link": "ai:/alice:tools/undo/10",
+      "timestamp": 1700008580,
+      "undone": false
+     },
+     {
+      "action": "switch_dir",
+      "buttons": [],
+      "description": "switch master",
+      "form": "form:/alice:tools/undo/9/undo",
+      "index": 9,
+      "link": "ai:/alice:tools/undo/9",
+      "timestamp": 1700008580,
+      "undone": false
+     },
+     {
+      "action": "commit",
+      "buttons": [],
+      "description": "commit -m \"develop the tool\"",
+      "form": "form:/alice:tools/undo/8/undo",
+      "index": 8,
+      "link": "ai:/alice:tools/undo/8",
+      "timestamp": 1700008580,
+      "undone": false
+     },
+     {
+      "action": "add",
+      "buttons": [],
+      "description": "add tool.txt",
+      "form": "form:/alice:tools/undo/7/undo",
+      "index": 7,
+      "link": "ai:/alice:tools/undo/7",
+      "timestamp": 1700008580,
+      "undone": false
+     },
+     {
+      "action": "switch_dir",
+      "buttons": [],
+      "description": "switch develop",
+      "form": "form:/alice:tools/undo/6/undo",
+      "index": 6,
+      "link": "ai:/alice:tools/undo/6",
+      "timestamp": 1700008520,
+      "undone": false
+     },
+     {
+      "action": "branch",
+      "buttons": [],
+      "description": "branch add release",
+      "form": "form:/alice:tools/undo/5/undo",
+      "index": 5,
+      "link": "ai:/alice:tools/undo/5",
+      "timestamp": 1700008520,
+      "undone": false
+     },
+     {
+      "action": "branch",
+      "buttons": [],
+      "description": "branch add develop",
+      "form": "form:/alice:tools/undo/4/undo",
+      "index": 4,
+      "link": "ai:/alice:tools/undo/4",
+      "timestamp": 1700008520,
+      "undone": false
+     },
+     {
+      "action": "commit",
+      "buttons": [],
+      "description": "commit -m \"a tool\"",
+      "form": "form:/alice:tools/undo/3/undo",
+      "index": 3,
+      "link": "ai:/alice:tools/undo/3",
+      "timestamp": 1700008520,
+      "undone": false
+     },
+     {
+      "action": "add",
+      "buttons": [],
+      "description": "add tool.txt",
+      "form": "form:/alice:tools/undo/2/undo",
+      "index": 2,
+      "link": "ai:/alice:tools/undo/2",
+      "timestamp": 1700008520,
+      "undone": false
+     },
+     {
+      "action": "config",
+      "buttons": [],
+      "description": "config add core.bare",
+      "form": "form:/alice:tools/undo/1/undo",
+      "index": 1,
+      "link": "ai:/alice:tools/undo/1",
+      "timestamp": 1700008460,
+      "undone": false
+     },
+     {
+      "action": "reset_add",
+      "buttons": [],
+      "description": "reset-add master",
+      "form": "form:/alice:tools/undo/0/undo",
+      "index": 0,
+      "link": "ai:/alice:tools/undo/0",
+      "timestamp": 1700008340,
+      "undone": false
+     }
+    ],
+    "next": null
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": false,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": false,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAoMC501vhkyMjEvSuehVQput+n8qmUt1TiVgb/43F0 alice@laptop"
+     ]
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_branches": {
+    "branch": "release",
+    "name": "alice:tools"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

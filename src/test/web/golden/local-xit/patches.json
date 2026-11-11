@@ -1,0 +1,896 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": null,
+     "commits": [
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "say it again",
+       "message_truncated": false,
+       "oid": "<commit:again>",
+       "parent_oid": "<commit:files>",
+       "stats": null,
+       "timestamp": 1700000240
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "add files",
+       "message_truncated": false,
+       "oid": "<commit:files>",
+       "parent_oid": "<commit:here-first>",
+       "stats": null,
+       "timestamp": 1700000180
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "first",
+       "message_truncated": false,
+       "oid": "<commit:here-first>",
+       "parent_oid": "0000000000000000000000000000000000000000",
+       "stats": null,
+       "timestamp": 1700000120
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": ""
+      },
+      "read_access": "private",
+      "viewer": {
+       "email": "",
+       "role": "owner"
+      }
+     },
+     "message": false,
+     "next_start": null,
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "master",
+     "search": null,
+     "search_available": false
+    }
+   },
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "",
+    "labels": [
+     "plans"
+    ],
+    "recent": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "email": "tester@example.test"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "tester@example.test",
+           "created_order": 7,
+           "created_timestamp": 1700000840,
+           "event": {
+            "body": "more tests",
+            "parent_id": "<discuss:roadmap>",
+            "thread_id": "<discuss:roadmap>"
+           },
+           "removed": false,
+           "updated_order": 7
+          },
+          "id": "<comment:roadmap.c01>",
+          "parent_author": null
+         }
+        ],
+        "count": 1,
+        "start": 0
+       },
+       "id": "<discuss:roadmap>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 6,
+        "created_timestamp": 1700000780,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "the roadmap"
+        },
+        "removed": false,
+        "updated_order": 6
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "view": "recent",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "events": {
+    "active": {
+     "count": 12,
+     "events": [
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patch:p-conflicted>",
+       "kind": "patch",
+       "view_url": "/patch:<patch:p-conflicted>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<issue:conflicted>",
+       "kind": "issue",
+       "view_url": "/issue:<issue:conflicted>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patchrev:p-conflicted>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:p-open.c01>",
+       "kind": "comment",
+       "view_url": "/patch:<patch:p-open>/comment:<comment:p-open.c01>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patch:p-open>",
+       "kind": "patch",
+       "view_url": "/patch:<patch:p-open>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<patchrev:p-open>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:roadmap.c01>",
+       "kind": "comment",
+       "view_url": "/discuss:<discuss:roadmap>/comment:<comment:roadmap.c01>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<discuss:roadmap>",
+       "kind": "discuss",
+       "view_url": "/discuss:<discuss:roadmap>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<issue:flaky-door>",
+       "kind": "issue",
+       "view_url": "/issue:<issue:flaky-door>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:leaky-roof.c02>",
+       "kind": "comment",
+       "view_url": "/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c02>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<comment:leaky-roof.c01>",
+       "kind": "comment",
+       "view_url": "/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c01>"
+      },
+      {
+       "author": {
+        "email": "tester@example.test"
+       },
+       "id": "<issue:leaky-roof>",
+       "kind": "issue",
+       "view_url": "/issue:<issue:leaky-roof>"
+      }
+     ],
+     "next": null
+    },
+    "header": {
+     "sync_status": "nothing to sync"
+    },
+    "identity": "",
+    "moment": null,
+    "removed": {
+     "count": 0,
+     "events": [],
+     "next": null
+    },
+    "selected": null,
+    "view": "active"
+   },
+   "files": {
+    "capped": false,
+    "dir": "",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "src",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "# open",
+       "",
+       "a repo for **snapshots**, with a [link](https://example.test) and a list:",
+       "",
+       "- one",
+       "- two",
+       "",
+       "```zig",
+       "const x = 1;",
+       "```",
+       ""
+      ],
+      "loaded": true,
+      "name": "README.md",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": true,
+      "is_dir": false,
+      "lines": [],
+      "loaded": true,
+      "name": "logo.png",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "hello",
+       "again",
+       ""
+      ],
+      "loaded": true,
+      "name": "readme.txt",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": false,
+    "handle": {
+     "location": {
+      "repo": ""
+     },
+     "read_access": "private",
+     "viewer": {
+      "email": "",
+      "role": "owner"
+     }
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "selected_file": null
+   },
+   "handle": {
+    "location": {
+     "repo": ""
+    },
+    "read_access": "private",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "snapshot-repo",
+    "owner_name": "",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬀 🬮 🬠 🬞🬂🬏 🬒🬂🬟 🬑🬂🬀 🬐 🬠 🬑🬂🬟 🬂🬰🬂     🬒🬂🬟 🬒🬂🬂 🬒🬂🬟 🬑🬂🬟\n🬇🬋🬃 🬃🬇🬇 🬋🬋🬋 🬋🬋🬃 🬇🬋🬃 🬋🬋🬋 🬃 🬇  🬋  🬇🬋🬃 🬋🬋🬃 🬋🬋🬃 🬋🬋🬃 🬃 🬇\n🬞🬭🬑 🬐 🬡 🬐 🬠 🬐   🬞🬭🬑 🬐 🬠 🬟🬭🬑  🬰      🬐🬁🬞 🬮🬭🬭 🬐   🬟🬭🬑"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:flaky-door>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 4,
+        "created_timestamp": 1700000660,
+        "event": {
+         "description": "",
+         "labels": "",
+         "status": "closed",
+         "title": "the door sticks"
+        },
+        "removed": false,
+        "updated_order": 5
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflicted>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 11,
+        "created_timestamp": 1700001020,
+        "event": {
+         "description": "one\nOURS\nthree\n",
+         "labels": "a ours",
+         "status": "open",
+         "title": "ours"
+        },
+        "removed": false,
+        "updated_order": 14
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "",
+    "labels": [
+     "a",
+     "bug",
+     "ours"
+    ],
+    "open": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "conflicted": true,
+       "id": "<issue:conflicted>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 11,
+        "created_timestamp": 1700001020,
+        "event": {
+         "description": "one\nOURS\nthree\n",
+         "labels": "a ours",
+         "status": "open",
+         "title": "ours"
+        },
+        "removed": false,
+        "updated_order": 14
+       }
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "email": "tester@example.test"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "tester@example.test",
+           "created_order": 2,
+           "created_timestamp": 1700000540,
+           "event": {
+            "body": "a bucket helps",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 2
+          },
+          "id": "<comment:leaky-roof.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "email": "tester@example.test"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "tester@example.test",
+           "created_order": 3,
+           "created_timestamp": 1700000600,
+           "event": {
+            "body": "where?",
+            "parent_id": "<comment:leaky-roof.c01>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 3
+          },
+          "id": "<comment:leaky-roof.c02>",
+          "parent_author": {
+           "email": "tester@example.test"
+          }
+         }
+        ],
+        "count": 2,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:leaky-roof>",
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700000480,
+        "event": {
+         "description": "it drips",
+         "labels": "bug",
+         "status": "open",
+         "title": "the roof leaks"
+        },
+        "removed": false,
+        "updated_order": 1
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "patches": {
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "base_oid": "<commit:again>",
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": true,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-conflicted>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 13,
+        "created_timestamp": 1700001080,
+        "event": {
+         "description": "one\nOURS\nthree\n",
+         "labels": "a ours",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-conflicted>",
+          "source_oid": "<commit:other-1>",
+          "squash_oid": "<commit:p-conflicted.squash_oid>"
+         },
+         "source_branch": "other",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "ours"
+        },
+        "removed": false,
+        "updated_order": 15
+       },
+       "revision_oid": "<commit:other-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "master",
+    "description_page": false,
+    "drafts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "",
+    "labels": [
+     "a",
+     "ours"
+    ],
+    "merged": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "base_oid": "<commit:again>",
+       "can_modify": true,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": true,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-conflicted>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 13,
+        "created_timestamp": 1700001080,
+        "event": {
+         "description": "one\nOURS\nthree\n",
+         "labels": "a ours",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-conflicted>",
+          "source_oid": "<commit:other-1>",
+          "squash_oid": "<commit:p-conflicted.squash_oid>"
+         },
+         "source_branch": "other",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "ours"
+        },
+        "removed": false,
+        "updated_order": 15
+       },
+       "revision_oid": "<commit:other-1>",
+       "target_deleted": false
+      },
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "email": "tester@example.test"
+       },
+       "base_oid": "<commit:again>",
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "email": "tester@example.test"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "tester@example.test",
+           "created_order": 10,
+           "created_timestamp": 1700000960,
+           "event": {
+            "body": "looks good",
+            "parent_id": "<patch:p-open>",
+            "thread_id": "<patch:p-open>"
+           },
+           "removed": false,
+           "updated_order": 10
+          },
+          "id": "<comment:p-open.c01>",
+          "parent_author": null
+         }
+        ],
+        "count": 1,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-open>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "tester@example.test",
+        "created_order": 9,
+        "created_timestamp": 1700000900,
+        "event": {
+         "description": "a feature",
+         "labels": "",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-open>",
+          "source_oid": "<commit:feature-1>",
+          "squash_oid": "<commit:p-open.squash_oid>"
+         },
+         "source_branch": "feature",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "the feature"
+        },
+        "removed": false,
+        "updated_order": 9
+       },
+       "revision_oid": "<commit:feature-1>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": null,
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": {
+     "email": "",
+     "role": "owner"
+    }
+   },
+   "quit": {},
+   "refs": {
+    "branches": {
+     "names": [
+      "feature",
+      "haxy/events",
+      "master",
+      "other",
+      "team/next"
+     ],
+     "next": null,
+     "prev": null
+    },
+    "from": "",
+    "identity": "",
+    "kind": "branch",
+    "search": null,
+    "tags": {
+     "names": [
+      "v1.0"
+     ],
+     "next": null,
+     "prev": null
+    }
+   },
+   "repo": {
+    "created_order": 0,
+    "event": {
+     "description": "",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "snapshot-repo",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "private",
+     "user_id": "00000000000000000000000000000000"
+    },
+    "removed": false,
+    "updated_order": 0
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_patches": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "",
+    "search": "",
+    "selected": "",
+    "start": false,
+    "theirs": "",
+    "view": "open"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": null,
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "local",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

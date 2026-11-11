@@ -53,7 +53,7 @@ test "mcp cli: the help names every tool family and what --allow-destructive add
     // the flag's line names undo and the key removal
     const flag_line = help[std.mem.indexOf(u8, help, "--allow-destructive") orelse return error.TestExpectedFlag ..];
     for ([_][]const u8{ "undo", "ssh keys" }) |word| try std.testing.expect(std.mem.indexOf(u8, flag_line, word) != null);
-    for ([_][]const u8{ "issues", "patches", "discussions", "repos", "members", "branches", "ssh keys", "notifications" }) |word| {
+    for ([_][]const u8{ "issues", "patches", "discussions", "repos", "files", "refs", "commits", "diffs", "event history", "users", "forks", "members", "branches", "ssh keys", "notifications" }) |word| {
         if (std.mem.indexOf(u8, help, word) == null) {
             std.debug.print("help lacks {s}:\n{s}\n", .{ word, help });
             return error.TestExpectedWord;

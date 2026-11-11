@@ -35,7 +35,8 @@ pub fn init(
     return .{
         .header = try Header.init(arena, about.title),
         .about = about,
-        .users = try Users.init(arena, haxy_moment, users_route),
+        // the route holds the search url-encoded; the loader reads it decoded
+        .users = try Users.load(arena, haxy_moment, users_route.start, std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, users_route.search.slice()))),
         .user_notifications = try ui.UserNotifications.init(arena, session, user_tab),
         .quit = Quit.init(),
     };

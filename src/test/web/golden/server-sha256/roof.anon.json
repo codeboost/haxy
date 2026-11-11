@@ -1,0 +1,712 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": null,
+     "commits": [
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": true,
+       "message": "merge side into master",
+       "message_truncated": false,
+       "oid": "<commit:merge-side>",
+       "parent_oid": "<commit:change-03>",
+       "stats": null,
+       "timestamp": 1700001200
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 3\n\nthe 3th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-03>",
+       "parent_oid": "<commit:change-02>",
+       "stats": null,
+       "timestamp": 1700000960
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 2\n\nthe 2th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-02>",
+       "parent_oid": "<commit:change-01>",
+       "stats": null,
+       "timestamp": 1700000900
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 1\n\nthe 1th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-01>",
+       "parent_oid": "<commit:initial>",
+       "stats": null,
+       "timestamp": 1700000840
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "initial import",
+       "message_truncated": false,
+       "oid": "<commit:initial>",
+       "parent_oid": "0000000000000000000000000000000000000000000000000000000000000000",
+       "stats": null,
+       "timestamp": 1700000780
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": "alice:open"
+      },
+      "read_access": "public",
+      "viewer": null
+     },
+     "message": false,
+     "next_start": null,
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "master",
+     "search": null,
+     "search_available": false
+    }
+   },
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "plans"
+    ],
+    "recent": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 7,
+           "created_timestamp": 1700001740,
+           "event": {
+            "body": "more tests",
+            "parent_id": "<discuss:roadmap>",
+            "thread_id": "<discuss:roadmap>"
+           },
+           "removed": false,
+           "updated_order": 7
+          },
+          "id": "<comment:roadmap.c01>",
+          "parent_author": null
+         }
+        ],
+        "count": 1,
+        "start": 0
+       },
+       "id": "<discuss:roadmap>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 6,
+        "created_timestamp": 1700001680,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "the roadmap"
+        },
+        "removed": false,
+        "updated_order": 6
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "view": "recent",
+    "viewer": null
+   },
+   "events": {
+    "active": {
+     "count": 10,
+     "events": [
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<comment:p-open.c01>",
+       "kind": "comment",
+       "view_url": "/alice:open/patch:<patch:p-open>/comment:<comment:p-open.c01>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:p-open>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:p-open>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patchrev:p-open>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<comment:roadmap.c01>",
+       "kind": "comment",
+       "view_url": "/alice:open/discuss:<discuss:roadmap>/comment:<comment:roadmap.c01>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<discuss:roadmap>",
+       "kind": "discuss",
+       "view_url": "/alice:open/discuss:<discuss:roadmap>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<attach:roof-photo>",
+       "kind": "attach",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<issue:flaky-door>",
+       "kind": "issue",
+       "view_url": "/alice:open/issue:<issue:flaky-door>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<comment:leaky-roof.c02>",
+       "kind": "comment",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c02>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<comment:leaky-roof.c01>",
+       "kind": "comment",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c01>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<issue:leaky-roof>",
+       "kind": "issue",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>"
+      }
+     ],
+     "next": null
+    },
+    "header": {
+     "sync_status": null
+    },
+    "identity": "alice:open",
+    "moment": null,
+    "removed": {
+     "count": 0,
+     "events": [],
+     "next": null
+    },
+    "selected": null,
+    "view": "active"
+   },
+   "files": {
+    "capped": false,
+    "dir": "",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "docs",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "src",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "# open",
+       "",
+       "a repo for **snapshots**, with a [link](https://example.test) and a list:",
+       "",
+       "- one",
+       "- two",
+       "",
+       "```zig",
+       "const x = 1;",
+       "```",
+       ""
+      ],
+      "loaded": true,
+      "name": "README.md",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": true,
+      "is_dir": false,
+      "lines": [],
+      "loaded": true,
+      "name": "logo.png",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "notes",
+       "change 1",
+       "change 2",
+       "change 3",
+       ""
+      ],
+      "loaded": true,
+      "name": "notes.txt",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": false,
+    "handle": {
+     "location": {
+      "repo": "alice:open"
+     },
+     "read_access": "public",
+     "viewer": null
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "selected_file": null
+   },
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": null
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "bug"
+    ],
+    "open": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [
+        {
+         "id": "<attach:roof-photo>",
+         "name": "photo.png"
+        }
+       ],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": false,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 2,
+           "created_timestamp": 1700001440,
+           "event": {
+            "body": "i see it too",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 2
+          },
+          "id": "<comment:leaky-roof.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 3,
+           "created_timestamp": 1700001500,
+           "event": {
+            "body": "where?",
+            "parent_id": "<comment:leaky-roof.c01>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 3
+          },
+          "id": "<comment:leaky-roof.c02>",
+          "parent_author": {
+           "user_name": "bob"
+          }
+         }
+        ],
+        "count": 2,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:leaky-roof>",
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700001380,
+        "event": {
+         "description": "it drips",
+         "labels": "bug",
+         "status": "open",
+         "title": "the roof leaks"
+        },
+        "removed": false,
+        "updated_order": 1
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": ""
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "<issue:leaky-roof>",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": null
+   },
+   "patches": {
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "master",
+    "description_page": false,
+    "drafts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "alice:open",
+    "labels": [],
+    "merged": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:change-03>",
+       "can_modify": false,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": false,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 10,
+           "created_timestamp": 1700001860,
+           "event": {
+            "body": "looks good",
+            "parent_id": "<patch:p-open>",
+            "thread_id": "<patch:p-open>"
+           },
+           "removed": false,
+           "updated_order": 10
+          },
+          "id": "<comment:p-open.c01>",
+          "parent_author": null
+         }
+        ],
+        "count": 1,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-open>",
+       "mergeability": {
+        "source": "clean",
+        "squash": "clean"
+       },
+       "no_changes": false,
+       "notify_action": null,
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 9,
+        "created_timestamp": 1700001800,
+        "event": {
+         "description": "",
+         "labels": "",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-open>",
+          "source_oid": "<commit:feature-2>",
+          "squash_oid": "<commit:p-open.squash_oid>"
+         },
+         "source_branch": "feature",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "the feature"
+        },
+        "removed": false,
+        "updated_order": 9
+       },
+       "revision_oid": "<commit:feature-2>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": "<bytes:repo:alice:open>",
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": null
+   },
+   "quit": {},
+   "refs": {
+    "branches": {
+     "names": [
+      "100%done",
+      "café",
+      "feature",
+      "haxy/events",
+      "master",
+      "side",
+      "team/next"
+     ],
+     "next": null,
+     "prev": null
+    },
+    "from": "",
+    "identity": "alice:open",
+    "kind": "branch",
+    "search": null,
+    "tags": {
+     "names": [
+      "v0.1",
+      "v1.0"
+     ],
+     "next": null,
+     "prev": null
+    }
+   },
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": null,
+   "undo": null,
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_issues": {
+    "attachment": "",
+    "comment": "",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "<issue:leaky-roof>",
+    "start": false,
+    "theirs": "",
+    "view": "open"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

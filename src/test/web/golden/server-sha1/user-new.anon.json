@@ -1,0 +1,111 @@
+{
+ "page": {
+  "home": {
+   "about": {
+    "text": "Welcome to your Haxy instance!\n\nEdit `admin/ABOUT.md` in the server dir to change what this page says.",
+    "title": "HAXY"
+   },
+   "header": {
+    "title": {
+     "content": "🬐 🬠 🬞🬂🬏 🬟 🬑 🬟 🬑\n🬋🬋🬋 🬋🬋🬋  🬋   🬋 \n🬐 🬠 🬐 🬠 🬑 🬟  🬰 "
+    }
+   },
+   "quit": {},
+   "user_notifications": {
+    "next_start": null,
+    "rows": [],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   },
+   "users": {
+    "next_start": 20,
+    "search": null,
+    "start": 0,
+    "users": [
+     {
+      "name": "alice"
+     },
+     {
+      "name": "bob"
+     },
+     {
+      "name": "carol"
+     },
+     {
+      "name": "erin"
+     },
+     {
+      "name": "frank"
+     },
+     {
+      "name": "user01"
+     },
+     {
+      "name": "user02"
+     },
+     {
+      "name": "user03"
+     },
+     {
+      "name": "user04"
+     },
+     {
+      "name": "user05"
+     },
+     {
+      "name": "user06"
+     },
+     {
+      "name": "user07"
+     },
+     {
+      "name": "user08"
+     },
+     {
+      "name": "user09"
+     },
+     {
+      "name": "user10"
+     },
+     {
+      "name": "user11"
+     },
+     {
+      "name": "user12"
+     },
+     {
+      "name": "user13"
+     },
+     {
+      "name": "user14"
+     },
+     {
+      "name": "user15"
+     }
+    ]
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "home_user_new": {}
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 0,
+  "user_email": null,
+  "user_id": null,
+  "user_name": null
+ }
+}

@@ -1,0 +1,98 @@
+{
+ "page": {
+  "user": {
+   "forks": [
+    {
+     "access": null,
+     "id": "<patch:doomed-draft>",
+     "repo_name": "doomed",
+     "title": "a draft on doomed"
+    },
+    {
+     "access": "public",
+     "id": "<patch:moving-draft>",
+     "repo_name": "moving",
+     "title": "a draft on moving"
+    },
+    {
+     "access": "public",
+     "id": "<patch:bob-fork>",
+     "repo_name": "open",
+     "title": "a fix from a fork"
+    },
+    {
+     "access": "public",
+     "id": "<patch:bob-draft>",
+     "repo_name": "open",
+     "title": "bob's draft"
+    }
+   ],
+   "forks_next_start": null,
+   "forks_start": 0,
+   "header": {
+    "name": "bob",
+    "title": {
+     "content": "🬒🬂🬟 🬑🬂🬟 🬒🬂🬟\n🬋🬋🬃 🬃 🬇 🬋🬋🬃\n🬮🬭🬑 🬟🬭🬑 🬮🬭🬑"
+    }
+   },
+   "quit": {},
+   "repos": [],
+   "repos_next_start": null,
+   "repos_search": null,
+   "repos_start": 0,
+   "user": {
+    "name": "bob"
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the feature",
+      "unread": true,
+      "url": "/alice:open/patch:<patch:p-open>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": true,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "user_forks": {
+    "name": "bob",
+    "start": 0
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 3,
+  "user_email": "bob@example.test",
+  "user_id": "<bytes:user:bob>",
+  "user_name": "bob"
+ }
+}

@@ -1,0 +1,1147 @@
+{
+ "page": {
+  "repo": {
+   "changes": {
+    "commits": {
+     "base_oid": "",
+     "commit_count": null,
+     "commits": [
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": true,
+       "message": "merge side into master",
+       "message_truncated": false,
+       "oid": "<commit:merge-side>",
+       "parent_oid": "<commit:change-03>",
+       "stats": null,
+       "timestamp": 1700001200
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 3\n\nthe 3th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-03>",
+       "parent_oid": "<commit:change-02>",
+       "stats": null,
+       "timestamp": 1700000960
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 2\n\nthe 2th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-02>",
+       "parent_oid": "<commit:change-01>",
+       "stats": null,
+       "timestamp": 1700000900
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "change 1\n\nthe 1th change to the notes",
+       "message_truncated": false,
+       "oid": "<commit:change-01>",
+       "parent_oid": "<commit:initial>",
+       "stats": null,
+       "timestamp": 1700000840
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "committer": {
+        "unknown": {}
+       },
+       "merge": false,
+       "message": "initial import",
+       "message_truncated": false,
+       "oid": "<commit:initial>",
+       "parent_oid": "0000000000000000000000000000000000000000000000000000000000000000",
+       "stats": null,
+       "timestamp": 1700000780
+      }
+     ],
+     "default_branch": "",
+     "handle": {
+      "location": {
+       "repo": "alice:open"
+      },
+      "read_access": "public",
+      "viewer": {
+       "email": "alice@example.test",
+       "role": "owner"
+      }
+     },
+     "message": false,
+     "next_start": null,
+     "no_commits": false,
+     "ref_or_oid": "branch",
+     "ref_or_oid_value": "master",
+     "search": null,
+     "search_available": false
+    }
+   },
+   "discussions": {
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "plans"
+    ],
+    "recent": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 7,
+           "created_timestamp": 1700001740,
+           "event": {
+            "body": "more tests",
+            "parent_id": "<discuss:roadmap>",
+            "thread_id": "<discuss:roadmap>"
+           },
+           "removed": false,
+           "updated_order": 7
+          },
+          "id": "<comment:roadmap.c01>",
+          "parent_author": null
+         }
+        ],
+        "count": 1,
+        "start": 0
+       },
+       "id": "<discuss:roadmap>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 6,
+        "created_timestamp": 1700001680,
+        "event": {
+         "description": "",
+         "labels": "plans",
+         "title": "the roadmap"
+        },
+        "removed": false,
+        "updated_order": 6
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "view": "recent",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "events": {
+    "active": {
+     "count": 10,
+     "events": [
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<comment:p-open.c01>",
+       "kind": "comment",
+       "view_url": "/alice:open/patch:<patch:p-open>/comment:<comment:p-open.c01>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patch:p-open>",
+       "kind": "patch",
+       "view_url": "/alice:open/patch:<patch:p-open>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<patchrev:p-open>",
+       "kind": "patchrev",
+       "view_url": null
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<comment:roadmap.c01>",
+       "kind": "comment",
+       "view_url": "/alice:open/discuss:<discuss:roadmap>/comment:<comment:roadmap.c01>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<discuss:roadmap>",
+       "kind": "discuss",
+       "view_url": "/alice:open/discuss:<discuss:roadmap>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<attach:roof-photo>",
+       "kind": "attach",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<issue:flaky-door>",
+       "kind": "issue",
+       "view_url": "/alice:open/issue:<issue:flaky-door>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<comment:leaky-roof.c02>",
+       "kind": "comment",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c02>"
+      },
+      {
+       "author": {
+        "user_name": "bob"
+       },
+       "id": "<comment:leaky-roof.c01>",
+       "kind": "comment",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>/comment:<comment:leaky-roof.c01>"
+      },
+      {
+       "author": {
+        "user_name": "alice"
+       },
+       "id": "<issue:leaky-roof>",
+       "kind": "issue",
+       "view_url": "/alice:open/issue:<issue:leaky-roof>"
+      }
+     ],
+     "next": null
+    },
+    "header": {
+     "sync_status": null
+    },
+    "identity": "alice:open",
+    "moment": null,
+    "removed": {
+     "count": 0,
+     "events": [],
+     "next": null
+    },
+    "selected": null,
+    "view": "active"
+   },
+   "files": {
+    "capped": false,
+    "dir": "",
+    "entries": [
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "docs",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": true,
+      "lines": [],
+      "loaded": false,
+      "name": "src",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "# open",
+       "",
+       "a repo for **snapshots**, with a [link](https://example.test) and a list:",
+       "",
+       "- one",
+       "- two",
+       "",
+       "```zig",
+       "const x = 1;",
+       "```",
+       ""
+      ],
+      "loaded": true,
+      "name": "README.md",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": true,
+      "is_dir": false,
+      "lines": [],
+      "loaded": true,
+      "name": "logo.png",
+      "window_start": 0
+     },
+     {
+      "has_more": false,
+      "is_binary": false,
+      "is_dir": false,
+      "lines": [
+       "notes",
+       "change 1",
+       "change 2",
+       "change 3",
+       ""
+      ],
+      "loaded": true,
+      "name": "notes.txt",
+      "window_start": 0
+     }
+    ],
+    "find": null,
+    "find_available": false,
+    "handle": {
+     "location": {
+      "repo": "alice:open"
+     },
+     "read_access": "public",
+     "viewer": {
+      "email": "alice@example.test",
+      "role": "owner"
+     }
+    },
+    "no_commits": false,
+    "patchrev_id": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "selected_file": null
+   },
+   "handle": {
+    "location": {
+     "repo": "alice:open"
+    },
+    "read_access": "public",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "header": {
+    "discussions_search": null,
+    "issues_search": null,
+    "name": "open",
+    "owner_name": "alice",
+    "patches_search": null,
+    "ref_or_oid": "branch",
+    "ref_or_oid_value": "master",
+    "title": {
+     "content": "🬑🬂🬟 🬒🬂🬟 🬒🬂🬂 🬮 🬠\n🬃 🬇 🬋🬋🬃 🬋🬋🬃 🬃🬇🬇\n🬟🬭🬑 🬐   🬮🬭🬭 🬐 🬡"
+    }
+   },
+   "issues": {
+    "assignee_unknown": false,
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "<comment:leaky-roof.c01>",
+    "comment_page": {
+     "replies": {
+      "comments": [
+       {
+        "author": {
+         "user_name": "alice"
+        },
+        "can_modify": true,
+        "comment": {
+         "author_email": "alice@example.test",
+         "created_order": 3,
+         "created_timestamp": 1700001500,
+         "event": {
+          "body": "where?",
+          "parent_id": "<comment:leaky-roof.c01>",
+          "thread_id": "<issue:leaky-roof>"
+         },
+         "removed": false,
+         "updated_order": 3
+        },
+        "id": "<comment:leaky-roof.c02>",
+        "parent_author": {
+         "user_name": "bob"
+        }
+       }
+      ],
+      "count": 1,
+      "start": 0
+     },
+     "selected": {
+      "author": {
+       "user_name": "bob"
+      },
+      "can_modify": true,
+      "comment": {
+       "author_email": "bob@example.test",
+       "created_order": 2,
+       "created_timestamp": 1700001440,
+       "event": {
+        "body": "i see it too",
+        "parent_id": "<issue:leaky-roof>",
+        "thread_id": "<issue:leaky-roof>"
+       },
+       "removed": false,
+       "updated_order": 2
+      },
+      "id": "<comment:leaky-roof.c01>",
+      "parent_author": null
+     }
+    },
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "description_page": false,
+    "identity": "alice:open",
+    "labels": [
+     "bug"
+    ],
+    "open": {
+     "count": 2,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [
+        {
+         "id": "<attach:roof-photo>",
+         "name": "photo.png"
+        }
+       ],
+       "author": {
+        "user_name": "alice"
+       },
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "bob"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "bob@example.test",
+           "created_order": 2,
+           "created_timestamp": 1700001440,
+           "event": {
+            "body": "i see it too",
+            "parent_id": "<issue:leaky-roof>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 2
+          },
+          "id": "<comment:leaky-roof.c01>",
+          "parent_author": null
+         },
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 3,
+           "created_timestamp": 1700001500,
+           "event": {
+            "body": "where?",
+            "parent_id": "<comment:leaky-roof.c01>",
+            "thread_id": "<issue:leaky-roof>"
+           },
+           "removed": false,
+           "updated_order": 3
+          },
+          "id": "<comment:leaky-roof.c02>",
+          "parent_author": {
+           "user_name": "bob"
+          }
+         }
+        ],
+        "count": 2,
+        "start": 0
+       },
+       "conflicted": false,
+       "id": "<issue:leaky-roof>",
+       "notify_action": "mute",
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700001380,
+        "event": {
+         "description": "it drips",
+         "labels": "bug",
+         "status": "open",
+         "title": "the roof leaks"
+        },
+        "removed": false,
+        "updated_order": 1
+       }
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": ""
+    },
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "<issue:leaky-roof>",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "patches": {
+    "closed": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "comment_id": "",
+    "comment_page": null,
+    "comments_start": 0,
+    "conflict": null,
+    "conflicts": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "default_target_branch": "master",
+    "description_page": false,
+    "drafts": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "alice"
+       },
+       "base_oid": "",
+       "can_modify": false,
+       "comments": {
+        "comments": [],
+        "count": 0,
+        "start": 0
+       },
+       "commit_count": 0,
+       "conflicted": false,
+       "draft": true,
+       "fork_exists": true,
+       "fork_identity": "alice:open",
+       "id": "<patch:alice-draft>",
+       "mergeability": {
+        "source": "unknown",
+        "squash": "unknown"
+       },
+       "no_changes": true,
+       "notify_action": null,
+       "record": {
+        "author_email": "alice@example.test",
+        "created_order": 1,
+        "created_timestamp": 1700001920,
+        "event": {
+         "description": "",
+         "labels": "",
+         "revision": null,
+         "source_branch": null,
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "alice's draft"
+        },
+        "removed": false,
+        "updated_order": 1
+       },
+       "revision_oid": "<commit:merge-side>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "identity": "alice:open",
+    "labels": [],
+    "merged": {
+     "count": 0,
+     "items": [],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "open": {
+     "count": 1,
+     "items": [
+      {
+       "assignees": [],
+       "attachments": [],
+       "author": {
+        "user_name": "bob"
+       },
+       "base_oid": "<commit:change-03>",
+       "can_modify": true,
+       "comments": {
+        "comments": [
+         {
+          "author": {
+           "user_name": "alice"
+          },
+          "can_modify": true,
+          "comment": {
+           "author_email": "alice@example.test",
+           "created_order": 10,
+           "created_timestamp": 1700001860,
+           "event": {
+            "body": "looks good",
+            "parent_id": "<patch:p-open>",
+            "thread_id": "<patch:p-open>"
+           },
+           "removed": false,
+           "updated_order": 10
+          },
+          "id": "<comment:p-open.c01>",
+          "parent_author": null
+         }
+        ],
+        "count": 1,
+        "start": 0
+       },
+       "commit_count": null,
+       "conflicted": false,
+       "draft": false,
+       "fork_exists": false,
+       "fork_identity": "",
+       "id": "<patch:p-open>",
+       "mergeability": {
+        "source": "clean",
+        "squash": "clean"
+       },
+       "no_changes": false,
+       "notify_action": "mute",
+       "record": {
+        "author_email": "bob@example.test",
+        "created_order": 9,
+        "created_timestamp": 1700001800,
+        "event": {
+         "description": "",
+         "labels": "",
+         "revision": {
+          "commit_count": null,
+          "id": "<patchrev:p-open>",
+          "source_oid": "<commit:feature-2>",
+          "squash_oid": "<commit:p-open.squash_oid>"
+         },
+         "source_branch": "feature",
+         "status": {
+          "open": {}
+         },
+         "target_branch": "master",
+         "target_patch_id": null,
+         "title": "the feature"
+        },
+        "removed": false,
+        "updated_order": 9
+       },
+       "revision_oid": "<commit:feature-2>",
+       "target_deleted": false
+      }
+     ],
+     "more": false,
+     "next_id": null,
+     "prev_id": null
+    },
+    "repo_id": "<bytes:repo:alice:open>",
+    "repo_source": {
+     "path": "",
+     "repo_kind": "xit"
+    },
+    "search": null,
+    "selected_id": "",
+    "theirs_picks": "",
+    "view": "open",
+    "viewer": {
+     "email": "alice@example.test",
+     "role": "owner"
+    }
+   },
+   "quit": {},
+   "refs": {
+    "branches": {
+     "names": [
+      "100%done",
+      "café",
+      "feature",
+      "haxy/events",
+      "master",
+      "side",
+      "team/next"
+     ],
+     "next": null,
+     "prev": null
+    },
+    "from": "",
+    "identity": "alice:open",
+    "kind": "branch",
+    "search": null,
+    "tags": {
+     "names": [
+      "v0.1",
+      "v1.0"
+     ],
+     "next": null,
+     "prev": null
+    }
+   },
+   "repo": {
+    "created_order": 1,
+    "event": {
+     "description": "the open repo",
+     "discuss_role": "read",
+     "issue_role": "read",
+     "name": "open",
+     "patch_role": "read",
+     "protected_branches": "",
+     "read_access": "public",
+     "user_id": "<user:alice>"
+    },
+    "removed": false,
+    "updated_order": 7
+   },
+   "settings": {
+    "access": "public",
+    "branches": {
+     "default_branch": "master",
+     "identity": "alice:open",
+     "names": []
+    },
+    "delete": {
+     "target": {
+      "repo": "alice:open"
+     }
+    },
+    "description": "the open repo",
+    "discuss_role": "read",
+    "hash_kind": "sha256",
+    "identity": "alice:open",
+    "issue_role": "read",
+    "members": {
+     "confirm": null,
+     "identity": "alice:open",
+     "next_start": null,
+     "rows": [
+      {
+       "name": "frank",
+       "role": "owner"
+      },
+      {
+       "name": "bob",
+       "role": "write"
+      }
+     ],
+     "start": 0
+    },
+    "name": "open",
+    "patch_role": "read",
+    "view": "settings"
+   },
+   "undo": {
+    "count": 38,
+    "failure": null,
+    "handle": {
+     "location": {
+      "repo": "alice:open"
+     },
+     "read_access": "public",
+     "viewer": {
+      "email": "alice@example.test",
+      "role": "owner"
+     }
+    },
+    "identity": "alice:open",
+    "items": [
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:37",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/37/undo",
+      "index": 37,
+      "link": "ai:/alice:open/undo/37",
+      "timestamp": 1700001860,
+      "undone": false
+     },
+     {
+      "action": "events (2)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:36",
+        "text": "view events (2)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/36/undo",
+      "index": 36,
+      "link": "ai:/alice:open/undo/36",
+      "timestamp": 1700001800,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:35",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/35/undo",
+      "index": 35,
+      "link": "ai:/alice:open/undo/35",
+      "timestamp": 1700001740,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:34",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/34/undo",
+      "index": 34,
+      "link": "ai:/alice:open/undo/34",
+      "timestamp": 1700001680,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:33",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/33/undo",
+      "index": 33,
+      "link": "ai:/alice:open/undo/33",
+      "timestamp": 1700001620,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:32",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/32/undo",
+      "index": 32,
+      "link": "ai:/alice:open/undo/32",
+      "timestamp": 1700001560,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:31",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/31/undo",
+      "index": 31,
+      "link": "ai:/alice:open/undo/31",
+      "timestamp": 1700001500,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:30",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/30/undo",
+      "index": 30,
+      "link": "ai:/alice:open/undo/30",
+      "timestamp": 1700001440,
+      "undone": false
+     },
+     {
+      "action": "events (1)",
+      "buttons": [
+       {
+        "label": " events ",
+        "link": "a:/alice:open/events/active/moment:29",
+        "text": "view events (1)"
+       }
+      ],
+      "description": "updated the event database",
+      "form": "form:/alice:open/undo/29/undo",
+      "index": 29,
+      "link": "ai:/alice:open/undo/29",
+      "timestamp": 1700001380,
+      "undone": false
+     },
+     {
+      "action": "config",
+      "buttons": [],
+      "description": "config add core.bare",
+      "form": "form:/alice:open/undo/28/undo",
+      "index": 28,
+      "link": "ai:/alice:open/undo/28",
+      "timestamp": 1700001320,
+      "undone": false
+     },
+     {
+      "action": "tag",
+      "buttons": [],
+      "description": "tag add v1.0",
+      "form": "form:/alice:open/undo/27/undo",
+      "index": 27,
+      "link": "ai:/alice:open/undo/27",
+      "timestamp": 1700001320,
+      "undone": false
+     },
+     {
+      "action": "tag",
+      "buttons": [],
+      "description": "tag add v0.1",
+      "form": "form:/alice:open/undo/26/undo",
+      "index": 26,
+      "link": "ai:/alice:open/undo/26",
+      "timestamp": 1700001260,
+      "undone": false
+     },
+     {
+      "action": "commit",
+      "buttons": [],
+      "description": "commit -m \"merge side into master\"",
+      "form": "form:/alice:open/undo/25/undo",
+      "index": 25,
+      "link": "ai:/alice:open/undo/25",
+      "timestamp": 1700001200,
+      "undone": false
+     },
+     {
+      "action": "switch_dir",
+      "buttons": [],
+      "description": "switch master",
+      "form": "form:/alice:open/undo/24/undo",
+      "index": 24,
+      "link": "ai:/alice:open/undo/24",
+      "timestamp": 1700001140,
+      "undone": false
+     },
+     {
+      "action": "commit",
+      "buttons": [],
+      "description": "commit -m \"side work\"",
+      "form": "form:/alice:open/undo/23/undo",
+      "index": 23,
+      "link": "ai:/alice:open/undo/23",
+      "timestamp": 1700001140,
+      "undone": false
+     },
+     {
+      "action": "add",
+      "buttons": [],
+      "description": "add side.txt",
+      "form": "form:/alice:open/undo/22/undo",
+      "index": 22,
+      "link": "ai:/alice:open/undo/22",
+      "timestamp": 1700001140,
+      "undone": false
+     },
+     {
+      "action": "switch_dir",
+      "buttons": [],
+      "description": "switch side",
+      "form": "form:/alice:open/undo/21/undo",
+      "index": 21,
+      "link": "ai:/alice:open/undo/21",
+      "timestamp": 1700001080,
+      "undone": false
+     },
+     {
+      "action": "branch",
+      "buttons": [],
+      "description": "branch add side",
+      "form": "form:/alice:open/undo/20/undo",
+      "index": 20,
+      "link": "ai:/alice:open/undo/20",
+      "timestamp": 1700001080,
+      "undone": false
+     },
+     {
+      "action": "branch",
+      "buttons": [],
+      "description": "branch add café",
+      "form": "form:/alice:open/undo/19/undo",
+      "index": 19,
+      "link": "ai:/alice:open/undo/19",
+      "timestamp": 1700001080,
+      "undone": false
+     },
+     {
+      "action": "branch",
+      "buttons": [],
+      "description": "branch add 100%done",
+      "form": "form:/alice:open/undo/18/undo",
+      "index": 18,
+      "link": "ai:/alice:open/undo/18",
+      "timestamp": 1700001080,
+      "undone": false
+     }
+    ],
+    "next": 17
+   },
+   "user_notifications": {
+    "next_start": null,
+    "rows": [
+     {
+      "identity": "alice:open",
+      "title": "the roadmap",
+      "unread": true,
+      "url": "/alice:open/discuss:<discuss:roadmap>"
+     },
+     {
+      "identity": "alice:open",
+      "title": "the roof leaks",
+      "unread": false,
+      "url": "/alice:open/issue:<issue:leaky-roof>"
+     }
+    ],
+    "ssh_keys": {
+     "confirm": null,
+     "keys": []
+    },
+    "start": 0,
+    "view": "notifications"
+   }
+  }
+ },
+ "session": {
+  "ansi_art": "<ansi_art>",
+  "current_page": {
+   "repo_issues": {
+    "attachment": "",
+    "comment": "<comment:leaky-roof.c01>",
+    "comments_start": 0,
+    "name": "alice:open",
+    "search": "",
+    "selected": "<issue:leaky-roof>",
+    "start": false,
+    "theirs": "",
+    "view": "open"
+   }
+  },
+  "form_feedback": null,
+  "git_http_url": "http://haxy.test",
+  "git_ssh_prefix": "",
+  "git_ssh_url": null,
+  "host_kind": "server",
+  "now": "<now>",
+  "sync_failure": null,
+  "undo_failure": null,
+  "unread_notifs": 1,
+  "user_email": "alice@example.test",
+  "user_id": "<bytes:user:alice>",
+  "user_name": "alice"
+ }
+}

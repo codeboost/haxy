@@ -4,8 +4,13 @@
 const std = @import("std");
 const mcp = @import("../mcp.zig");
 
-// the longest request line read, in bytes, without its newline
-pub const max_line_len = 1 << 20;
+// the longest request line read, in bytes, without its newline: room for
+// the largest attachment's base64 and the json around it
+pub const max_line_len = 16 << 20;
+
+comptime {
+    if (max_line_len < mcp.AttachTool.max_encoded_len + 64 * 1024) @compileError("an attach call with the largest file doesn't fit a line");
+}
 
 // answer every line `in` holds until it ends. one call runs at a time.
 pub fn run(server: *mcp.Server, in: *std.Io.Reader, out: *std.Io.Writer, err: *std.Io.Writer) !void {

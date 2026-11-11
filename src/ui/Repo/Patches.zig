@@ -316,157 +316,6 @@ pub fn canMerge(entry: Entry, session: *const ui.Session) bool {
         session.data.host_kind == .server;
 }
 
-pub fn create(
-    data: *const Self,
-    session: *ui.Session,
-    allocator: std.mem.Allocator,
-    actor: ui.Actor,
-    title: []const u8,
-    labels: []const u8,
-    description: []const u8,
-    target_branch: []const u8,
-    source_branch: ?[]const u8,
-) ![evt.event_id_size * 2]u8 {
-    if (!evt.Patch.fieldsValid(title, labels)) return error.InvalidFields;
-    const io = session.io orelse return error.NotFound;
-    const repo_source = data.repo_source orelse return error.NotFound;
-    var id_bytes: [evt.event_id_size]u8 = undefined;
-    io.random(&id_bytes);
-    const id = std.fmt.bytesToHex(id_bytes, .lower);
-    if (source_branch) |branch| {
-        switch (repo_source.repo_kind) {
-            inline else => |repo_kind| {
-                var any_repo = try rp.AnyRepo(repo_kind, .{}).open(io, allocator, repo_source.localInitOpts());
-                defer any_repo.deinit(io, allocator);
-                switch (any_repo) {
-                    inline else => |*repo| try pch.writeBranchPatch(session.eventHost(), repo_kind, repo.self_repo_opts, io, allocator, repo, id, .{
-                        .title = title,
-                        .labels = labels,
-                        .description = description,
-                        .target_branch = target_branch,
-                        .source_branch = branch,
-                    }, null, actor.author),
-                }
-            },
-        }
-        return id;
-    }
-    if (session.data.host_kind == .local) return error.InvalidSourceBranch;
-    const users_dir = session.users_dir orelse return error.NotFound;
-    const user_id = actor.user_id orelse return error.NotFound;
-    const repo_id = data.repo_id orelse return error.NotFound;
-    const repo_user_id = actor.repo_user_id orelse return error.NotFound;
-    const identity = ui.RoutablePage.RepoIdentity.parse(data.identity) orelse return error.NotFound;
-    if (!evt.Patch.branchValid(target_branch) or !try repo_source.hasBranch(io, allocator, target_branch)) return error.InvalidTargetBranch;
-    const fork_path = try fork.create(.{}, io, allocator, users_dir, .{
-        .id = id,
-        .user_id = user_id,
-        .repo_id = repo_id,
-        .repo_user_id = repo_user_id,
-        .repo_name = identity.name,
-        .title = title,
-        .description = description,
-        .labels = labels,
-        .target_branch = target_branch,
-        .author = actor.author,
-        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-    });
-    allocator.free(fork_path);
-    return id;
-}
-
-pub fn publishDraft(data: *const Self, session: *ui.Session, allocator: std.mem.Allocator, author: evt.CommitAuthor, id: []const u8) !void {
-    const io = session.io orelse return error.NotFound;
-    const server = switch (session.eventHost()) {
-        .server => |server| server,
-        .local => return error.NotFound,
-    };
-    const admin_repo = session.admin_repo orelse return error.NotFound;
-    const repo_source = data.repo_source orelse return error.NotFound;
-    const repo_id = data.repo_id orelse return error.NotFound;
-    const user_id = session.userId() orelse return error.NotFound;
-    const patch_id = evt.parseEventId(id) catch return error.NotFound;
-
-    const id_hex = std.fmt.bytesToHex(patch_id, .lower);
-    var target_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, repo_source.localInitOpts());
-    defer target_repo.deinit(io, allocator);
-    switch (target_repo) {
-        inline else => |*repo| try pch.publish(repo.self_repo_opts, io, allocator, server, admin_repo, repo, .{
-            .id = id_hex,
-            .user_id = user_id,
-            .repo_id = repo_id,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        }),
-    }
-}
-
-pub fn mergePatch(data: *const Self, session: *ui.Session, allocator: std.mem.Allocator, author: evt.CommitAuthor, id: []const u8, revision: evt.Patch.MergeRevision) !void {
-    const io = session.io orelse return error.NotFound;
-    const server = switch (session.eventHost()) {
-        .server => |server| server,
-        .local => return error.NotFound,
-    };
-    const repo_source = data.repo_source orelse return error.NotFound;
-    if (repo_source.repo_kind != .xit) return error.NotFound;
-    const patch_id = evt.parseEventId(id) catch return error.NotFound;
-
-    const id_hex = std.fmt.bytesToHex(patch_id, .lower);
-    var target_repo = try rp.AnyRepo(.xit, .{}).open(io, allocator, repo_source.localInitOpts());
-    defer target_repo.deinit(io, allocator);
-    switch (target_repo) {
-        inline else => |*repo| try pch.mergeAndRemoveFork(repo.self_repo_opts, io, allocator, server, repo, .{
-            .id = id_hex,
-            .revision = revision,
-            .author = author,
-            .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-        }),
-    }
-}
-
-pub fn editDraft(
-    data: *const Self,
-    session: *ui.Session,
-    allocator: std.mem.Allocator,
-    author: evt.CommitAuthor,
-    id: []const u8,
-    title: []const u8,
-    labels: []const u8,
-    description: []const u8,
-    target_branch: []const u8,
-) !void {
-    const io = session.io orelse return error.NotFound;
-    const users_dir = session.users_dir orelse return error.NotFound;
-    const admin_repo = session.admin_repo orelse return error.NotFound;
-    const repo_id = data.repo_id orelse return error.NotFound;
-    const repo_source = data.repo_source orelse return error.NotFound;
-    const user_id = session.userId() orelse return error.NotFound;
-    const patch_id = evt.parseEventId(id) catch return error.NotFound;
-    if (!evt.Patch.branchValid(target_branch) or !try repo_source.hasBranch(io, allocator, target_branch)) return error.InvalidTargetBranch;
-
-    const id_hex = std.fmt.bytesToHex(patch_id, .lower);
-    if (!try pch.editDraft(.{}, io, allocator, users_dir, admin_repo, .{
-        .id = id_hex,
-        .user_id = user_id,
-        .repo_id = repo_id,
-        .title = title,
-        .labels = labels,
-        .description = description,
-        .target_branch = target_branch,
-        .author = author,
-        .timestamp = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
-    })) return error.NotFound;
-}
-
-pub fn removeDraft(session: *ui.Session, allocator: std.mem.Allocator, author: evt.CommitAuthor, id: *const [evt.event_id_size]u8) !void {
-    const io = session.io orelse return error.NotFound;
-    const users_dir = session.users_dir orelse return error.NotFound;
-    const user_id = session.userId() orelse return error.NotFound;
-
-    const id_hex = std.fmt.bytesToHex(id.*, .lower);
-    try fork.remove(io, allocator, users_dir, &user_id, &id_hex, author);
-}
-
 // `status`'s windowed listing.
 pub fn window(self: *const Self, status: Status) *const Window {
     return switch (status) {
@@ -496,6 +345,17 @@ pub fn selectedThread(self: *const Self) ?*const PatchWithId {
     }
     return null;
 }
+
+// the user whose drafts a listing shows
+pub const DraftsOwner = struct {
+    user_id: [evt.event_id_size]u8,
+    name: []const u8,
+
+    // the session's logged-in user, or null when logged out
+    pub fn ofSession(session: *const ui.Session) ?DraftsOwner {
+        return .{ .user_id = session.userId() orelse return null, .name = session.data.user_name orelse return null };
+    }
+};
 
 // an empty listing, for the wasm / no-repo paths.
 pub fn emptyResult(aa: std.mem.Allocator, identity: []const u8, search: []const u8, selected_id: []const u8, comment_id: []const u8, comments_start: usize, theirs_picks: []const u8, view: ui.RoutablePage.PatchesView) !Self {
@@ -559,7 +419,10 @@ pub fn init(
     // the admin db's moment, for resolving author emails to user names (null
     // in local mode, which has no users)
     admin_moment: ?evt.AdminDB.HashMap(.read_only),
-    session: *ui.Session,
+    // where server users live; null in local mode, which has no forks
+    users_dir: ?[]const u8,
+    // whose drafts the listing shows: the logged-in server user's
+    drafts_owner: ?DraftsOwner,
     repo_id_maybe: ?[evt.event_id_size]u8,
     identity: []const u8,
     target_branch: []const u8,
@@ -571,7 +434,7 @@ pub fn init(
     view: ui.RoutablePage.PatchesView,
     viewer: ?ui.Viewer,
 ) !Self {
-    const allowed_view: ui.RoutablePage.PatchesView = if (session.local != null and view == .drafts) .open else view;
+    const allowed_view: ui.RoutablePage.PatchesView = if (users_dir == null and view == .drafts) .open else view;
     var empty = try emptyResult(arena.allocator(), identity, search, selected_id, comment_id, comments_start, theirs_picks, allowed_view);
     empty.default_target_branch = try arena.allocator().dupe(u8, target_branch);
     // the early returns below still let the viewer write
@@ -582,8 +445,11 @@ pub fn init(
     const rooted = empty.selected_id.len != 0;
     const drafts_window = if (admin_moment) |admin|
         if (repo_id_maybe) |repo_id|
-            if (session.data.user_id != null and session.users_dir != null)
-                try loadDraftWindow(repo_kind, repo_opts, arena, session, admin, &repo_id, empty.selected_id, repo)
+            if (drafts_owner) |owner|
+                if (users_dir) |dir|
+                    try loadDraftWindow(repo_kind, repo_opts, arena, io, dir, owner, admin, &repo_id, empty.selected_id, repo)
+                else
+                    Window.empty
             else
                 Window.empty
         else
@@ -705,10 +571,10 @@ pub fn init(
     var closed_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, closed_sets, closed_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
     var merged_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, merged_sets, merged_root, conflict_set, empty.selected_id, thread_comments_start, filters.words, viewer);
     var conflicts_window = try thread.loadWindow(Self, .patch, repo_opts.hash, arena, admin_moment, haxy_moment, event_id_to_patch, if (conflict_set) |*set| set[0..1] else &.{}, conflicts_root, conflict_set, empty.selected_id, thread_comments_start, "", viewer);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, session.users_dir, haxy_moment, repo, &open_window);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, session.users_dir, haxy_moment, repo, &closed_window);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, session.users_dir, haxy_moment, repo, &merged_window);
-    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, session.users_dir, haxy_moment, repo, &conflicts_window);
+    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &open_window);
+    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &closed_window);
+    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &merged_window);
+    try setPatchDetails(repo_kind, repo_opts, io, arena, admin_moment, users_dir, haxy_moment, repo, &conflicts_window);
     if (view == .conflicts and conflicts_window.count > 0) resolved_view = .conflicts;
 
     const comment_page = if (empty.comment_id.len == 0)
@@ -805,16 +671,16 @@ fn loadDraftWindow(
     comptime repo_kind: rp.RepoKind,
     comptime repo_opts: rp.RepoOpts(repo_kind),
     arena: *std.heap.ArenaAllocator,
-    session: *ui.Session,
+    io: std.Io,
+    users_dir: []const u8,
+    owner: DraftsOwner,
     admin_moment: evt.AdminDB.HashMap(.read_only),
     repo_id: *const [evt.event_id_size]u8,
     selected_id: []const u8,
     target_repo: *rp.Repo(repo_kind, repo_opts),
 ) !Window {
-    const user_id = session.userId() orelse return .empty;
-    const user_name = session.data.user_name orelse return .empty;
-    const users_dir = session.users_dir orelse return .empty;
-    const io = session.io orelse return .empty;
+    const user_id = owner.user_id;
+    const user_name = owner.name;
 
     // the viewer's drafts live in their user repo
     var user_repo = (try evt.openUserRepo(io, arena.child_allocator, users_dir, &user_id)) orelse return .empty;

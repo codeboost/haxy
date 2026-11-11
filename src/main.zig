@@ -198,7 +198,7 @@ fn runMcp(
     defer arena.deinit();
     const aa = arena.allocator();
 
-    const mode: mcp.Mode = switch (options) {
+    const mode: mcp.Mode = switch (options.mode) {
         .local => .{ .local = try findLocalRepo(io, allocator, &arena, cwd_path, run_opts) },
         .server => |server| blk: {
             const data_dir_path = try std.Io.Dir.path.resolveAlloc(aa, &.{ cwd_path, server.data_dir });
@@ -229,6 +229,6 @@ fn runMcp(
         },
     };
 
-    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = mode };
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = mode, .allow_destructive = options.allow_destructive };
     try mcp.stdio.run(&server, in, run_opts.out, run_opts.err);
 }

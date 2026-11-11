@@ -19,6 +19,8 @@ pub const Server = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     mode: Mode,
+    // whether the removal tools are listed and callable
+    allow_destructive: bool = false,
 
     // answer the json-rpc message `line` holds, writing zero or one response
     // line to `out`
@@ -39,7 +41,7 @@ pub const Server = struct {
                 .serverInfo = .{ .name = server_name, .version = server_version },
             });
         } else if (std.mem.eql(u8, request.method, "tools/list")) {
-            try jsonrpc.writeResult(out, id, ToolList{});
+            try jsonrpc.writeResult(out, id, ToolList{ .allow_destructive = self.allow_destructive });
         } else if (std.mem.eql(u8, request.method, "tools/call")) {
             try self.callTool(arena.allocator(), id, request.params, out);
         } else if (std.mem.eql(u8, request.method, "ping")) {
@@ -62,9 +64,15 @@ pub const Server = struct {
         // a tool without arguments may leave them out
         const arguments = object.get("arguments") orelse std.json.Value{ .object = .empty };
         inline for (tools) |tool| {
-            if (std.mem.eql(u8, name, tool.Operation.tool_name)) return try self.runTool(tool.Operation, arena, id, arguments, out);
+            // a removal not allowed is no tool at all
+            if (std.mem.eql(u8, name, tool.Operation.tool_name) and self.serves(tool)) return try self.runTool(tool.Operation, arena, id, arguments, out);
         }
         try jsonrpc.writeError(out, id, .invalid_params, try std.fmt.allocPrint(arena, "unknown tool: {s}", .{name}));
+    }
+
+    // whether this server lists and calls `tool`
+    fn serves(self: *const Server, comptime tool: Tool) bool {
+        return !tool.removal or self.allow_destructive;
     }
 
     fn runTool(self: *Server, comptime Operation: type, arena: std.mem.Allocator, id: jsonrpc.Id, arguments: std.json.Value, out: *std.Io.Writer) !void {
@@ -81,13 +89,23 @@ pub const Server = struct {
         // the result's lifetime: this call
         var call_arena = std.heap.ArenaAllocator.init(self.gpa);
         defer call_arena.deinit();
+        // an adapter turns its arguments into what the operation takes, or
+        // refuses them like the schema would
+        // preparing failing, like the host failing below, is no tool result
+        const prepared = if (@hasDecl(Operation, "prepare")) input.prepare(call_arena.allocator()) catch |err| {
+            return try jsonrpc.writeError(out, id, .internal_error, try std.fmt.allocPrint(arena, "internal error: {t}", .{err}));
+        } else {};
+        const ready = if (@hasDecl(Operation, "prepare")) switch (prepared) {
+            .ready => |ready| ready,
+            .invalid => |problem| return try jsonrpc.writeError(out, id, .invalid_params, try std.fmt.allocPrint(arena, "invalid arguments for {s}: {s}", .{ Operation.tool_name, problem })),
+        } else input;
         var admin: ?AdminRepo = null;
         defer if (admin) |*repo| repo.deinit(self.io, self.gpa);
         // the host failing before the operation runs is no tool result
         var ctx = self.initCtx(&call_arena, &admin) catch |err| {
             return try jsonrpc.writeError(out, id, .internal_error, try std.fmt.allocPrint(arena, "internal error: {t}", .{err}));
         };
-        if (run(Operation, input, &ctx)) |result| {
+        if (run(@TypeOf(ready), ready, &ctx)) |result| {
             const structured = structuredContent(result);
             try jsonrpc.writeResult(out, id, ToolResult(@TypeOf(structured)){
                 .text = try std.json.Stringify.valueAlloc(arena, structured, .{}),
@@ -148,9 +166,19 @@ fn ToolResult(comptime Structured: type) type {
     };
 }
 
-// structured content is an object, so a void result is `{}`
-fn structuredContent(result: anytype) if (@TypeOf(result) == void) Empty else @TypeOf(result) {
-    return if (@TypeOf(result) == void) .{} else result;
+// structured content is an object, so a void result is `{}` and any other
+// result that isn't a struct is wrapped as `{"result": ...}`
+fn structuredContent(result: anytype) StructuredContent(@TypeOf(result)) {
+    const Result = @TypeOf(result);
+    if (Result == void) return .{};
+    if (@typeInfo(Result) == .@"struct") return result;
+    return .{ .result = result };
+}
+
+fn StructuredContent(comptime Result: type) type {
+    if (Result == void) return Empty;
+    if (@typeInfo(Result) == .@"struct") return Result;
+    return struct { result: Result };
 }
 
 // a tools/call result for an operation that failed
@@ -193,34 +221,145 @@ pub const Annotations = struct {
     pub const read: Annotations = .{ .readOnlyHint = false, .destructiveHint = false, .idempotentHint = true };
     // a write that adds to what is there
     pub const add: Annotations = .{ .readOnlyHint = false, .destructiveHint = false, .idempotentHint = false };
-    // a write that replaces what is there with the same result each time
+    // a write that changes or removes what is there, where a repeated call
+    // has no further effect
     pub const replace: Annotations = .{ .readOnlyHint = false, .destructiveHint = true, .idempotentHint = true };
+    // a write that changes what is there and writes again on every call
+    pub const rewrite: Annotations = .{ .readOnlyHint = false, .destructiveHint = true, .idempotentHint = false };
 };
 
 pub const Tool = struct {
     Operation: type,
     annotations: Annotations,
+    // a removal or merge, served only with --allow-destructive
+    removal: bool = false,
 };
 
 // the operations served as tools, in tools/list order. annotations cover the
-// whole call, including local mode's refresh. removals would only be added
-// with --allow-destructive; this slice has none.
+// whole call, including local mode's refresh; idempotent means a repeated call
+// has no further effect.
+//
+// domain.DeleteFork is no tool: it checks the account password, which tool
+// arguments must never carry. a password-free operator-mode adapter waits for
+// personal tokens (phase 6).
 pub const tools = [_]Tool{
     .{ .Operation = domain.RefreshLocal, .annotations = .read },
     .{ .Operation = domain.ListIssues, .annotations = .read },
     .{ .Operation = domain.GetIssue, .annotations = .read },
+    .{ .Operation = domain.GetDiscussion, .annotations = .read },
+    .{ .Operation = domain.ListPatches, .annotations = .read },
+    .{ .Operation = domain.GetPatch, .annotations = .read },
+    // each call opens another thread
     .{ .Operation = domain.CreateThread, .annotations = .add },
-    .{ .Operation = domain.CreateComment, .annotations = .add },
+    // the update commits again even when nothing changed
+    .{ .Operation = domain.EditThread, .annotations = .rewrite },
+    // the update commits again even once the conflict is settled
+    .{ .Operation = domain.ResolveConflict, .annotations = .rewrite },
+    // the update returns without writing when the status is already set
     .{ .Operation = domain.SetThreadStatus, .annotations = .replace },
+    // each call adds another comment
+    .{ .Operation = domain.CreateComment, .annotations = .add },
+    // the edit commits again even when the body is the same
+    .{ .Operation = domain.EditComment, .annotations = .rewrite },
+    // each call adds another attachment
+    .{ .Operation = AttachTool, .annotations = .add },
+    // a repeat fails as already assigned without writing
+    .{ .Operation = domain.Assign, .annotations = .replace },
+    // a repeat fails as not found without writing
+    .{ .Operation = domain.Unassign, .annotations = .replace },
+    // a repeat returns early when already subscribed
+    .{ .Operation = domain.Subscribe, .annotations = .replace },
+    // each call writes another notify event
+    .{ .Operation = domain.Mute, .annotations = .rewrite },
+    // a repeat finds the draft already published
+    .{ .Operation = domain.PublishPatch, .annotations = .replace },
+    // merging may remove the patch's fork; a repeat finds the patch merged
+    .{ .Operation = domain.MergePatch, .annotations = .replace, .removal = true },
+    // removals: a repeat finds nothing to remove
+    .{ .Operation = domain.RemoveThread, .annotations = .replace, .removal = true },
+    .{ .Operation = domain.RemoveComment, .annotations = .replace, .removal = true },
+    .{ .Operation = domain.RemoveAttachment, .annotations = .replace, .removal = true },
+};
+
+comptime {
+    // an operation that can't take json arguments is served through an
+    // adapter, never directly
+    for (tools) |tool| {
+        if (@hasDecl(tool.Operation, "not_a_tool")) @compileError(@typeName(tool.Operation) ++ " is not a tool");
+        // passwords never travel in tool arguments
+        if (@hasField(tool.Operation, "password")) @compileError(@typeName(tool.Operation) ++ " takes a password");
+        // every argument is described
+        for (@typeInfo(tool.Operation).@"struct".field_names) |name| {
+            if (!@hasDecl(tool.Operation, "tool_schema_notes") or !@hasField(@TypeOf(tool.Operation.tool_schema_notes), name)) {
+                @compileError(@typeName(tool.Operation) ++ ".tool_schema_notes doesn't describe " ++ name);
+            }
+        }
+    }
+}
+
+// the `attach` tool: domain.Attach streams from a reader, which json can't
+// carry, so the file comes as base64, decoded into a bounded buffer
+pub const AttachTool = struct {
+    pub const tool_name = "attach";
+    pub const tool_description = "Attach a file, sent as base64, to an issue, patch or discussion.";
+    pub const tool_schema_notes = .{
+        .repo = domain.repo_note,
+        .kind = "The kind of the thread the file is attached to.",
+        .thread_id = "The thread's hex event id.",
+        .name = "The file's name, without a directory.",
+        .content_base64 = "The file's bytes in padded standard base64, at most 10 MiB once decoded.",
+    };
+
+    // "owner:name"; "" in local mode
+    repo: []const u8,
+    kind: domain.ThreadKind,
+    // the thread's hex event id
+    thread_id: []const u8,
+    name: []const u8,
+    content_base64: []const u8,
+
+    // the longest encoding of an attachment
+    pub const max_encoded_len = ((evt.Attachment.max_size + 2) / 3) * 4;
+
+    // the file decoded into `arena`, or why it can't be. the decoded size,
+    // which the length and padding fix, is checked before anything is
+    // allocated or decoded.
+    pub fn prepare(self: AttachTool, arena: std.mem.Allocator) !union(enum) { ready: Decoded, invalid: []const u8 } {
+        const decoder = std.base64.standard.Decoder;
+        const size = decoder.calcSizeForSlice(self.content_base64) catch return .{ .invalid = "content_base64 is not base64" };
+        if (size > evt.Attachment.max_size) return .{ .invalid = std.fmt.comptimePrint("content_base64 decodes to more than {d} bytes", .{evt.Attachment.max_size}) };
+        const bytes = try arena.alloc(u8, size);
+        decoder.decode(bytes, self.content_base64) catch return .{ .invalid = "content_base64 is not base64" };
+        return .{ .ready = .{ .tool = self, .bytes = bytes } };
+    }
+
+    pub const Decoded = struct {
+        tool: AttachTool,
+        bytes: []const u8,
+
+        pub fn run(self: Decoded, ctx: *domain.Ctx) !domain.Attach.Result {
+            var reader = std.Io.Reader.fixed(self.bytes);
+            return try (domain.Attach{
+                .repo = self.tool.repo,
+                .kind = self.tool.kind,
+                .thread_id = self.tool.thread_id,
+                .name = self.tool.name,
+                .size = self.bytes.len,
+                .reader = &reader,
+            }).run(ctx);
+        }
+    };
 };
 
 // tools/list's result
 const ToolList = struct {
-    pub fn jsonStringify(_: ToolList, jw: anytype) !void {
+    allow_destructive: bool,
+
+    pub fn jsonStringify(self: ToolList, jw: anytype) !void {
         try jw.beginObject();
         try jw.objectField("tools");
         try jw.beginArray();
-        inline for (tools) |tool| {
+        inline for (tools) |tool| if (!tool.removal or self.allow_destructive) {
             try jw.beginObject();
             try jw.objectField("name");
             try jw.write(tool.Operation.tool_name);
@@ -231,7 +370,7 @@ const ToolList = struct {
             try jw.objectField("annotations");
             try jw.write(tool.annotations);
             try jw.endObject();
-        }
+        };
         try jw.endArray();
         try jw.endObject();
     }
@@ -308,10 +447,13 @@ fn writeSchema(jw: anytype, comptime T: type, comptime description: ?[]const u8,
             if (nullable) try jw.write(null);
             try jw.endArray();
         },
-        .pointer => {
-            if (T != []const u8) @compileError("no json schema for " ++ @typeName(T));
+        .pointer => if (T == []const u8) {
             try writeTypeName(jw, "string", nullable);
-        },
+        } else if (T == []const []const u8) {
+            try writeTypeName(jw, "array", nullable);
+            try jw.objectField("items");
+            try jw.write(.{ .type = "string" });
+        } else @compileError("no json schema for " ++ @typeName(T)),
         else => @compileError("no json schema for " ++ @typeName(T)),
     }
     if (description) |text| {
@@ -377,10 +519,15 @@ fn checkValue(comptime T: type, arena: std.mem.Allocator, comptime path: []const
             }
             return path ++ " must be one of " ++ names;
         },
-        .pointer => {
-            comptime std.debug.assert(T == []const u8);
+        .pointer => if (T == []const u8) {
             return if (value == .string) null else path ++ " must be a string";
-        },
+        } else if (T == []const []const u8) {
+            if (value != .array) return path ++ " must be an array of strings";
+            for (value.array.items) |item| {
+                if (item != .string) return path ++ " must be an array of strings";
+            }
+            return null;
+        } else @compileError("no json schema for " ++ @typeName(T)),
         else => @compileError("no json schema for " ++ @typeName(T)),
     }
 }

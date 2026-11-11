@@ -14,12 +14,17 @@ fn expectDispatch(args: []const []const u8, expected: cmd.CommandDispatch) !void
 }
 
 test "mcp cli: no flags runs in local mode" {
-    try expectDispatch(&.{"mcp"}, .{ .cli = .{ .mcp = .local } });
+    try expectDispatch(&.{"mcp"}, .{ .cli = .{ .mcp = .{ .mode = .local } } });
 }
 
 test "mcp cli: --data-dir and --user together run in server mode" {
-    try expectDispatch(&.{ "mcp", "--data-dir", "/srv/git", "--user", "alice" }, .{ .cli = .{ .mcp = .{ .server = .{ .data_dir = "/srv/git", .user = "alice" } } } });
-    try expectDispatch(&.{ "mcp", "--user", "alice", "--data-dir", "/srv/git" }, .{ .cli = .{ .mcp = .{ .server = .{ .data_dir = "/srv/git", .user = "alice" } } } });
+    try expectDispatch(&.{ "mcp", "--data-dir", "/srv/git", "--user", "alice" }, .{ .cli = .{ .mcp = .{ .mode = .{ .server = .{ .data_dir = "/srv/git", .user = "alice" } } } } });
+    try expectDispatch(&.{ "mcp", "--user", "alice", "--data-dir", "/srv/git" }, .{ .cli = .{ .mcp = .{ .mode = .{ .server = .{ .data_dir = "/srv/git", .user = "alice" } } } } });
+}
+
+test "mcp cli: --allow-destructive allows the removal tools in either mode" {
+    try expectDispatch(&.{ "mcp", "--allow-destructive" }, .{ .cli = .{ .mcp = .{ .mode = .local, .allow_destructive = true } } });
+    try expectDispatch(&.{ "mcp", "--data-dir", "/srv/git", "--allow-destructive", "--user", "alice" }, .{ .cli = .{ .mcp = .{ .mode = .{ .server = .{ .data_dir = "/srv/git", .user = "alice" } }, .allow_destructive = true } } });
 }
 
 test "mcp cli: anything but no flags or both server flags with values is an invalid argument" {

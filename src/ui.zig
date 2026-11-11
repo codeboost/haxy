@@ -2240,15 +2240,11 @@ pub const AssigneeLookup = union(enum) {
     failure: Session.FormFeedback.AssignmentFailure,
 };
 
-// the email `text` assigns: itself when it holds an @, else the email of the
-// user it names. a null moment is local mode, which has no users to look up.
+// the email `text` assigns, or the form failure looking it up is. a null
+// moment is local mode, which has no users to look up.
 pub fn assigneeEmail(moment_maybe: ?evt.AdminDB.HashMap(.read_only), arena: *std.heap.ArenaAllocator, text: []const u8) !AssigneeLookup {
-    const trimmed = std.mem.trim(u8, text, " \t\r\n");
-    if (std.mem.indexOfScalar(u8, trimmed, '@') != null) return .{ .email = trimmed };
-    const moment = moment_maybe orelse return .{ .failure = .not_an_email };
-    const user_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, moment, trimmed)) orelse return .{ .failure = .not_found };
-    const user = (try activeUser(moment, arena, user_id)) orelse return .{ .failure = .not_found };
-    return .{ .email = user.event.email };
+    const email = domain.assigneeEmail(moment_maybe, arena, text) catch |err| return .{ .failure = Session.FormFeedback.AssignmentFailure.fromError(err) orelse return err };
+    return .{ .email = email };
 }
 
 pub const authorizeUser = domain.authorizeUser;
@@ -2384,9 +2380,35 @@ pub const Session = struct {
             }
         };
 
-        pub const AssignmentFailure = enum { not_found, not_an_email, already_assigned };
+        pub const AssignmentFailure = enum {
+            not_found,
+            not_an_email,
+            already_assigned,
 
-        pub const DeleteFailure = enum { wrong_confirm, wrong_password };
+            // the form failure a domain error is, or null for one the form doesn't show
+            pub fn fromError(err: anyerror) ?AssignmentFailure {
+                return switch (err) {
+                    domain.Error.UnknownAssignee => .not_found,
+                    domain.Error.NotAnEmail => .not_an_email,
+                    domain.Error.AlreadyAssigned => .already_assigned,
+                    else => null,
+                };
+            }
+        };
+
+        pub const DeleteFailure = enum {
+            wrong_confirm,
+            wrong_password,
+
+            // the form failure a domain error is, or null for one the form doesn't show
+            pub fn fromError(err: anyerror) ?DeleteFailure {
+                return switch (err) {
+                    domain.Error.WrongConfirm => .wrong_confirm,
+                    domain.Error.WrongPassword => .wrong_password,
+                    else => null,
+                };
+            }
+        };
 
         pub const KeyFailure = enum {
             invalid,

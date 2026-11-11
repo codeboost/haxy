@@ -202,7 +202,7 @@ fn toolEntry(tools: std.json.Value, name: []const u8) ![]u8 {
     return error.TestExpectedTool;
 }
 
-test "mcp: tools/list names the slice's tools with schemas derived from the operations" {
+test "mcp: tools/list names the tools in registry order with schemas derived from the operations" {
     var local = try fixture.Local(.git, .sha1).init();
     defer local.deinit();
     var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
@@ -219,7 +219,7 @@ test "mcp: tools/list names the slice's tools with schemas derived from the oper
         try names.appendSlice(allocator, tool.object.get("name").?.string);
         try names.append(allocator, ' ');
     }
-    try std.testing.expectEqualStrings("refresh_local list_issues get_issue create_thread create_comment set_thread_status ", names.items);
+    try std.testing.expectEqualStrings("refresh_local list_issues get_issue get_discussion list_patches get_patch create_thread edit_thread resolve_conflict set_thread_status create_comment edit_comment attach assign unassign subscribe mute publish_patch ", names.items);
 
     // every tool's annotations cover the whole call, which in local mode
     // refreshes the repo first, so no tool is read-only
@@ -239,9 +239,21 @@ test "mcp: tools/list names the slice's tools with schemas derived from the oper
             \\  "refresh_local": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
             \\  "list_issues": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
             \\  "get_issue": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+            \\  "get_discussion": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+            \\  "list_patches": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+            \\  "get_patch": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
             \\  "create_thread": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+            \\  "edit_thread": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
+            \\  "resolve_conflict": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
+            \\  "set_thread_status": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
             \\  "create_comment": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
-            \\  "set_thread_status": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
+            \\  "edit_comment": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
+            \\  "attach": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+            \\  "assign": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
+            \\  "unassign": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
+            \\  "subscribe": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
+            \\  "mute": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
+            \\  "publish_patch": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
             \\}
         , annotations.items);
     }
@@ -252,20 +264,95 @@ test "mcp: tools/list names the slice's tools with schemas derived from the oper
         try expectJson(
             \\{
             \\  "name": "create_thread",
-            \\  "description": "Open a new issue or discussion in a repository.",
+            \\  "description": "Open a new issue, patch or discussion in a repository.",
             \\  "inputSchema": {
             \\    "type": "object",
             \\    "properties": {
             \\      "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
-            \\      "kind": { "type": "string", "enum": ["issue", "patch", "discuss"], "description": "issue or discuss; patch is not available yet." },
+            \\      "kind": { "type": "string", "enum": ["issue", "patch", "discuss"], "description": "The kind of thread to open." },
             \\      "title": { "type": "string", "description": "A title that isn't blank." },
             \\      "labels": { "type": "string", "description": "Space-separated labels, each at most 64 bytes." },
-            \\      "body": { "type": "string", "description": "The thread's text, in markdown." }
+            \\      "body": { "type": "string", "description": "The thread's text, in markdown." },
+            \\      "target_branch": { "type": "string", "description": "Patches only: the branch the patch merges into." },
+            \\      "source_branch": { "type": ["string", "null"], "description": "Patches only: the branch the patch proposes; null or omitted starts a draft in a fork of the repository instead, which is server only." }
             \\    },
             \\    "required": ["repo", "kind", "title"],
             \\    "additionalProperties": false
             \\  },
             \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
+            \\}
+        , entry);
+    }
+    // a write with a list of strings
+    {
+        const entry = try toolEntry(tools, "resolve_conflict");
+        defer allocator.free(entry);
+        try expectJson(
+            \\{
+            \\  "name": "resolve_conflict",
+            \\  "description": "Settle an issue or patch whose fields two merged event histories set apart, keeping our side except where the inputs say otherwise.",
+            \\  "inputSchema": {
+            \\    "type": "object",
+            \\    "properties": {
+            \\      "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
+            \\      "kind": { "type": "string", "enum": ["issue", "patch", "discuss"], "description": "issue or patch; discussions have no field conflicts." },
+            \\      "thread_id": { "type": "string", "description": "The thread's hex event id." },
+            \\      "title": { "type": ["string", "null"], "description": "The resolved title; null or omitted keeps the current one." },
+            \\      "labels": { "type": ["string", "null"], "description": "The resolved space-separated labels; null or omitted keeps the current ones." },
+            \\      "hunks": { "type": "array", "items": { "type": "string" }, "description": "The resolutions of the description's conflicting hunks, in order; missing trailing ones keep our side." },
+            \\      "theirs": { "type": "string", "description": "Patches only: comma-separated fields to take from their side, of status, revision and target_branch." }
+            \\    },
+            \\    "required": ["repo", "kind", "thread_id"],
+            \\    "additionalProperties": false
+            \\  },
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false }
+            \\}
+        , entry);
+    }
+    // the adapter that takes a file as base64
+    {
+        const entry = try toolEntry(tools, "attach");
+        defer allocator.free(entry);
+        try expectJson(
+            \\{
+            \\  "name": "attach",
+            \\  "description": "Attach a file, sent as base64, to an issue, patch or discussion.",
+            \\  "inputSchema": {
+            \\    "type": "object",
+            \\    "properties": {
+            \\      "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
+            \\      "kind": { "type": "string", "enum": ["issue", "patch", "discuss"], "description": "The kind of the thread the file is attached to." },
+            \\      "thread_id": { "type": "string", "description": "The thread's hex event id." },
+            \\      "name": { "type": "string", "description": "The file's name, without a directory." },
+            \\      "content_base64": { "type": "string", "description": "The file's bytes in padded standard base64, at most 10 MiB once decoded." }
+            \\    },
+            \\    "required": ["repo", "kind", "thread_id", "name", "content_base64"],
+            \\    "additionalProperties": false
+            \\  },
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
+            \\}
+        , entry);
+    }
+    // a read with an enum argument
+    {
+        const entry = try toolEntry(tools, "list_patches");
+        defer allocator.free(entry);
+        try expectJson(
+            \\{
+            \\  "name": "list_patches",
+            \\  "description": "List a repository's patches by view, newest first: open, closed, merged, the acting user's drafts, or conflicted.",
+            \\  "inputSchema": {
+            \\    "type": "object",
+            \\    "properties": {
+            \\      "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
+            \\      "view": { "type": "string", "enum": ["open", "closed", "merged", "drafts", "conflicts"], "description": "Which patches: open, closed, merged, drafts (the acting user's unpublished drafts, server only) or conflicts." },
+            \\      "search": { "type": "string", "description": "Words to find, with label:x filters." },
+            \\      "from": { "type": "string", "description": "The id of the first patch of the window to list; \"\" or omitted lists the first window." }
+            \\    },
+            \\    "required": ["repo"],
+            \\    "additionalProperties": false
+            \\  },
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
             \\}
         , entry);
     }
@@ -508,6 +595,17 @@ test "mcp: tools/call arguments must have the types the schema advertises, not o
             ,
             \\{"jsonrpc":"2.0","id":66,"error":{"code":-32602,"message":"invalid arguments for create_thread: body must be a string"}}
         },
+        // a string, and an array holding a non-string, for a list of strings
+        .{
+            \\{"jsonrpc":"2.0","id":68,"method":"tools/call","params":{"name":"resolve_conflict","arguments":{"repo":"alice:open","kind":"issue","thread_id":"11111111111111111111111111111111","hunks":"ours"}}}
+            ,
+            \\{"jsonrpc":"2.0","id":68,"error":{"code":-32602,"message":"invalid arguments for resolve_conflict: hunks must be an array of strings"}}
+        },
+        .{
+            \\{"jsonrpc":"2.0","id":69,"method":"tools/call","params":{"name":"resolve_conflict","arguments":{"repo":"alice:open","kind":"issue","thread_id":"11111111111111111111111111111111","hunks":["ours",1]}}}
+            ,
+            \\{"jsonrpc":"2.0","id":69,"error":{"code":-32602,"message":"invalid arguments for resolve_conflict: hunks must be an array of strings"}}
+        },
         // arguments that aren't an object
         .{
             \\{"jsonrpc":"2.0","id":67,"method":"tools/call","params":{"name":"create_thread","arguments":["alice:open"]}}
@@ -684,11 +782,12 @@ const SchemaShapes = struct {
     },
     count: u32 = 0,
     on: bool = false,
+    tags: []const []const u8 = &.{},
 
     pub const tool_schema_notes = .{ .name = "A name, or null." };
 };
 
-test "mcp schema: optionals allow null, enums list their names, nested structs recurse" {
+test "mcp schema: optionals allow null, enums list their names, nested structs recurse, string slices are arrays" {
     const schema = try std.json.Stringify.valueAlloc(allocator, mcp.InputSchema(SchemaShapes){}, .{});
     defer allocator.free(schema);
     try expectJson(
@@ -707,10 +806,287 @@ test "mcp schema: optionals allow null, enums list their names, nested structs r
         \\      "additionalProperties": false
         \\    },
         \\    "count": { "type": "integer" },
-        \\    "on": { "type": "boolean" }
+        \\    "on": { "type": "boolean" },
+        \\    "tags": { "type": "array", "items": { "type": "string" } }
         \\  },
         \\  "required": ["name", "color", "size"],
         \\  "additionalProperties": false
         \\}
     , schema);
+}
+
+// the names `tools/list` lists, space-separated
+fn toolNames(server: *mcp.Server) ![]u8 {
+    const parsed = try listTools(server);
+    defer parsed.deinit();
+    var names: std.ArrayList(u8) = .empty;
+    errdefer names.deinit(allocator);
+    for (parsed.value.object.get("result").?.object.get("tools").?.array.items) |tool| {
+        try names.appendSlice(allocator, tool.object.get("name").?.string);
+        try names.append(allocator, ' ');
+    }
+    return try names.toOwnedSlice(allocator);
+}
+
+test "mcp: removals and merging are listed only when destructive tools are allowed, and nothing asks for a password" {
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+    {
+        const names = try toolNames(&server);
+        defer allocator.free(names);
+        try std.testing.expect(std.mem.indexOf(u8, names, "remove_") == null);
+        try std.testing.expect(std.mem.indexOf(u8, names, "merge_patch") == null);
+    }
+    server.allow_destructive = true;
+    {
+        const names = try toolNames(&server);
+        defer allocator.free(names);
+        // delete_fork asks for the account password, so it is no tool
+        try std.testing.expect(std.mem.endsWith(u8, names, " publish_patch merge_patch remove_thread remove_comment remove_attachment "));
+    }
+    const parsed = try listTools(&server);
+    defer parsed.deinit();
+    for (parsed.value.object.get("result").?.object.get("tools").?.array.items) |tool| {
+        const properties = tool.object.get("inputSchema").?.object.get("properties").?.object;
+        try std.testing.expect(properties.get("password") == null);
+    }
+    const entry = try toolEntry(parsed.value.object.get("result").?.object.get("tools").?, "remove_comment");
+    defer allocator.free(entry);
+    try expectJson(
+        \\{
+        \\  "name": "remove_comment",
+        \\  "description": "Remove a comment from an issue, patch or discussion.",
+        \\  "inputSchema": {
+        \\    "type": "object",
+        \\    "properties": {
+        \\      "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
+        \\      "kind": { "type": "string", "enum": ["issue", "patch", "discuss"], "description": "The kind of the thread the comment is on." },
+        \\      "thread_id": { "type": "string", "description": "The thread's hex event id." },
+        \\      "comment_id": { "type": "string", "description": "The comment's hex event id." }
+        \\    },
+        \\    "required": ["repo", "kind", "thread_id", "comment_id"],
+        \\    "additionalProperties": false
+        \\  },
+        \\  "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
+        \\}
+    , entry);
+}
+
+test "mcp: a removal without destructive tools allowed is an unknown tool, with them it removes" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var server = serverMode(data, data.bob);
+
+    const created = try reply(&server,
+        \\{"jsonrpc":"2.0","id":100,"method":"tools/call","params":{"name":"create_thread","arguments":{"repo":"alice:open","kind":"issue","title":"doomed"}}}
+    );
+    defer allocator.free(created);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, created, .{});
+    defer parsed.deinit();
+    const id = parsed.value.object.get("result").?.object.get("structuredContent").?.object.get("id").?.string;
+    const line = try std.mem.replaceOwned(u8, allocator,
+        \\{"jsonrpc":"2.0","id":101,"method":"tools/call","params":{"name":"remove_thread","arguments":{"repo":"alice:open","kind":"issue","thread_id":"ID"}}}
+    , "ID", id);
+    defer allocator.free(line);
+
+    {
+        const out = try reply(&server, line);
+        defer allocator.free(out);
+        try expectJsonLine(
+            \\{"jsonrpc":"2.0","id":101,"error":{"code":-32602,"message":"unknown tool: remove_thread"}}
+        , out);
+        try std.testing.expectEqual(1, try openIssueCount(&server));
+    }
+    server.allow_destructive = true;
+    {
+        const out = try reply(&server, line);
+        defer allocator.free(out);
+        // structured content is an object, so a result that isn't one is
+        // wrapped as `result`
+        try expectJsonLine(
+            \\{"jsonrpc":"2.0","id":101,"result":{"content":[{"type":"text","text":"{\"result\":\"thread\"}"}],"structuredContent":{"result":"thread"},"isError":false}}
+        , out);
+        try std.testing.expectEqual(0, try openIssueCount(&server));
+    }
+}
+
+// the id of the issue bob opens in alice:open through `server`, which the
+// caller frees
+fn openIssue(server: *mcp.Server) ![]u8 {
+    const created = try reply(server,
+        \\{"jsonrpc":"2.0","id":98,"method":"tools/call","params":{"name":"create_thread","arguments":{"repo":"alice:open","kind":"issue","title":"t"}}}
+    );
+    defer allocator.free(created);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, created, .{});
+    defer parsed.deinit();
+    return try allocator.dupe(u8, parsed.value.object.get("result").?.object.get("structuredContent").?.object.get("id").?.string);
+}
+
+test "mcp: attach decodes a base64 file onto a thread get_issue then lists" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var server = serverMode(data, data.bob);
+    const issue_id = try openIssue(&server);
+    defer allocator.free(issue_id);
+
+    // "hello\n"
+    const line = try std.mem.replaceOwned(u8, allocator,
+        \\{"jsonrpc":"2.0","id":110,"method":"tools/call","params":{"name":"attach","arguments":{"repo":"alice:open","kind":"issue","thread_id":"ID","name":"notes.txt","content_base64":"aGVsbG8K"}}}
+    , "ID", issue_id);
+    defer allocator.free(line);
+    const attached = try reply(&server, line);
+    defer allocator.free(attached);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, attached, .{});
+    defer parsed.deinit();
+    const attachment_id = parsed.value.object.get("result").?.object.get("structuredContent").?.object.get("id").?.string;
+    {
+        const expected = try std.mem.replaceOwned(u8, allocator,
+            \\{"jsonrpc":"2.0","id":110,"result":{"content":[{"type":"text","text":"{\"id\":\"ID\"}"}],"structuredContent":{"id":"ID"},"isError":false}}
+        , "ID", attachment_id);
+        defer allocator.free(expected);
+        try expectJsonLine(expected, attached);
+    }
+
+    const get_line = try std.mem.replaceOwned(u8, allocator,
+        \\{"jsonrpc":"2.0","id":111,"method":"tools/call","params":{"name":"get_issue","arguments":{"repo":"alice:open","id":"ID"}}}
+    , "ID", issue_id);
+    defer allocator.free(get_line);
+    const read = try reply(&server, get_line);
+    defer allocator.free(read);
+    const read_parsed = try std.json.parseFromSlice(std.json.Value, allocator, read, .{});
+    defer read_parsed.deinit();
+    const attachments = read_parsed.value.object.get("result").?.object.get("structuredContent").?.object.get("attachments").?;
+    const listed = try std.json.Stringify.valueAlloc(allocator, attachments, .{});
+    defer allocator.free(listed);
+    const expected = try std.mem.replaceOwned(u8, allocator,
+        \\[{"id":"ID","name":"notes.txt"}]
+    , "ID", attachment_id);
+    defer allocator.free(expected);
+    try expectJson(expected, listed);
+}
+
+test "mcp: attach content that isn't base64 or decodes past the size limit is invalid params" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var server = serverMode(data, data.bob);
+    const issue_id = try openIssue(&server);
+    defer allocator.free(issue_id);
+
+    {
+        const line = try std.mem.replaceOwned(u8, allocator,
+            \\{"jsonrpc":"2.0","id":120,"method":"tools/call","params":{"name":"attach","arguments":{"repo":"alice:open","kind":"issue","thread_id":"ID","name":"notes.txt","content_base64":"aGVsbG8K!!!"}}}
+        , "ID", issue_id);
+        defer allocator.free(line);
+        const out = try reply(&server, line);
+        defer allocator.free(out);
+        try expectJsonLine(
+            \\{"jsonrpc":"2.0","id":120,"error":{"code":-32602,"message":"invalid arguments for attach: content_base64 is not base64"}}
+        , out);
+    }
+    {
+        // one quad past what decodes to the limit, of characters that aren't
+        // base64: the length is refused before anything is decoded
+        const bound = ((hx.event.Attachment.max_size + 2) / 3) * 4;
+        const content = try allocator.alloc(u8, bound + 4);
+        defer allocator.free(content);
+        @memset(content, '!');
+        const head = try std.mem.replaceOwned(u8, allocator,
+            \\{"jsonrpc":"2.0","id":121,"method":"tools/call","params":{"name":"attach","arguments":{"repo":"alice:open","kind":"issue","thread_id":"ID","name":"big.bin","content_base64":"
+        , "ID", issue_id);
+        defer allocator.free(head);
+        const line = try std.mem.concat(allocator, u8, &.{ head, content, "\"}}}" });
+        defer allocator.free(line);
+        const out = try reply(&server, line);
+        defer allocator.free(out);
+        try expectJsonLine(
+            \\{"jsonrpc":"2.0","id":121,"error":{"code":-32602,"message":"invalid arguments for attach: content_base64 decodes to more than 10485760 bytes"}}
+        , out);
+    }
+    // nothing was attached
+    const get_line = try std.mem.replaceOwned(u8, allocator,
+        \\{"jsonrpc":"2.0","id":122,"method":"tools/call","params":{"name":"get_issue","arguments":{"repo":"alice:open","id":"ID"}}}
+    , "ID", issue_id);
+    defer allocator.free(get_line);
+    const read = try reply(&server, get_line);
+    defer allocator.free(read);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, read, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(0, parsed.value.object.get("result").?.object.get("structuredContent").?.object.get("attachments").?.array.items.len);
+}
+
+test "mcp: merge_patch is an unknown tool without destructive tools allowed" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var server = serverMode(data, data.bob);
+    const line =
+        \\{"jsonrpc":"2.0","id":130,"method":"tools/call","params":{"name":"merge_patch","arguments":{"repo":"alice:open","patch_id":"22222222222222222222222222222222"}}}
+    ;
+    {
+        const out = try reply(&server, line);
+        defer allocator.free(out);
+        try expectJsonLine(
+            \\{"jsonrpc":"2.0","id":130,"error":{"code":-32602,"message":"unknown tool: merge_patch"}}
+        , out);
+    }
+    server.allow_destructive = true;
+    {
+        // with them the call reaches the operation, which finds no such patch
+        const out = try reply(&server, line);
+        defer allocator.free(out);
+        try expectJsonLine(
+            \\{"jsonrpc":"2.0","id":130,"result":{"content":[{"type":"text","text":"merge_patch failed (not_found): NotFound"}],"isError":true}}
+        , out);
+    }
+}
+
+// an attach call for `issue_id` in alice:open whose content is `content`,
+// which the caller frees
+fn attachLine(issue_id: []const u8, id: u32, content: []const u8) ![]u8 {
+    const head = try std.fmt.allocPrint(allocator,
+        \\{{"jsonrpc":"2.0","id":{d},"method":"tools/call","params":{{"name":"attach","arguments":{{"repo":"alice:open","kind":"issue","thread_id":"{s}","name":"big.bin","content_base64":"
+    , .{ id, issue_id });
+    defer allocator.free(head);
+    return try std.mem.concat(allocator, u8, &.{ head, content, "\"}}}" });
+}
+
+test "mcp: attach takes a file of exactly the size limit and refuses one a padding byte over it" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var server = serverMode(data, data.bob);
+    const issue_id = try openIssue(&server);
+    defer allocator.free(issue_id);
+
+    // the size limit is 1 more than a multiple of 3, so the longest encoding
+    // that can hold it decodes to the limit with "==", one over it with "="
+    // and two over it with no padding
+    const len = mcp.AttachTool.max_encoded_len;
+    const content = try allocator.alloc(u8, len);
+    defer allocator.free(content);
+    for ([_]struct { pad: usize, id: u32 }{ .{ .pad = 0, .id = 140 }, .{ .pad = 1, .id = 141 } }) |case| {
+        @memset(content, 'A');
+        @memset(content[len - case.pad ..], '=');
+        const line = try attachLine(issue_id, case.id, content);
+        defer allocator.free(line);
+        const out = try reply(&server, line);
+        defer allocator.free(out);
+        const expected = try std.fmt.allocPrint(allocator,
+            \\{{"jsonrpc":"2.0","id":{d},"error":{{"code":-32602,"message":"invalid arguments for attach: content_base64 decodes to more than 10485760 bytes"}}}}
+        , .{case.id});
+        defer allocator.free(expected);
+        try expectJsonLine(expected, out);
+    }
+    @memset(content, 'A');
+    @memset(content[len - 2 ..], '=');
+    const line = try attachLine(issue_id, 142, content);
+    defer allocator.free(line);
+    const out = try reply(&server, line);
+    defer allocator.free(out);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, out, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(false, parsed.value.object.get("result").?.object.get("isError").?.bool);
+}
+
+test "mcp stdio: a line holding the largest attachment fits the bound" {
+    try std.testing.expect(mcp.stdio.max_line_len >= mcp.AttachTool.max_encoded_len + 64 * 1024);
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../event.zig");
+const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
 const inp = @import("./input.zig");
 const xit = @import("xit");
@@ -126,8 +127,7 @@ pub const View = struct {
     // terminal path; the web posts the form to the new-user route.
     fn submitForm(self: *View, allocator: std.mem.Allocator) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
+        if (self.session.io == null or self.session.users_dir == null) return;
         const admin_repo = self.session.admin_repo orelse return;
 
         const name_input = try formField(self.formBox(), "name");
@@ -143,8 +143,13 @@ pub const View = struct {
         const password_again = try password_again_input.text(allocator);
         defer allocator.free(password_again);
 
-        const id = evt.createUser(io, allocator, users_dir, admin_repo, name, email, password, password_again) catch |err| {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var ctx = try self.session.ctx(&arena);
+        const created = (domain.RegisterUser{ .name = name, .email = email, .password = password, .password_again = password_again }).run(&ctx) catch |err| {
             self.session.logServer("signup failed", "name=\"{f}\" error={s}", .{ std.zig.fmtString(name), @errorName(err) });
+            // the form is offered only while logged out
+            if (err == error.Forbidden) return;
             const aa = self.session.arena.allocator();
             self.session.data.form_feedback = .{ .user = .{
                 .failure = ui.Session.FormFeedback.UserFailure.fromError(err) orelse return err,
@@ -152,6 +157,7 @@ pub const View = struct {
             } };
             return;
         };
+        const id = created.id;
 
         self.session.logServer("signup", "user={s}", .{name});
 

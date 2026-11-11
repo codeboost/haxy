@@ -151,7 +151,7 @@ pub fn markRead(
     user_id: *const [evt.event_id_size]u8,
     notif_id: *const [evt.event_id_size]u8,
     last_child_id: *const [evt.event_id_size]u8,
-) !void {
+) !MarkReadOutcome {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
@@ -159,40 +159,67 @@ pub fn markRead(
         arena: *std.heap.ArenaAllocator,
         notif_id: *const [evt.event_id_size]u8,
         last_child_id: *const [evt.event_id_size]u8,
+        outcome: *MarkReadOutcome,
 
         pub fn run(ctx: @This(), cursor: *UserDB.Cursor(.read_write)) !void {
             const moment = try UserDB.HashMap(.read_write).init(cursor.*);
             const records_cursor = try moment.readOnly().getCursor(hash.hashInt(hash_kind, notif_map_key)) orelse return error.CancelTransaction;
             const record_cursor = try (try UserDB.HashMap(.read_only).init(records_cursor)).getCursor(hash.hashInt(hash_kind, ctx.notif_id)) orelse return error.CancelTransaction;
             const notif = try evt.read(Notif, UserDB, hash_kind, ctx.arena, try UserDB.HashMap(.read_only).init(record_cursor));
-            if (!std.mem.eql(u8, &notif.last_child_id, ctx.last_child_id)) return error.CancelTransaction;
 
+            // a bump always makes a notif unread, so a read one stays read
+            // whichever child the caller saw. a cancel rolls the removal back.
             const unread = try UserDB.SortedSet(.read_write).init(try moment.putCursor(hash.hashInt(hash_kind, unread_notif_id_set_key)));
+            ctx.outcome.* = .already_read;
             if (!try unread.remove(&evt.orderKeyDesc(notif.time, ctx.notif_id))) return error.CancelTransaction;
+            ctx.outcome.* = .out_of_date;
+            if (!std.mem.eql(u8, &notif.last_child_id, ctx.last_child_id)) return error.CancelTransaction;
+            ctx.outcome.* = .marked;
         }
     };
 
-    try transact(io, allocator, users_dir, user_id, Ctx{ .arena = &arena, .notif_id = notif_id, .last_child_id = last_child_id });
+    var outcome: MarkReadOutcome = .missing;
+    try transact(io, allocator, users_dir, user_id, Ctx{ .arena = &arena, .notif_id = notif_id, .last_child_id = last_child_id, .outcome = &outcome });
+    return outcome;
 }
 
+// what a mark-read transaction found
+pub const MarkReadOutcome = enum {
+    // it was unread at the child the caller saw, and is read now
+    marked,
+    // it was read already, so nothing changed
+    already_read,
+    // a newer child bumped it since the one seen, so it stays unread
+    out_of_date,
+    // the user holds no notif under the id
+    missing,
+};
+
+// what a dismiss transaction found
+pub const DismissOutcome = enum { dismissed, missing };
+
 // remove a notif. the thread's next bump recreates it.
-pub fn dismiss(io: std.Io, allocator: std.mem.Allocator, users_dir: []const u8, user_id: *const [evt.event_id_size]u8, notif_id: *const [evt.event_id_size]u8) !void {
+pub fn dismiss(io: std.Io, allocator: std.mem.Allocator, users_dir: []const u8, user_id: *const [evt.event_id_size]u8, notif_id: *const [evt.event_id_size]u8) !DismissOutcome {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     const Ctx = struct {
         arena: *std.heap.ArenaAllocator,
         notif_id: *const [evt.event_id_size]u8,
+        outcome: *DismissOutcome,
 
         pub fn run(ctx: @This(), cursor: *UserDB.Cursor(.read_write)) !void {
             const moment = try UserDB.HashMap(.read_write).init(cursor.*);
             const records = try UserDB.HashMap(.read_write).init(try moment.putCursor(hash.hashInt(hash_kind, notif_map_key)));
             const time = (try readTime(ctx.arena, records.readOnly(), ctx.notif_id)) orelse return error.CancelTransaction;
             try removeNotif(moment, records, ctx.notif_id, time);
+            ctx.outcome.* = .dismissed;
         }
     };
 
-    try transact(io, allocator, users_dir, user_id, Ctx{ .arena = &arena, .notif_id = notif_id });
+    var outcome: DismissOutcome = .missing;
+    try transact(io, allocator, users_dir, user_id, Ctx{ .arena = &arena, .notif_id = notif_id, .outcome = &outcome });
+    return outcome;
 }
 
 // up to `count` notifs from `start`, newest first. `moment` is the user repo's latest.
@@ -268,8 +295,8 @@ pub fn mute(
 ) !void {
     try writeMode(io, allocator, users_dir, user_id, &location, thread_id, .muted, author);
     // the mute is committed now, so a failure from here on must not read as
-    // nothing written
-    dismiss(io, allocator, users_dir, user_id, &idOf(&location.repo_id, thread_id)) catch |err| {
+    // nothing written. a thread that never notified them has nothing to drop.
+    _ = dismiss(io, allocator, users_dir, user_id, &idOf(&location.repo_id, thread_id)) catch |err| {
         std.log.warn("thread muted but its notification not dismissed: {t}", .{err});
         return error.MutedNotDismissed;
     };

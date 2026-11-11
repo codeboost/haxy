@@ -219,7 +219,7 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
         try names.appendSlice(allocator, tool.object.get("name").?.string);
         try names.append(allocator, ' ');
     }
-    try std.testing.expectEqualStrings("refresh_local list_issues get_issue get_discussion list_patches get_patch create_thread edit_thread resolve_conflict set_thread_status create_comment edit_comment attach assign unassign subscribe mute publish_patch ", names.items);
+    try std.testing.expectEqualStrings("refresh_local list_issues get_issue get_discussion list_patches get_patch list_notifications create_thread edit_thread resolve_conflict set_thread_status create_comment edit_comment attach assign unassign subscribe mute publish_patch create_repo update_repo_settings grant promote revoke demote protect_branch unprotect_branch set_default_branch sync add_key mark_notification_read dismiss_notification ", names.items);
 
     // every tool's annotations cover the whole call, which in local mode
     // refreshes the repo first, so no tool is read-only
@@ -236,24 +236,38 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
         try annotations.append(allocator, '}');
         try expectJson(
             \\{
-            \\  "refresh_local": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
-            \\  "list_issues": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
-            \\  "get_issue": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
-            \\  "get_discussion": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
-            \\  "list_patches": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
-            \\  "get_patch": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
-            \\  "create_thread": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
-            \\  "edit_thread": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
-            \\  "resolve_conflict": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
-            \\  "set_thread_status": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
-            \\  "create_comment": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
-            \\  "edit_comment": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
-            \\  "attach": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
-            \\  "assign": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
-            \\  "unassign": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
-            \\  "subscribe": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true },
-            \\  "mute": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
-            \\  "publish_patch": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
+            \\  "refresh_local": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_issues": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "get_issue": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "get_discussion": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_patches": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "get_patch": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "list_notifications": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "create_thread": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false },
+            \\  "edit_thread": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
+            \\  "resolve_conflict": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
+            \\  "set_thread_status": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "create_comment": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false },
+            \\  "edit_comment": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
+            \\  "attach": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false },
+            \\  "assign": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "unassign": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "subscribe": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "mute": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
+            \\  "publish_patch": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "create_repo": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "update_repo_settings": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
+            \\  "grant": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "promote": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false },
+            \\  "revoke": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "demote": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
+            \\  "protect_branch": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "unprotect_branch": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "set_default_branch": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false },
+            \\  "sync": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true },
+            \\  "add_key": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+            \\  "mark_notification_read": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+            \\  "dismiss_notification": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false }
             \\}
         , annotations.items);
     }
@@ -279,7 +293,7 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
             \\    "required": ["repo", "kind", "title"],
             \\    "additionalProperties": false
             \\  },
-            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
             \\}
         , entry);
     }
@@ -305,7 +319,7 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
             \\    "required": ["repo", "kind", "thread_id"],
             \\    "additionalProperties": false
             \\  },
-            \\  "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false }
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false }
             \\}
         , entry);
     }
@@ -329,7 +343,7 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
             \\    "required": ["repo", "kind", "thread_id", "name", "content_base64"],
             \\    "additionalProperties": false
             \\  },
-            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
             \\}
         , entry);
     }
@@ -352,7 +366,7 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
             \\    "required": ["repo"],
             \\    "additionalProperties": false
             \\  },
-            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
             \\}
         , entry);
     }
@@ -369,12 +383,12 @@ test "mcp: tools/list names the tools in registry order with schemas derived fro
             \\    "properties": {
             \\      "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
             \\      "id": { "type": "string", "description": "The issue's hex event id." },
-            \\      "comments_from": { "type": "integer", "description": "The index of the first comment in the returned window of comments." }
+            \\      "comments_from": { "type": "integer", "minimum": 0, "description": "The index of the first comment in the returned window of comments." }
             \\    },
             \\    "required": ["repo", "id"],
             \\    "additionalProperties": false
             \\  },
-            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+            \\  "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
             \\}
         , entry);
     }
@@ -787,7 +801,7 @@ const SchemaShapes = struct {
     pub const tool_schema_notes = .{ .name = "A name, or null." };
 };
 
-test "mcp schema: optionals allow null, enums list their names, nested structs recurse, string slices are arrays" {
+test "mcp schema: optionals allow null, enums list their names, unsigned integers have a minimum, nested structs recurse, string slices are arrays" {
     const schema = try std.json.Stringify.valueAlloc(allocator, mcp.InputSchema(SchemaShapes){}, .{});
     defer allocator.free(schema);
     try expectJson(
@@ -799,13 +813,13 @@ test "mcp schema: optionals allow null, enums list their names, nested structs r
         \\    "size": {
         \\      "type": "object",
         \\      "properties": {
-        \\        "width": { "type": "integer" },
+        \\        "width": { "type": "integer", "minimum": 0 },
         \\        "depth": { "type": ["string", "null"], "enum": ["flat", "deep", null] }
         \\      },
         \\      "required": ["width"],
         \\      "additionalProperties": false
         \\    },
-        \\    "count": { "type": "integer" },
+        \\    "count": { "type": "integer", "minimum": 0 },
         \\    "on": { "type": "boolean" },
         \\    "tags": { "type": "array", "items": { "type": "string" } }
         \\  },
@@ -828,6 +842,48 @@ fn toolNames(server: *mcp.Server) ![]u8 {
     return try names.toOwnedSlice(allocator);
 }
 
+test "mcp: tools/list lists exactly the registered tools in each mode, and never one that takes a password" {
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+    const always = "refresh_local list_issues get_issue get_discussion list_patches get_patch list_notifications " ++
+        "create_thread edit_thread resolve_conflict set_thread_status create_comment edit_comment attach assign unassign subscribe mute publish_patch " ++
+        "create_repo update_repo_settings grant promote revoke demote protect_branch unprotect_branch set_default_branch sync add_key mark_notification_read dismiss_notification ";
+    const flagged = "merge_patch remove_thread remove_comment remove_attachment undo remove_key ";
+    {
+        const names = try toolNames(&server);
+        defer allocator.free(names);
+        try std.testing.expectEqualStrings(always, names);
+        try std.testing.expectEqual(32, std.mem.count(u8, names, " "));
+    }
+    server.allow_destructive = true;
+    {
+        const names = try toolNames(&server);
+        defer allocator.free(names);
+        try std.testing.expectEqualStrings(always ++ flagged, names);
+        try std.testing.expectEqual(38, std.mem.count(u8, names, " "));
+        // each takes the account password, which tool arguments never carry
+        for ([_][]const u8{ " delete_repo ", " delete_user ", " register_user ", " update_user_settings ", " delete_fork " }) |name| {
+            try std.testing.expect(std.mem.indexOf(u8, names, name) == null);
+        }
+    }
+    const parsed = try listTools(&server);
+    defer parsed.deinit();
+    const tools = parsed.value.object.get("result").?.object.get("tools").?;
+    for ([_][2][]const u8{
+        .{ "undo", "{ \"readOnlyHint\": false, \"destructiveHint\": true, \"idempotentHint\": false, \"openWorldHint\": false }" },
+        .{ "remove_key", "{ \"readOnlyHint\": false, \"destructiveHint\": true, \"idempotentHint\": true, \"openWorldHint\": false }" },
+    }) |case| {
+        const entry = try toolEntry(tools, case[0]);
+        defer allocator.free(entry);
+        const entry_parsed = try std.json.parseFromSlice(std.json.Value, allocator, entry, .{});
+        defer entry_parsed.deinit();
+        const annotations = try std.json.Stringify.valueAlloc(allocator, entry_parsed.value.object.get("annotations").?, .{});
+        defer allocator.free(annotations);
+        try expectJson(case[1], annotations);
+    }
+}
+
 test "mcp: removals and merging are listed only when destructive tools are allowed, and nothing asks for a password" {
     var local = try fixture.Local(.git, .sha1).init();
     defer local.deinit();
@@ -843,7 +899,7 @@ test "mcp: removals and merging are listed only when destructive tools are allow
         const names = try toolNames(&server);
         defer allocator.free(names);
         // delete_fork asks for the account password, so it is no tool
-        try std.testing.expect(std.mem.endsWith(u8, names, " publish_patch merge_patch remove_thread remove_comment remove_attachment "));
+        try std.testing.expect(std.mem.endsWith(u8, names, " dismiss_notification merge_patch remove_thread remove_comment remove_attachment undo remove_key "));
     }
     const parsed = try listTools(&server);
     defer parsed.deinit();
@@ -868,7 +924,7 @@ test "mcp: removals and merging are listed only when destructive tools are allow
         \\    "required": ["repo", "kind", "thread_id", "comment_id"],
         \\    "additionalProperties": false
         \\  },
-        \\  "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
+        \\  "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false }
         \\}
     , entry);
 }
@@ -1089,4 +1145,622 @@ test "mcp: attach takes a file of exactly the size limit and refuses one a paddi
 
 test "mcp stdio: a line holding the largest attachment fits the bound" {
     try std.testing.expect(mcp.stdio.max_line_len >= mcp.AttachTool.max_encoded_len + 64 * 1024);
+}
+
+test "mcp: the password guard refuses any input with a field naming a password" {
+    // each takes a password under some name, and none is served
+    try std.testing.expect(mcp.takesPassword(hx.domain.DeleteRepo));
+    try std.testing.expect(mcp.takesPassword(hx.domain.DeleteUser));
+    try std.testing.expect(mcp.takesPassword(hx.domain.DeleteFork));
+    try std.testing.expect(mcp.takesPassword(hx.domain.RegisterUser));
+    try std.testing.expect(mcp.takesPassword(hx.domain.UpdateUserSettings));
+    try std.testing.expect(mcp.takesPassword(struct { new_password_again: []const u8 }));
+    try std.testing.expect(mcp.takesPassword(struct { passwords: []const []const u8 }));
+    // nested in a struct, an optional, a slice or an array
+    const Login = struct { name: []const u8, password: []const u8 };
+    try std.testing.expect(mcp.takesPassword(struct { login: Login }));
+    try std.testing.expect(mcp.takesPassword(struct { login: ?Login }));
+    try std.testing.expect(mcp.takesPassword(struct { logins: []const Login }));
+    try std.testing.expect(mcp.takesPassword(struct { logins: [2]Login }));
+    try std.testing.expect(mcp.takesPassword(struct { outer: struct { inner: ?[]const struct { old_password: []const u8 } } }));
+    try std.testing.expect(!mcp.takesPassword(struct { login: struct { name: []const u8 }, tags: []const []const u8, count: ?u32 }));
+    // the served tools take none
+    inline for (mcp.tools) |tool| try std.testing.expect(!mcp.takesPassword(tool.Operation));
+    try std.testing.expect(!mcp.takesPassword(struct { pass: []const u8 }));
+}
+
+// the input schema `tools/list` gives the tool `name`, as json
+fn toolSchema(tools: std.json.Value, name: []const u8) ![]u8 {
+    for (tools.array.items) |tool| {
+        if (std.mem.eql(u8, tool.object.get("name").?.string, name)) {
+            return try std.json.Stringify.valueAlloc(allocator, tool.object.get("inputSchema").?, .{});
+        }
+    }
+    return error.TestExpectedTool;
+}
+
+test "mcp: the new tools' schemas carry enums from other modules, nullable roles and unsigned indexes" {
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() }, .allow_destructive = true };
+    const parsed = try listTools(&server);
+    defer parsed.deinit();
+    const tools = parsed.value.object.get("result").?.object.get("tools").?;
+    for ([_][2][]const u8{
+        .{
+            "create_repo",
+            \\{
+            \\  "type": "object",
+            \\  "properties": {
+            \\    "name": { "type": "string", "description": "The new repository's name." },
+            \\    "description": { "type": "string", "description": "A short description." },
+            \\    "access": { "type": "string", "enum": ["private", "public"], "description": "Who may read it: private (members only) or public (anybody)." },
+            \\    "hash": { "type": "string", "enum": ["sha1", "sha256"], "description": "The hash an empty repository uses; a copy keeps its source's." },
+            \\    "copy": { "type": "string", "description": "A repository to copy as \"owner:name\", or \"\" for an empty one." }
+            \\  },
+            \\  "required": ["name"],
+            \\  "additionalProperties": false
+            \\}
+        },
+        .{
+            "update_repo_settings",
+            \\{
+            \\  "type": "object",
+            \\  "properties": {
+            \\    "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
+            \\    "name": { "type": "string", "description": "The repository's name, new or unchanged." },
+            \\    "description": { "type": "string", "description": "The description, new or unchanged; \"\" clears it." },
+            \\    "access": { "type": "string", "enum": ["private", "public"], "description": "Who may read it: private (members only) or public (anybody)." },
+            \\    "discuss_role": { "type": ["string", "null"], "enum": ["read", "write", null], "description": "Who may open discussions: read (anybody), write (members), or null to turn the tab off." },
+            \\    "issue_role": { "type": ["string", "null"], "enum": ["read", "write", null], "description": "Who may open issues: read (anybody), write (members), or null to turn the tab off." },
+            \\    "patch_role": { "type": ["string", "null"], "enum": ["read", "write", null], "description": "Who may open patches: read (anybody), write (members), or null to turn the tab off." }
+            \\  },
+            \\  "required": ["repo", "name", "description", "access", "discuss_role", "issue_role", "patch_role"],
+            \\  "additionalProperties": false
+            \\}
+        },
+        .{
+            "undo",
+            \\{
+            \\  "type": "object",
+            \\  "properties": {
+            \\    "repo": { "type": "string", "description": "The repository as \"owner:name\", or \"\" in local mode." },
+            \\    "index": { "type": "integer", "minimum": 0, "description": "The index of the oldest transaction to undo, as the repository's undo history lists it." }
+            \\  },
+            \\  "required": ["repo", "index"],
+            \\  "additionalProperties": false
+            \\}
+        },
+        .{
+            "list_notifications",
+            \\{
+            \\  "type": "object",
+            \\  "properties": {
+            \\    "start": { "type": "integer", "minimum": 0, "description": "The index of the first notification to list; 0 or omitted lists the first page." }
+            \\  },
+            \\  "required": [],
+            \\  "additionalProperties": false
+            \\}
+        },
+        .{
+            "sync",
+            \\{ "type": "object", "properties": {}, "required": [], "additionalProperties": false }
+        },
+    }) |case| {
+        const schema = try toolSchema(tools, case[0]);
+        defer allocator.free(schema);
+        try expectJson(case[1], schema);
+    }
+}
+
+// the reply to a tools/call of `name` with `arguments`, a json object, under
+// the request id 1, which the caller frees
+fn call(server: *mcp.Server, name: []const u8, arguments: []const u8) ![]u8 {
+    const line = try std.fmt.allocPrint(allocator,
+        \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{s}","arguments":{s}}}}}
+    , .{ name, arguments });
+    defer allocator.free(line);
+    return try reply(server, line);
+}
+
+// a tools/call of `name` with `arguments` answers `result`, a json value
+fn expectCall(server: *mcp.Server, name: []const u8, arguments: []const u8, result: []const u8) !void {
+    const out = try call(server, name, arguments);
+    defer allocator.free(out);
+    const expected = try std.fmt.allocPrint(allocator,
+        \\{{"jsonrpc":"2.0","id":1,"result":{s}}}
+    , .{result});
+    defer allocator.free(expected);
+    try expectJsonLine(expected, out);
+}
+
+// a tools/call of `name` with `arguments` answers a tool error saying `text`
+fn expectToolError(server: *mcp.Server, name: []const u8, arguments: []const u8, text: []const u8) !void {
+    const result = try std.fmt.allocPrint(allocator,
+        \\{{"content":[{{"type":"text","text":"{s}"}}],"isError":true}}
+    , .{text});
+    defer allocator.free(result);
+    try expectCall(server, name, arguments, result);
+}
+
+// the tools/call result of a void operation
+const void_result =
+    \\{"content":[{"type":"text","text":"{}"}],"structuredContent":{},"isError":false}
+;
+
+test "mcp: create_repo makes a private repo for the acting user, which list_issues then reads" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var bob = serverMode(data, data.bob);
+    var carol = serverMode(data, data.carol);
+
+    try expectToolError(&bob, "list_issues", "{\"repo\":\"bob:tools\"}", "list_issues failed (not_found): NotFound");
+    try expectCall(&bob, "create_repo", "{\"name\":\"tools\"}",
+        \\{"content":[{"type":"text","text":"{\"identity\":\"bob:tools\"}"}],"structuredContent":{"identity":"bob:tools"},"isError":false}
+    );
+    try expectCall(&bob, "list_issues", "{\"repo\":\"bob:tools\"}",
+        \\{"content":[{"type":"text","text":"{\"items\":[],\"prev_id\":null,\"next_id\":null,\"count\":0,\"more\":false}"}],"structuredContent":{"items":[],"prev_id":null,"next_id":null,"count":0,"more":false},"isError":false}
+    );
+    // private by default, so a stranger finds nothing
+    try expectToolError(&carol, "list_issues", "{\"repo\":\"bob:tools\"}", "list_issues failed (not_found): NotFound");
+    // a repeat is a conflict that writes nothing
+    try expectToolError(&bob, "create_repo", "{\"name\":\"tools\"}", "create_repo failed (conflict): NameTaken");
+}
+
+test "mcp: grant lets a user open issues where only members may" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var alice = serverMode(data, data.alice);
+    var carol = serverMode(data, data.carol);
+    const issue = "{\"repo\":\"alice:open\",\"kind\":\"issue\",\"title\":\"members only\"}";
+
+    try expectCall(&alice, "update_repo_settings",
+        \\{"repo":"alice:open","name":"open","description":"","access":"public","discuss_role":"read","issue_role":"write","patch_role":null}
+    ,
+        \\{"content":[{"type":"text","text":"{\"identity\":\"alice:open\"}"}],"structuredContent":{"identity":"alice:open"},"isError":false}
+    );
+    try expectToolError(&carol, "create_thread", issue, "create_thread failed (forbidden): Forbidden");
+    try expectCall(&alice, "grant", "{\"repo\":\"alice:open\",\"user\":\"carol\"}", void_result);
+    {
+        const out = try call(&carol, "create_thread", issue);
+        defer allocator.free(out);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, out, .{});
+        defer parsed.deinit();
+        try std.testing.expectEqual(false, parsed.value.object.get("result").?.object.get("isError").?.bool);
+    }
+    // carol, a member now, may not manage the repo
+    try expectToolError(&carol, "grant", "{\"repo\":\"alice:open\",\"user\":\"carol\"}", "grant failed (forbidden): Forbidden");
+    try expectToolError(&alice, "grant", "{\"repo\":\"alice:open\",\"user\":\"carol\"}", "grant failed (conflict): AlreadyMember");
+}
+
+test "mcp: protecting a protected branch is a conflict" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    try data.commitReadme(data.open);
+    var alice = serverMode(data, data.alice);
+
+    try expectCall(&alice, "protect_branch", "{\"repo\":\"alice:open\",\"branch\":\"master\"}", void_result);
+    try expectToolError(&alice, "protect_branch", "{\"repo\":\"alice:open\",\"branch\":\"master\"}", "protect_branch failed (conflict): BranchProtected");
+    try expectCall(&alice, "unprotect_branch", "{\"repo\":\"alice:open\",\"branch\":\"master\"}", void_result);
+    try expectCall(&alice, "protect_branch", "{\"repo\":\"alice:open\",\"branch\":\"master\"}", void_result);
+}
+
+test "mcp: add_key adds a key that remove_key, served only with destructive tools allowed, removes" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var alice = serverMode(data, data.alice);
+    const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeIs8mJqigBZ5y84J4COgnAJJ5bHPKy+lM2SliMXbYm one@example";
+    // as ssh-keygen -lf prints it
+    const fingerprint = "{\"fingerprint\":\"SHA256:R2bMBdC74Hm8ul5Quuj0fIz14HCoV8UBwiuMQ9JREpQ\"}";
+
+    try expectCall(&alice, "add_key", "{\"key\":\"" ++ key ++ "\"}", void_result);
+    try expectToolError(&alice, "add_key", "{\"key\":\"" ++ key ++ "\"}", "add_key failed (conflict): KeyAdded");
+    {
+        const out = try call(&alice, "remove_key", fingerprint);
+        defer allocator.free(out);
+        try expectJsonLine(
+            \\{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown tool: remove_key"}}
+        , out);
+    }
+    alice.allow_destructive = true;
+    try expectCall(&alice, "remove_key", fingerprint, void_result);
+    try expectToolError(&alice, "remove_key", fingerprint, "remove_key failed (not_found): NotFound");
+    // removed, it may be added again
+    try expectCall(&alice, "add_key", "{\"key\":\"" ++ key ++ "\"}", void_result);
+}
+
+test "mcp: list_notifications lists another user's comment, which mark_notification_read marks read" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    // delivery stamps the wall clock, so the row's time falls between these
+    // two reads
+    const before = std.Io.Timestamp.now(io, .real).toSeconds();
+    try data.notifyAlice(@splat(0xa1), @splat(0xb1));
+    const after = std.Io.Timestamp.now(io, .real).toSeconds();
+    var alice = serverMode(data, data.alice);
+    // ids are hex strings, as mark_notification_read takes them
+    const id = std.fmt.bytesToHex(hx.notify.idOf(&data.open.repo_id, &@as(fixture.Id, @splat(0xa1))), .lower);
+
+    const listed = try call(&alice, "list_notifications", "{}");
+    defer allocator.free(listed);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, listed, .{});
+    defer parsed.deinit();
+    const content = parsed.value.object.get("result").?.object.get("structuredContent").?;
+    const rows = content.object.get("rows").?.array.items;
+    try std.testing.expectEqual(1, rows.len);
+    const time = rows[0].object.get("time").?.integer;
+    try std.testing.expect(before <= time and time <= after);
+    {
+        // the time, bounded above, is left out of the comparison
+        _ = rows[0].object.orderedRemove("time");
+        const expected = try std.mem.replaceOwned(u8, allocator,
+            \\{"rows":[{"id":"ID","owner_name":"alice","repo_name":"open","thread_id":"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1","thread_kind":"issue","title":"an issue","unread":true,"last_child_id":"b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"}],"unread_count":1,"more":false}
+        , "ID", &id);
+        defer allocator.free(expected);
+        const actual = try std.json.Stringify.valueAlloc(allocator, content, .{});
+        defer allocator.free(actual);
+        try expectJson(expected, actual);
+    }
+
+    const mark = try std.mem.replaceOwned(u8, allocator,
+        \\{"notification_id":"ID","last_child_id":"b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"}
+    , "ID", &id);
+    defer allocator.free(mark);
+    try expectCall(&alice, "mark_notification_read", mark, void_result);
+    const again = try call(&alice, "list_notifications", "{}");
+    defer allocator.free(again);
+    const again_parsed = try std.json.parseFromSlice(std.json.Value, allocator, again, .{});
+    defer again_parsed.deinit();
+    const marked = again_parsed.value.object.get("result").?.object.get("structuredContent").?.object;
+    try std.testing.expectEqual(0, marked.get("unread_count").?.integer);
+    try std.testing.expectEqual(false, marked.get("rows").?.array.items[0].object.get("unread").?.bool);
+}
+
+test "mcp: arguments of the new shapes that don't fit are invalid params" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var alice = serverMode(data, data.alice);
+    alice.allow_destructive = true;
+
+    for ([_][3][]const u8{
+        .{
+            "update_repo_settings",
+            \\{"repo":"alice:open","name":"open","description":"","access":"public","discuss_role":"admin","issue_role":"read","patch_role":null}
+            ,
+            "discuss_role must be one of read, write",
+        },
+        .{
+            "update_repo_settings",
+            \\{"repo":"alice:open","name":"open","description":"","access":"secret","discuss_role":"read","issue_role":"read","patch_role":null}
+            ,
+            "access must be one of private, public",
+        },
+        // an owners-only tab is nothing the pages show, so no tool offers it
+        .{
+            "update_repo_settings",
+            \\{"repo":"alice:open","name":"open","description":"","access":"public","discuss_role":"read","issue_role":"owner","patch_role":null}
+            ,
+            "issue_role must be one of read, write",
+        },
+        // the settings are replaced whole, so the description must be given
+        .{
+            "update_repo_settings",
+            \\{"repo":"alice:open","name":"open","access":"public","discuss_role":"read","issue_role":"read","patch_role":null}
+            ,
+            "missing field description",
+        },
+        .{
+            "create_repo",
+            \\{"name":"tools","hash":"md5"}
+            ,
+            "hash must be one of sha1, sha256",
+        },
+        .{
+            "create_repo",
+            \\{"name":"tools","owner":"bob"}
+            ,
+            "unknown field owner",
+        },
+        .{
+            "undo",
+            \\{"repo":"alice:open","index":-1}
+            ,
+            "index must be an integer in range",
+        },
+        .{
+            "undo",
+            \\{"repo":"alice:open","index":1.5}
+            ,
+            "index must be an integer in range",
+        },
+        .{
+            "list_notifications",
+            \\{"start":-20}
+            ,
+            "start must be an integer in range",
+        },
+    }) |case| {
+        const out = try call(&alice, case[0], case[1]);
+        defer allocator.free(out);
+        const expected = try std.fmt.allocPrint(allocator,
+            \\{{"jsonrpc":"2.0","id":1,"error":{{"code":-32602,"message":"invalid arguments for {s}: {s}"}}}}
+        , .{ case[0], case[2] });
+        defer allocator.free(expected);
+        try expectJsonLine(expected, out);
+    }
+    // nothing was written
+    try expectToolError(&alice, "list_issues", "{\"repo\":\"alice:tools\"}", "list_issues failed (not_found): NotFound");
+}
+
+test "mcp: in local mode a server-only tool is a tool error, and sync without a remote is its classified failure" {
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() }, .allow_destructive = true };
+
+    try expectToolError(&server, "create_repo", "{\"name\":\"tools\"}", "create_repo failed (unavailable_here): UnavailableHere");
+    try expectToolError(&server, "list_notifications", "{}", "list_notifications failed (unavailable_here): UnavailableHere");
+    try expectToolError(&server, "undo", "{\"repo\":\"\",\"index\":0}", "undo failed (unavailable_here): UnavailableHere");
+    try expectToolError(&server, "sync", "{}", "sync failed (not_found): RemoteNotFound");
+}
+
+test "mcp: a sync whose fetch the remote refuses is a tool error saying nothing was merged" {
+    if (@import("builtin").target.os.tag == .windows) return error.SkipZigTest;
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const script = try refusingSsh(&temp);
+    defer allocator.free(script);
+    try local.addRemote("origin", "ssh://localhost/nowhere");
+    try local.setConfig("core.sshCommand", script);
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+
+    try expectCall(&server, "sync", "{}",
+        \\{"content":[{"type":"text","text":"sync failed (remote_failure): the remote refused the fetch, before any merge: no such repo"}],"structuredContent":{"remote_failure":"no such repo","failed_stage":"fetch","merged":false},"isError":true}
+    );
+}
+
+test "mcp: a sync whose push the remote refuses is a tool error saying the merge was applied" {
+    if (@import("builtin").target.os.tag == .windows) return error.SkipZigTest;
+    var remote = try fixture.Local(.git, .sha1).init();
+    defer remote.deinit();
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const script = try refusingSsh(&temp);
+    defer allocator.free(script);
+    try local.setAuthor(fixture.Server.alice_author);
+    // fetch from the file remote, push over an ssh that refuses
+    try local.addRemote("origin", remote.path);
+    try local.setConfig("remote.origin.pushurl", "ssh://localhost/nowhere");
+    try local.setConfig("core.sshCommand", script);
+    try remote.addEvent(fixture.Server.alice_author, @splat(0x22), .{ .issue = .{ .title = "remote", .description = "", .labels = "" } });
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+
+    try expectCall(&server, "sync", "{}",
+        \\{"content":[{"type":"text","text":"sync failed (remote_failure): the remote refused the push, after the merge was applied here: no such repo"}],"structuredContent":{"remote_failure":"no such repo","failed_stage":"push","merged":true},"isError":true}
+    );
+    // the merge stays
+    try std.testing.expectEqual(1, try consumedIssueCount(&local));
+}
+
+test "mcp: a sync that fails after its merge names the change in its error" {
+    var remote = try fixture.Local(.git, .sha1).init();
+    defer remote.deinit();
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    try local.setAuthor(fixture.Server.alice_author);
+    // an ssh that exits at once, saying nothing
+    try local.addRemote("origin", remote.path);
+    try local.setConfig("remote.origin.pushurl", "ssh://localhost/nowhere");
+    try local.setConfig("core.sshCommand", "false");
+    try remote.addEvent(fixture.Server.alice_author, @splat(0x22), .{ .issue = .{ .title = "remote", .description = "", .labels = "" } });
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+
+    const log_level = std.testing.log_level;
+    std.testing.log_level = .err;
+    defer std.testing.log_level = log_level;
+    // as phase 3's changed failures do, the error's name says what changed
+    try expectToolError(&server, "sync", "{}", "sync failed (internal): SyncMergedNotPushed");
+    try std.testing.expectEqual(1, try consumedIssueCount(&local));
+}
+
+test "mcp: a local sync trades events with a file remote and answers a null remote failure" {
+    var remote = try fixture.Local(.git, .sha1).init();
+    defer remote.deinit();
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    try local.setAuthor(fixture.Server.alice_author);
+    try local.addRemote("origin", remote.path);
+    try local.addEvent(fixture.Server.alice_author, @splat(0x11), .{ .issue = .{ .title = "local", .description = "", .labels = "" } });
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+    var remote_server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = remote.source() } };
+
+    try expectCall(&server, "sync", "{}",
+        \\{"content":[{"type":"text","text":"{\"remote_failure\":null}"}],"structuredContent":{"remote_failure":null},"isError":false}
+    );
+    const listed = try call(&remote_server, "list_issues", "{\"repo\":\"\"}");
+    defer allocator.free(listed);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, listed, .{});
+    defer parsed.deinit();
+    const window = parsed.value.object.get("result").?.object.get("structuredContent").?.object;
+    try std.testing.expectEqual(1, window.get("count").?.integer);
+    try std.testing.expectEqualStrings("11111111111111111111111111111111", window.get("items").?.array.items[0].object.get("id").?.string);
+}
+
+test "mcp: sync brings the remote's edits and removals here, not only its additions" {
+    var remote = try fixture.Local(.git, .sha1).init();
+    defer remote.deinit();
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    try remote.setAuthor(fixture.Server.alice_author);
+    try local.setAuthor(fixture.Server.alice_author);
+    try local.addRemote("origin", remote.path);
+    try remote.addEvent(fixture.Server.alice_author, @splat(0x22), .{ .issue = .{ .title = "kept", .description = "", .labels = "" } });
+    try remote.addEvent(fixture.Server.alice_author, @splat(0x33), .{ .issue = .{ .title = "doomed", .description = "", .labels = "" } });
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+    var remote_server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = remote.source() }, .allow_destructive = true };
+    const synced =
+        \\{"content":[{"type":"text","text":"{\"remote_failure\":null}"}],"structuredContent":{"remote_failure":null},"isError":false}
+    ;
+
+    try expectCall(&server, "sync", "{}", synced);
+    try std.testing.expectEqual(2, try consumedIssueCount(&local));
+    // the remote edits one issue and removes the other
+    try expectCall(&remote_server, "edit_thread",
+        \\{"repo":"","kind":"issue","thread_id":"22222222222222222222222222222222","title":"edited"}
+    , void_result);
+    {
+        const out = try call(&remote_server, "remove_thread",
+            \\{"repo":"","kind":"issue","thread_id":"33333333333333333333333333333333"}
+        );
+        defer allocator.free(out);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, out, .{});
+        defer parsed.deinit();
+        try std.testing.expectEqual(false, parsed.value.object.get("result").?.object.get("isError").?.bool);
+    }
+
+    try expectCall(&server, "sync", "{}", synced);
+    const listed = try call(&server, "list_issues", "{\"repo\":\"\"}");
+    defer allocator.free(listed);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, listed, .{});
+    defer parsed.deinit();
+    const window = parsed.value.object.get("result").?.object.get("structuredContent").?.object;
+    try std.testing.expectEqual(1, window.get("count").?.integer);
+    const item = window.get("items").?.array.items[0].object;
+    try std.testing.expectEqualStrings("22222222222222222222222222222222", item.get("id").?.string);
+    const read = try call(&server, "get_issue", "{\"repo\":\"\",\"id\":\"22222222222222222222222222222222\"}");
+    defer allocator.free(read);
+    const read_parsed = try std.json.parseFromSlice(std.json.Value, allocator, read, .{});
+    defer read_parsed.deinit();
+    try std.testing.expectEqualStrings("edited", read_parsed.value.object.get("result").?.object.get("structuredContent").?.object.get("record").?.object.get("event").?.object.get("title").?.string);
+}
+
+test "mcp: a user removed between two list_notifications calls is logged out from the second on" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var bob = serverMode(data, data.bob);
+
+    try expectCall(&bob, "list_notifications", "{}",
+        \\{"content":[{"type":"text","text":"{\"rows\":[],\"unread_count\":0,\"more\":false}"}],"structuredContent":{"rows":[],"unread_count":0,"more":false},"isError":false}
+    );
+    try hx.event.deleteUser(io, allocator, data.users_dir, &data.admin, &data.bob, fixture.Server.bob_author);
+    try expectToolError(&bob, "list_notifications", "{}", "list_notifications failed (login_required): LoginRequired");
+}
+
+// how many issues the local repo's event db holds, read without bringing it
+// up to date first
+fn consumedIssueCount(local: anytype) !usize {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var ctx = local.ctx(&arena);
+    return (try (hx.domain.ListIssues{ .repo = "" }).run(&ctx)).items.len;
+}
+
+test "mcp: a server-only tool in local mode answers unavailable without bringing the repo up to date" {
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    // an issue fetched from elsewhere, which a refresh would consume
+    try local.commitUnconsumed(fixture.Server.alice_author, @splat(0x11), .{ .issue = .{ .title = "fetched", .description = "", .labels = "" } });
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+
+    try expectToolError(&server, "create_repo", "{\"name\":\"tools\"}", "create_repo failed (unavailable_here): UnavailableHere");
+    try std.testing.expectEqual(0, try consumedIssueCount(&local));
+}
+
+// an ssh command standing in for a remote that answers with an ERR line, in
+// `temp`. returns the script's path, which the caller frees.
+fn refusingSsh(temp: *std.testing.TmpDir) ![]u8 {
+    const base = try temp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(base);
+    const script = try std.Io.Dir.path.join(allocator, &.{ base, "refuse.sh" });
+    errdefer allocator.free(script);
+    const file = try std.Io.Dir.cwd().createFile(io, script, .{});
+    defer file.close(io);
+    try file.writeStreamingAll(io, "#!/bin/sh\nprintf '0014ERR no such repo'\n");
+    try file.setPermissions(io, @fromBackingInt(@intCast(0o755)));
+    return script;
+}
+
+test "mcp: sync doesn't bring the repo up to date before it runs, as it consumes what it merges itself" {
+    if (@import("builtin").target.os.tag == .windows) return error.SkipZigTest;
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const script = try refusingSsh(&temp);
+    defer allocator.free(script);
+    try local.addRemote("origin", "ssh://localhost/nowhere");
+    try local.setConfig("core.sshCommand", script);
+    try local.commitUnconsumed(fixture.Server.alice_author, @splat(0x11), .{ .issue = .{ .title = "fetched", .description = "", .labels = "" } });
+    var server = mcp.Server{ .io = io, .gpa = allocator, .mode = .{ .local = local.source() } };
+
+    // refused at the fetch, the sync merges and consumes nothing
+    const out = try call(&server, "sync", "{}");
+    defer allocator.free(out);
+    try std.testing.expectEqual(0, try consumedIssueCount(&local));
+}
+
+// an input of type `T` with each field at its default, or else at its
+// smallest value: "", the first enum tag, 0, false, null or empty
+fn minimal(comptime T: type) T {
+    var value: T = undefined;
+    inline for (@typeInfo(T).@"struct".field_names, @typeInfo(T).@"struct".field_types, @typeInfo(T).@"struct".field_attrs) |name, Field, attrs| {
+        @field(value, name) = if (attrs.default_value_ptr) |ptr| @as(*const Field, @ptrCast(@alignCast(ptr))).* else smallest(Field);
+    }
+    return value;
+}
+
+fn smallest(comptime T: type) T {
+    return switch (@typeInfo(T)) {
+        .optional => null,
+        .bool => false,
+        .int => 0,
+        .@"enum" => |info| @field(T, info.field_names[0]),
+        .@"struct" => minimal(T),
+        .pointer => if (T == []const u8) "" else &.{},
+        else => @compileError("no smallest " ++ @typeName(T)),
+    };
+}
+
+// what running the tool `Operation` with minimal arguments in `ctx` returns,
+// as an error or none
+fn runMinimal(comptime Operation: type, arena: *std.heap.ArenaAllocator, ctx: *hx.domain.Ctx) ?anyerror {
+    const input = minimal(Operation);
+    if (@hasDecl(Operation, "prepare")) {
+        const ready = switch (input.prepare(arena.allocator()) catch |err| return err) {
+            .ready => |ready| ready,
+            .invalid => return error.TestInvalidMinimal,
+        };
+        _ = ready.run(ctx) catch |err| return err;
+    } else {
+        _ = input.run(ctx) catch |err| return err;
+    }
+    return null;
+}
+
+test "mcp: every tool's hosts declaration agrees with the operation's own UnavailableHere" {
+    const data = try fixture.Server.init(.sha1);
+    defer data.deinit();
+    var local = try fixture.Local(.git, .sha1).init();
+    defer local.deinit();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    inline for (mcp.tools) |tool| {
+        const Operation = tool.Operation;
+        inline for ([_]hx.event.HostKind{ .local, .server }) |kind| {
+            var ctx = switch (kind) {
+                .local => local.ctx(&arena),
+                .server => try data.ctx(&arena, data.alice),
+            };
+            const declared = !@hasDecl(Operation, "hosts") or std.mem.indexOfScalar(hx.event.HostKind, Operation.hosts, kind) != null;
+            const unavailable = if (runMinimal(Operation, &arena, &ctx)) |err| err == error.UnavailableHere else false;
+            if (declared == unavailable) {
+                std.debug.print("{s} on {t}: declared {}, answers unavailable {}\n", .{ Operation.tool_name, kind, declared, unavailable });
+                return error.TestHostsDisagree;
+            }
+        }
+    }
 }

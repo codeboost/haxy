@@ -86,6 +86,11 @@ pub const Server = struct {
             error.OutOfMemory => |e| return e,
             else => return try jsonrpc.writeError(out, id, .invalid_params, try std.fmt.allocPrint(arena, "invalid arguments for {s}: {t}", .{ Operation.tool_name, err })),
         };
+        // an operation this host doesn't run is refused before anything is
+        // prepared, refreshed or opened, as the operation itself would
+        if (!runsOn(Operation, self.hostKind())) return try jsonrpc.writeResult(out, id, ToolFailure{
+            .text = try std.fmt.allocPrint(arena, "{s} failed ({t}): {t}", .{ Operation.tool_name, domain.classify(error.UnavailableHere).kind, error.UnavailableHere }),
+        });
         // the result's lifetime: this call
         var call_arena = std.heap.ArenaAllocator.init(self.gpa);
         defer call_arena.deinit();
@@ -106,6 +111,10 @@ pub const Server = struct {
             return try jsonrpc.writeError(out, id, .internal_error, try std.fmt.allocPrint(arena, "internal error: {t}", .{err}));
         };
         if (run(@TypeOf(ready), ready, &ctx)) |result| {
+            if (remoteFailure(result)) |failure| return try jsonrpc.writeResult(out, id, RemoteFailure(@TypeOf(result)){
+                .text = try std.fmt.allocPrint(arena, "{s} failed (remote_failure): {s}: {s}", .{ Operation.tool_name, failure.effect, failure.text }),
+                .result = result,
+            });
             const structured = structuredContent(result);
             try jsonrpc.writeResult(out, id, ToolResult(@TypeOf(structured)){
                 .text = try std.json.Stringify.valueAlloc(arena, structured, .{}),
@@ -117,6 +126,13 @@ pub const Server = struct {
                 .text = try std.fmt.allocPrint(arena, "{s} failed ({t}): {t}", .{ Operation.tool_name, domain.classify(err).kind, err }),
             }),
         }
+    }
+
+    fn hostKind(self: *const Server) evt.HostKind {
+        return switch (self.mode) {
+            .local => .local,
+            .server => .server,
+        };
     }
 
     // a fresh context for one call. a server context reads the admin repo,
@@ -135,10 +151,21 @@ pub const Server = struct {
 
 // run `input` in `ctx`. reads otherwise see the local event db as of the last
 // refresh, so a local call refreshes first; a server consumes every write as
-// it happens.
+// it happens. a sync consumes what it merges itself, and the next call's
+// refresh brings the patch branches up to its merge.
 fn run(comptime Operation: type, input: Operation, ctx: *domain.Ctx) !RunResult(Operation) {
-    if (ctx.host == .local and Operation != domain.RefreshLocal) try (domain.RefreshLocal{}).run(ctx);
+    if (ctx.host == .local and Operation != domain.RefreshLocal and Operation != domain.Sync) try (domain.RefreshLocal{}).run(ctx);
     return try input.run(ctx);
+}
+
+// whether `Operation` runs on a host of `kind`, by its `hosts` declaration;
+// one without runs on both
+fn runsOn(comptime Operation: type, kind: evt.HostKind) bool {
+    if (!@hasDecl(Operation, "hosts")) return true;
+    for (Operation.hosts) |host| {
+        if (host == kind) return true;
+    }
+    return false;
 }
 
 const AdminRepo = rp.Repo(.xit, evt.admin_repo_opts);
@@ -162,6 +189,32 @@ fn ToolResult(comptime Structured: type) type {
                 .structuredContent = self.structured,
                 .isError = false,
             });
+        }
+    };
+}
+
+// the failure a remote reported in its own words, which a sync returns as
+// its result, with what it left done. a client reading isError must not take
+// it for a sync.
+fn remoteFailure(result: anytype) ?struct { text: []const u8, effect: []const u8 } {
+    if (@TypeOf(result) != domain.Sync.Result) return null;
+    const text = result.remote_failure orelse return null;
+    return .{ .text = text, .effect = switch (result.failed_stage orelse .fetch) {
+        .fetch => "the remote refused the fetch, before any merge",
+        .push => "the remote refused the push, after the merge was applied here",
+        .refetch => "the remote refused the fetch after the push, once the merge was applied here and pushed",
+    } };
+}
+
+// a tools/call result for a sync the remote refused: a failure that still
+// carries the result, which says the stage and whether the merge stays
+fn RemoteFailure(comptime Result: type) type {
+    return struct {
+        text: []const u8,
+        result: Result,
+
+        pub fn jsonStringify(self: @This(), jw: anytype) !void {
+            try jw.write(.{ .content = .{.{ .type = "text", .text = self.text }}, .structuredContent = self.result, .isError = true });
         }
     };
 }
@@ -211,21 +264,28 @@ fn negotiateVersion(requested: []const u8) []const u8 {
 }
 
 // what a tool tells the client about its effects. every hint is set, as
-// mcp reads a missing destructiveHint as true.
+// mcp reads a missing destructiveHint or openWorldHint as true.
 pub const Annotations = struct {
     readOnlyHint: bool,
     destructiveHint: bool,
     idempotentHint: bool,
+    // whether the call reaches past this machine's data
+    openWorldHint: bool = false,
 
     // a read, which in local mode refreshes the repo first, and that writes
     pub const read: Annotations = .{ .readOnlyHint = false, .destructiveHint = false, .idempotentHint = true };
     // a write that adds to what is there
     pub const add: Annotations = .{ .readOnlyHint = false, .destructiveHint = false, .idempotentHint = false };
+    // a write that adds to what is there, where a repeat fails without writing
+    pub const add_once: Annotations = .{ .readOnlyHint = false, .destructiveHint = false, .idempotentHint = true };
     // a write that changes or removes what is there, where a repeated call
     // has no further effect
     pub const replace: Annotations = .{ .readOnlyHint = false, .destructiveHint = true, .idempotentHint = true };
     // a write that changes what is there and writes again on every call
     pub const rewrite: Annotations = .{ .readOnlyHint = false, .destructiveHint = true, .idempotentHint = false };
+    // a write here and to a remote on every call, whose merged events may
+    // edit or remove what is here
+    pub const sync: Annotations = .{ .readOnlyHint = false, .destructiveHint = true, .idempotentHint = false, .openWorldHint = true };
 };
 
 pub const Tool = struct {
@@ -239,7 +299,8 @@ pub const Tool = struct {
 // whole call, including local mode's refresh; idempotent means a repeated call
 // has no further effect.
 //
-// domain.DeleteFork is no tool: it checks the account password, which tool
+// domain.DeleteFork, DeleteRepo, DeleteUser, RegisterUser and
+// UpdateUserSettings are no tools: each takes a password, which tool
 // arguments must never carry. a password-free operator-mode adapter waits for
 // personal tokens (phase 6).
 pub const tools = [_]Tool{
@@ -249,6 +310,7 @@ pub const tools = [_]Tool{
     .{ .Operation = domain.GetDiscussion, .annotations = .read },
     .{ .Operation = domain.ListPatches, .annotations = .read },
     .{ .Operation = domain.GetPatch, .annotations = .read },
+    .{ .Operation = domain.ListNotifications, .annotations = .read },
     // each call opens another thread
     .{ .Operation = domain.CreateThread, .annotations = .add },
     // the update commits again even when nothing changed
@@ -273,12 +335,46 @@ pub const tools = [_]Tool{
     .{ .Operation = domain.Mute, .annotations = .rewrite },
     // a repeat finds the draft already published
     .{ .Operation = domain.PublishPatch, .annotations = .replace },
+    // a repeat fails as a taken name without writing
+    .{ .Operation = domain.CreateRepo, .annotations = .add_once },
+    // the update commits again even when nothing changed
+    .{ .Operation = domain.UpdateRepoSettings, .annotations = .rewrite },
+    // widening access adds to it. a repeat fails as already a member
+    .{ .Operation = domain.Grant, .annotations = .add_once },
+    // the grant commits again when already an owner
+    .{ .Operation = domain.Promote, .annotations = .add },
+    // narrowing access is undone by granting again, so these are no removals.
+    // a repeat finds no member without writing
+    .{ .Operation = domain.Revoke, .annotations = .replace },
+    // the grant commits again when already a plain member
+    .{ .Operation = domain.Demote, .annotations = .rewrite },
+    // a repeat fails as protected without writing
+    .{ .Operation = domain.ProtectBranch, .annotations = .add_once },
+    // protecting again undoes it. a repeat writes nothing
+    .{ .Operation = domain.UnprotectBranch, .annotations = .replace },
+    // moving HEAD is a transaction on every call
+    .{ .Operation = domain.SetDefaultBranch, .annotations = .rewrite },
+    // merges and pushes events on every call, applying the remote's edits
+    // and removals here. no flag: what it removes, the remote removed first
+    .{ .Operation = domain.Sync, .annotations = .sync },
+    // a repeat fails as already added without writing
+    .{ .Operation = domain.AddKey, .annotations = .add_once },
+    // a repeat finds it read and writes nothing
+    .{ .Operation = domain.MarkRead, .annotations = .replace },
+    // the thread is untouched and its next activity brings the notification
+    // back, so this is no removal. a repeat finds nothing to dismiss
+    .{ .Operation = domain.Dismiss, .annotations = .replace },
     // merging may remove the patch's fork; a repeat finds the patch merged
     .{ .Operation = domain.MergePatch, .annotations = .replace, .removal = true },
     // removals: a repeat finds nothing to remove
     .{ .Operation = domain.RemoveThread, .annotations = .replace, .removal = true },
     .{ .Operation = domain.RemoveComment, .annotations = .replace, .removal = true },
     .{ .Operation = domain.RemoveAttachment, .annotations = .replace, .removal = true },
+    // drops every later transaction, which no tool restores
+    .{ .Operation = domain.Undo, .annotations = .rewrite, .removal = true },
+    // the server keeps no copy of a removed key's line to add it back. a
+    // repeat finds no such key
+    .{ .Operation = domain.RemoveKey, .annotations = .replace, .removal = true },
 };
 
 comptime {
@@ -287,7 +383,7 @@ comptime {
     for (tools) |tool| {
         if (@hasDecl(tool.Operation, "not_a_tool")) @compileError(@typeName(tool.Operation) ++ " is not a tool");
         // passwords never travel in tool arguments
-        if (@hasField(tool.Operation, "password")) @compileError(@typeName(tool.Operation) ++ " takes a password");
+        if (takesPassword(tool.Operation)) @compileError(@typeName(tool.Operation) ++ " takes a password");
         // every argument is described
         for (@typeInfo(tool.Operation).@"struct".field_names) |name| {
             if (!@hasDecl(tool.Operation, "tool_schema_notes") or !@hasField(@TypeOf(tool.Operation.tool_schema_notes), name)) {
@@ -295,6 +391,27 @@ comptime {
             }
         }
     }
+}
+
+// whether the input `T` has a field whose name holds "password", which
+// catches current_password and new_password as well as password, at any
+// depth: in nested structs and in optionals, slices and arrays of them
+pub fn takesPassword(comptime T: type) bool {
+    // every field name is searched
+    @setEvalBranchQuota(100_000);
+    return comptime holdsPassword(T);
+}
+
+fn holdsPassword(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => |info| for (info.field_names, info.field_types) |name, Field| {
+            if (std.mem.indexOf(u8, name, "password") != null or holdsPassword(Field)) break true;
+        } else false,
+        .optional => |info| holdsPassword(info.child),
+        .pointer => |info| holdsPassword(info.child),
+        .array => |info| holdsPassword(info.child),
+        else => false,
+    };
 }
 
 // the `attach` tool: domain.Attach streams from a reader, which json can't
@@ -412,7 +529,7 @@ fn writeObjectSchemaNullable(jw: anytype, comptime T: type, comptime notes: anyt
     try jw.beginObject();
     inline for (info.field_names, info.field_types) |name, Field| {
         try jw.objectField(name);
-        try writeSchema(jw, Field, fieldNote(notes, name), false);
+        try writeSchema(jw, Field, fieldNote(notes, name), fieldValues(T, name), false);
     }
     try jw.endObject();
     try jw.objectField("required");
@@ -426,10 +543,11 @@ fn writeObjectSchemaNullable(jw: anytype, comptime T: type, comptime notes: anyt
     try jw.endObject();
 }
 
-// the json schema of a field of type `T`, which allows null when `nullable`
-fn writeSchema(jw: anytype, comptime T: type, comptime description: ?[]const u8, comptime nullable: bool) !void {
+// the json schema of a field of type `T`, which allows null when `nullable`.
+// an enum field offers `values` when given, else every tag.
+fn writeSchema(jw: anytype, comptime T: type, comptime description: ?[]const u8, comptime values: ?[]const []const u8, comptime nullable: bool) !void {
     switch (@typeInfo(T)) {
-        .optional => |optional| return try writeSchema(jw, optional.child, description, true),
+        .optional => |optional| return try writeSchema(jw, optional.child, description, values, true),
         // nested structs carry no notes
         .@"struct" => return try writeObjectSchemaNullable(jw, T, .{}, nullable),
         else => {},
@@ -438,12 +556,19 @@ fn writeSchema(jw: anytype, comptime T: type, comptime description: ?[]const u8,
     try jw.objectField("type");
     switch (@typeInfo(T)) {
         .bool => try writeTypeName(jw, "boolean", nullable),
-        .int => try writeTypeName(jw, "integer", nullable),
-        .@"enum" => |info| {
+        .int => |info| {
+            try writeTypeName(jw, "integer", nullable);
+            // checkArguments refuses a negative index or offset, so say so
+            if (info.signedness == .unsigned) {
+                try jw.objectField("minimum");
+                try jw.write(0);
+            }
+        },
+        .@"enum" => {
             try writeTypeName(jw, "string", nullable);
             try jw.objectField("enum");
             try jw.beginArray();
-            inline for (info.field_names) |name| try jw.write(name);
+            inline for (comptime values orelse tagNames(T)) |name| try jw.write(name);
             if (nullable) try jw.write(null);
             try jw.endArray();
         },
@@ -465,6 +590,32 @@ fn writeSchema(jw: anytype, comptime T: type, comptime description: ?[]const u8,
 
 fn writeTypeName(jw: anytype, comptime name: []const u8, comptime nullable: bool) !void {
     if (nullable) try jw.write(.{ name, "null" }) else try jw.write(name);
+}
+
+// the tag names of the enum `T`
+fn tagNames(comptime T: type) []const []const u8 {
+    comptime {
+        var names: []const []const u8 = &.{};
+        for (@typeInfo(T).@"enum".field_names) |name| names = names ++ .{name};
+        return names;
+    }
+}
+
+// the values an operation offers for its enum field `name` when it declares
+// them in `tool_schema_enums`, a struct literal mapping field names to arrays
+// of tags: fewer than the type holds, where the operation refuses the rest.
+// null offers every tag.
+fn fieldValues(comptime T: type, comptime name: []const u8) ?[]const []const u8 {
+    comptime {
+        if (!@hasDecl(T, "tool_schema_enums")) return null;
+        for (@typeInfo(@TypeOf(T.tool_schema_enums)).@"struct".field_names) |field| {
+            if (!@hasField(T, field)) @compileError(@typeName(T) ++ ".tool_schema_enums names no field " ++ field);
+        }
+        if (!@hasField(@TypeOf(T.tool_schema_enums), name)) return null;
+        var names: []const []const u8 = &.{};
+        for (@field(T.tool_schema_enums, name)) |tag| names = names ++ .{@tagName(tag)};
+        return names;
+    }
 }
 
 // the description `notes` holds for the field `name`
@@ -491,7 +642,7 @@ fn checkObject(comptime T: type, arena: std.mem.Allocator, comptime prefix: []co
     }
     inline for (info.field_names, info.field_types, info.field_attrs) |name, Field, attrs| {
         if (object.get(name)) |value| {
-            if (try checkValue(Field, arena, prefix ++ name, value)) |problem| return problem;
+            if (try checkValue(Field, arena, prefix ++ name, fieldValues(T, name), value)) |problem| return problem;
         } else if (attrs.default_value_ptr == null) {
             return "missing field " ++ prefix ++ name;
         }
@@ -499,21 +650,23 @@ fn checkObject(comptime T: type, arena: std.mem.Allocator, comptime prefix: []co
     return null;
 }
 
-// what is wrong with `value` as a `T` named `path`, or null when nothing is
-fn checkValue(comptime T: type, arena: std.mem.Allocator, comptime path: []const u8, value: std.json.Value) !?[]const u8 {
+// what is wrong with `value` as a `T` named `path`, or null when nothing is.
+// an enum takes only `values` when given, else any tag.
+fn checkValue(comptime T: type, arena: std.mem.Allocator, comptime path: []const u8, comptime values: ?[]const []const u8, value: std.json.Value) !?[]const u8 {
     switch (@typeInfo(T)) {
-        .optional => |optional| return if (value == .null) null else try checkValue(optional.child, arena, path, value),
+        .optional => |optional| return if (value == .null) null else try checkValue(optional.child, arena, path, values, value),
         .@"struct" => return if (value == .object) try checkObject(T, arena, path ++ ".", value.object) else path ++ " must be an object",
         .bool => return if (value == .bool) null else path ++ " must be a boolean",
         .int => return if (integerFits(T, value)) null else path ++ " must be an integer in range",
-        .@"enum" => |info| {
+        .@"enum" => {
+            const offered = comptime values orelse tagNames(T);
             const names = comptime blk: {
                 var joined: []const u8 = "";
-                for (info.field_names, 0..) |name, i| joined = joined ++ (if (i == 0) "" else ", ") ++ name;
+                for (offered, 0..) |name, i| joined = joined ++ (if (i == 0) "" else ", ") ++ name;
                 break :blk joined;
             };
             if (value == .string) {
-                inline for (info.field_names) |name| {
+                inline for (offered) |name| {
                     if (std.mem.eql(u8, value.string, name)) return null;
                 }
             }

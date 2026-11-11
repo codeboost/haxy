@@ -595,6 +595,16 @@ fn requestCtx(
     }
 }
 
+// whether the request may act as someone: a server request names a session,
+// and local mode always acts as the repo's owner. checked before `requestCtx`,
+// whose admin repo i/o a request without one never needed.
+fn hasSession(request: *std.http.Server.Request, host: Host) bool {
+    return switch (host) {
+        .local => true,
+        .server => |server| requestUserId(request, server.session_store) != null,
+    };
+}
+
 // the repo identity an operation takes for the repo url base `repo_base`
 // names ("" for local mode's one repo), or null for a base that names none
 fn requestIdentity(host: Host, repo_base: []const u8) ?[]const u8 {
@@ -619,39 +629,6 @@ fn repoTabFound(ctx: *domain.Ctx, identity: []const u8, kind: evt.EventKind) !bo
 fn mayModify(ctx: *domain.Ctx, identity: []const u8, actor: domain.Actor, kind: evt.EventKind, id: *const [evt.event_id_size]u8) !bool {
     const resolved = (try domain.resolveRepo(ctx, identity)) orelse return true;
     return try domain.canModify(ctx, resolved, actor, kind, id);
-}
-
-// the actor for a write to the repo `repo_base` names with at least `min_role`
-// and in the `thread_kind` tab when there is one, or null once the refusal has
-// been sent. local mode always writes.
-fn authorizeWrite(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    arena: *std.heap.ArenaAllocator,
-    request: *std.http.Server.Request,
-    host: Host,
-    repo_base: []const u8,
-    min_role: evt.Repo.Role,
-    thread_kind: ?evt.EventKind,
-) !?ui.Actor {
-    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
-    const authorization: domain.Authorization = switch (host) {
-        .local => |src| blk: {
-            var ctx = domain.Ctx.initLocal(io, allocator, arena, src, now);
-            break :blk try ctx.authorize("", min_role, thread_kind);
-        },
-        .server => |server| blk: {
-            const user_id = requestUserId(request, server.session_store) orelse break :blk .login_required;
-
-            const identity = repoBaseIdentity(repo_base) orelse break :blk .repo_not_found;
-
-            var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
-            defer admin_repo.deinit(io, allocator);
-            var ctx = try domain.Ctx.initServer(io, allocator, arena, &admin_repo, server.users_dir, user_id, now);
-            break :blk try ctx.authorize(identity, min_role, thread_kind);
-        },
-    };
-    return try respondUnauthorized(request, authorization);
 }
 
 // the authorized actor, or null once the request has been refused
@@ -787,10 +764,12 @@ fn handleRepoNew(
     const user_id = requestUserId(request, session_store) orelse return respondLoginRequired(request);
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = admin_repo_path });
+    var admin_repo = try AdminRepo.open(io, allocator, .{ .path = admin_repo_path });
     defer admin_repo.deinit(io, allocator);
-    const moment = try evt.currentMoment(evt.admin_repo_opts, &admin_repo);
-    const user = (try ui.activeUser(moment, &arena, user_id)) orelse return respondLoginRequired(request);
+    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
+    var ctx = try domain.Ctx.initServer(io, allocator, &arena, &admin_repo, users_dir, user_id, now);
+    // a removed account is logged out; refuse before reading the body
+    if (ctx.user_id == null) return respondLoginRequired(request);
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
@@ -808,7 +787,7 @@ fn handleRepoNew(
     const hash_kind = std.meta.stringToEnum(hash.HashKind, hash_value) orelse return request.respond("invalid hash", bad_request);
     const access = std.meta.stringToEnum(evt.Repo.Access, access_value) orelse return request.respond("invalid access", bad_request);
 
-    _ = evt.createRepo(io, allocator, users_dir, &user_id, .{ .name = user.event.name, .email = user.event.email }, name, description, access, hash_kind, if (copy.len == 0) null else .{ .admin_moment = moment, .path = copy }) catch |err| {
+    const created = (domain.CreateRepo{ .name = name, .description = description, .access = access, .hash = hash_kind, .copy = copy }).run(&ctx) catch |err| {
         const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
         return respondFormFailure(request, allocator, session_store, form_location, .{ .repo = .{ .failure = failure, .fields = .{
             .name = name,
@@ -819,8 +798,7 @@ fn handleRepoNew(
         } } });
     };
 
-    const location = try allocator.print("/{s}:{s}", .{ user.event.name, name });
-    defer allocator.free(location);
+    const location = try arena.allocator().print("/{s}", .{created.identity});
     try request.respond("", .{
         .status = .see_other,
         .extra_headers = &.{.{ .name = "location", .value = location }},
@@ -845,8 +823,14 @@ fn handleRepoSettings(
     if (route != .repo_settings) return respondRepoNotFound(request);
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const repo_base = try arena.allocator().print("/{s}", .{route.repo_settings.slice()});
-    const actor = (try authorizeWrite(io, allocator, &arena, request, host, repo_base, .owner, null)) orelse return;
+    // no session is refused before any admin repo i/o, as it always was
+    if (!hasSession(request, host)) return respondLoginRequired(request);
+    var admin_repo: ?AdminRepo = null;
+    defer if (admin_repo) |*repo| repo.deinit(io, allocator);
+    var ctx = try requestCtx(io, allocator, &arena, request, host, &admin_repo);
+    const identity = route.repo_settings.slice();
+    // refuse before reading the body; the operation authorizes again
+    _ = (try respondUnauthorized(request, try ctx.authorize(identity, .owner, null))) orelse return;
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
@@ -865,8 +849,18 @@ fn handleRepoSettings(
     }
     const discuss_role, const issue_role, const patch_role = roles;
 
-    const updated = ui.Repo.Settings.update(io, allocator, server.users_dir, actor, route.repo_settings.slice(), name, description, access, discuss_role, issue_role, patch_role) catch |err| switch (err) {
-        error.NotFound => return respondRepoNotFound(request),
+    const updated = (domain.UpdateRepoSettings{
+        .repo = identity,
+        .name = name,
+        .description = description,
+        .access = access,
+        .discuss_role = discuss_role,
+        .issue_role = issue_role,
+        .patch_role = patch_role,
+    }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+        .not_found, .unavailable_here => return respondRepoNotFound(request),
+        .login_required => return respondLoginRequired(request),
+        .forbidden => return respondForbidden(request),
         else => {
             const failure = ui.Session.FormFeedback.RepoFailure.fromError(err) orelse return err;
             return respondFormFailure(request, allocator, server.session_store, form_location, .{ .repo_settings = .{ .failure = failure, .fields = .{
@@ -880,9 +874,10 @@ fn handleRepoSettings(
         },
     };
 
+    const location = try (ui.RoutablePage.repoSettingsRoute(updated.identity) orelse return error.RouteTooLong).toUrl(&arena);
     try request.respond("", .{
         .status = .see_other,
-        .extra_headers = &.{.{ .name = "location", .value = try updated.toUrl(&arena) }},
+        .extra_headers = &.{.{ .name = "location", .value = location }},
     });
 }
 
@@ -900,7 +895,14 @@ fn handleMembers(io: std.Io, request: *std.http.Server.Request, allocator: std.m
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const identity = target.name.slice();
-    const actor = (try authorizeWrite(io, allocator, &arena, request, host, try arena.allocator().print("/{s}", .{identity}), .owner, null)) orelse return;
+    // no session is refused before any admin repo i/o, as it always was
+    if (!hasSession(request, host)) return respondLoginRequired(request);
+    var admin_repo: ?AdminRepo = null;
+    defer if (admin_repo) |*repo| repo.deinit(io, allocator);
+    var ctx = try requestCtx(io, allocator, &arena, request, host, &admin_repo);
+    // refuse before reading the body; the operation authorizes again. the
+    // actor names where the page lands.
+    const actor = (try respondUnauthorized(request, try ctx.authorize(identity, .owner, null))) orelse return;
 
     const name = switch (action) {
         .grant => blk: {
@@ -911,19 +913,25 @@ fn handleMembers(io: std.Io, request: *std.http.Server.Request, allocator: std.m
         .revoke, .promote, .demote => if (target.user.len != 0) target.user.slice() else return respondRepoNotFound(request),
     };
 
-    const failure = blk: {
-        var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
-        defer admin_repo.deinit(io, allocator);
-        const moment = try evt.currentMoment(evt.admin_repo_opts, &admin_repo);
-        break :blk ui.Repo.Members.perform(io, allocator, moment, server.users_dir, actor, identity, action, name) catch |err| switch (err) {
-            error.NotFound, error.EventNotFound => return respondRepoNotFound(request),
-            else => return err,
+    const result = switch (action) {
+        .grant => (domain.Grant{ .repo = identity, .user = name }).run(&ctx),
+        .revoke => (domain.Revoke{ .repo = identity, .user = name }).run(&ctx),
+        .promote => (domain.Promote{ .repo = identity, .user = name }).run(&ctx),
+        .demote => (domain.Demote{ .repo = identity, .user = name }).run(&ctx),
+    };
+    result catch |err| {
+        if (ui.Session.FormFeedback.MembersFailure.fromError(err)) |failure| {
+            const location = try (ui.RoutablePage.repoMembersRoute(identity, target.start) orelse return error.RouteTooLong).toUrl(&arena);
+            return respondFormFailure(request, allocator, server.session_store, location, .{ .repo_members = .{ .failure = failure, .name = name } });
+        }
+        // a row naming no member, like a missing repo, is not found
+        return switch (domain.classify(err).kind) {
+            .not_found, .unavailable_here => respondRepoNotFound(request),
+            .login_required => respondLoginRequired(request),
+            .forbidden => respondForbidden(request),
+            else => err,
         };
     };
-    if (failure) |value| {
-        const location = try (ui.RoutablePage.repoMembersRoute(identity, target.start) orelse return error.RouteTooLong).toUrl(&arena);
-        return respondFormFailure(request, allocator, server.session_store, location, .{ .repo_members = .{ .failure = value, .name = name } });
-    }
     const location = try (ui.Repo.Members.landingRoute(identity, target.start, actor, action, name) orelse return error.RouteTooLong).toUrl(&arena);
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = location }} });
 }
@@ -943,7 +951,13 @@ fn handleBranches(io: std.Io, request: *std.http.Server.Request, allocator: std.
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const identity = target.name.slice();
-    const actor = (try authorizeWrite(io, allocator, &arena, request, host, try arena.allocator().print("/{s}", .{identity}), .owner, null)) orelse return;
+    // no session is refused before any admin repo i/o, as it always was
+    if (!hasSession(request, host)) return respondLoginRequired(request);
+    var admin_repo: ?AdminRepo = null;
+    defer if (admin_repo) |*repo| repo.deinit(io, allocator);
+    var ctx = try requestCtx(io, allocator, &arena, request, host, &admin_repo);
+    // refuse before reading the body; the operation authorizes again
+    _ = (try respondUnauthorized(request, try ctx.authorize(identity, .owner, null))) orelse return;
 
     const branch = switch (action) {
         .default, .protect => blk: {
@@ -954,12 +968,22 @@ fn handleBranches(io: std.Io, request: *std.http.Server.Request, allocator: std.
         .unprotect => if (target.branch.len != 0) std.Uri.percentDecodeInPlace(try arena.allocator().dupe(u8, target.branch.slice())) else return respondRepoNotFound(request),
     };
 
-    const failure = ui.Repo.Branches.perform(io, allocator, server.users_dir, actor, identity, action, branch) catch |err| switch (err) {
-        error.NotFound => return respondRepoNotFound(request),
-        else => return err,
-    };
     const location = try (ui.RoutablePage.repoBranchesRoute(identity) orelse return error.RouteTooLong).toUrl(&arena);
-    if (failure) |value| return respondFormFailure(request, allocator, server.session_store, location, .{ .repo_branches = .{ .failure = value, .name = branch, .default = action == .default } });
+    const result = switch (action) {
+        .default => (domain.SetDefaultBranch{ .repo = identity, .branch = branch }).run(&ctx),
+        .protect => (domain.ProtectBranch{ .repo = identity, .branch = branch }).run(&ctx),
+        .unprotect => (domain.UnprotectBranch{ .repo = identity, .branch = branch }).run(&ctx),
+    };
+    result catch |err| {
+        if (ui.Session.FormFeedback.BranchesFailure.fromError(err)) |failure|
+            return respondFormFailure(request, allocator, server.session_store, location, .{ .repo_branches = .{ .failure = failure, .name = branch, .default = action == .default } });
+        return switch (domain.classify(err).kind) {
+            .not_found, .unavailable_here => respondRepoNotFound(request),
+            .login_required => respondLoginRequired(request),
+            .forbidden => respondForbidden(request),
+            else => err,
+        };
+    };
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = location }} });
 }
 
@@ -975,13 +999,9 @@ fn handleUserNew(
     session_store: SessionStore,
     error_writer: *std.Io.Writer,
 ) !void {
-    if (requestUserId(request, session_store) != null) {
-        return request.respond("log out to create a user", .{
-            .status = .forbidden,
-            .keep_alive = false,
-            .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
-        });
-    }
+    // any session refuses, a removed account's too; the operation refuses
+    // only an active one
+    if (requestUserId(request, session_store) != null) return respondLogOutToRegister(request);
 
     // copied before the body read, which invalidates the request's headers
     const client = try allocator.dupe(u8, serve_http.findHeader(request, "x-forwarded-for") orelse "-");
@@ -998,13 +1018,17 @@ fn handleUserNew(
     defer allocator.free(password_again);
 
     const user_id = blk: {
-        var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = admin_repo_path });
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var admin_repo = try AdminRepo.open(io, allocator, .{ .path = admin_repo_path });
         defer admin_repo.deinit(io, allocator);
-        break :blk evt.createUser(io, allocator, users_dir, &admin_repo, name, email, password, password_again) catch |err| {
+        var ctx = try accountCtx(io, allocator, &arena, &admin_repo, users_dir, null);
+        const created = (domain.RegisterUser{ .name = name, .email = email, .password = password, .password_again = password_again }).run(&ctx) catch |err| {
             serve_common.logError(io, error_writer, "web signup failed: ip={s} name=\"{f}\" error={s}\n", .{ client, std.zig.fmtString(name), @errorName(err) });
             const failure = ui.Session.FormFeedback.UserFailure.fromError(err) orelse return err;
             return respondFormFailure(request, allocator, session_store, form_location, .{ .user = .{ .failure = failure, .fields = .{ .name = name, .email = email } } });
         };
+        break :blk created.id;
     };
 
     const token = try session_store.create(&user_id);
@@ -1021,6 +1045,28 @@ fn handleUserNew(
     });
 }
 
+fn respondLogOutToRegister(request: *std.http.Server.Request) !void {
+    try request.respond("log out to create a user", .{
+        .status = .forbidden,
+        .keep_alive = false,
+        .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
+    });
+}
+
+// a server context for an account operation acting as `user_id`, which is
+// dropped once its account is removed. `admin_repo` stays the caller's.
+fn accountCtx(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    admin_repo: *AdminRepo,
+    users_dir: []const u8,
+    user_id: ?[evt.event_id_size]u8,
+) !domain.Ctx {
+    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
+    return try domain.Ctx.initServer(io, allocator, arena, admin_repo, users_dir, user_id, now);
+}
+
 // change the logged-in user's settings, then return to the settings tab that
 // posted the form, which a failure also goes back to.
 fn handleUserSettings(
@@ -1033,6 +1079,13 @@ fn handleUserSettings(
     session_store: SessionStore,
 ) !void {
     const user_id = requestUserId(request, session_store) orelse return respondLoginRequired(request);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var admin_repo = try AdminRepo.open(io, allocator, .{ .path = admin_repo_path });
+    defer admin_repo.deinit(io, allocator);
+    var ctx = try accountCtx(io, allocator, &arena, &admin_repo, users_dir, user_id);
+    // a removed account is logged out; refuse before reading the body
+    if (ctx.user_id == null) return respondLoginRequired(request);
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
@@ -1045,17 +1098,13 @@ fn handleUserSettings(
     const new_password_again = (try parseFormField(allocator, body, "new_password_again")) orelse try allocator.dupe(u8, "");
     defer allocator.free(new_password_again);
 
-    {
-        var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = admin_repo_path });
-        defer admin_repo.deinit(io, allocator);
-        evt.updateUser(io, allocator, users_dir, &admin_repo, &user_id, email, current_password, new_password, new_password_again) catch |err| switch (err) {
-            error.NotFound => return respondLoginRequired(request),
-            else => {
-                const failure = ui.Session.FormFeedback.UserFailure.fromError(err) orelse return err;
-                return respondFormFailure(request, allocator, session_store, form_location, .{ .user_settings = .{ .failure = failure, .fields = .{ .email = email } } });
-            },
-        };
-    }
+    (domain.UpdateUserSettings{ .email = email, .current_password = current_password, .new_password = new_password, .new_password_again = new_password_again }).run(&ctx) catch |err| switch (err) {
+        error.LoginRequired => return respondLoginRequired(request),
+        else => {
+            const failure = ui.Session.FormFeedback.UserFailure.fromError(err) orelse return err;
+            return respondFormFailure(request, allocator, session_store, form_location, .{ .user_settings = .{ .failure = failure, .fields = .{ .email = email } } });
+        },
+    };
 
     try request.respond("", .{
         .status = .see_other,
@@ -1075,23 +1124,26 @@ fn handleUserKeyAdd(
     session_store: SessionStore,
 ) !void {
     const user_id = requestUserId(request, session_store) orelse return respondLoginRequired(request);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var admin_repo = try AdminRepo.open(io, allocator, .{ .path = admin_repo_path });
+    defer admin_repo.deinit(io, allocator);
+    var ctx = try accountCtx(io, allocator, &arena, &admin_repo, users_dir, user_id);
+    // a removed account is logged out; refuse before reading the body
+    if (ctx.user_id == null) return respondLoginRequired(request);
 
     const body = try readFormBody(request, allocator);
     defer allocator.free(body);
     const key = (try parseFormField(allocator, body, "key")) orelse try allocator.dupe(u8, "");
     defer allocator.free(key);
 
-    {
-        var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = admin_repo_path });
-        defer admin_repo.deinit(io, allocator);
-        evt.addUserKey(io, allocator, users_dir, &admin_repo, &user_id, key) catch |err| switch (err) {
-            error.NotFound => return respondLoginRequired(request),
-            else => {
-                const failure = ui.Session.FormFeedback.KeyFailure.fromError(err) orelse return err;
-                return respondFormFailure(request, allocator, session_store, form_location, .{ .user_keys = .{ .failure = failure, .key = key } });
-            },
-        };
-    }
+    (domain.AddKey{ .key = key }).run(&ctx) catch |err| switch (err) {
+        error.LoginRequired => return respondLoginRequired(request),
+        else => {
+            const failure = ui.Session.FormFeedback.KeyFailure.fromError(err) orelse return err;
+            return respondFormFailure(request, allocator, session_store, form_location, .{ .user_keys = .{ .failure = failure, .key = key } });
+        },
+    };
 
     try request.respond("", .{
         .status = .see_other,
@@ -1115,17 +1167,21 @@ fn handleUserKeyRemove(
     const tab = route.userTab();
     if (tab.view != .keys or tab.key.len != evt.User.fingerprint_len) return respondKeyNotFound(request);
 
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
     {
-        var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = admin_repo_path });
+        var admin_repo = try AdminRepo.open(io, allocator, .{ .path = admin_repo_path });
         defer admin_repo.deinit(io, allocator);
-        evt.removeUserKey(io, allocator, users_dir, &admin_repo, &user_id, &tab.key.bytes) catch |err| switch (err) {
-            error.NotFound => return respondLoginRequired(request),
+        var ctx = try accountCtx(io, allocator, &arena, &admin_repo, users_dir, user_id);
+        (domain.RemoveKey{ .fingerprint = tab.key.slice() }).run(&ctx) catch |err| switch (err) {
+            error.LoginRequired => return respondLoginRequired(request),
+            // a key that is gone already, as a second click finds it: the
+            // tab shows the keys as they are
+            error.NotFound => {},
             else => return err,
         };
     }
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
     const location = try route.withUserTab(.{ .view = .keys }).toUrl(&arena);
     try request.respond("", .{
         .status = .see_other,
@@ -1139,9 +1195,11 @@ fn handleDelete(io: std.Io, request: *std.http.Server.Request, allocator: std.me
     const user_id = requestUserId(request, server.session_store) orelse return respondLoginRequired(request);
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    var admin_repo = try rp.Repo(.xit, evt.admin_repo_opts).open(io, allocator, .{ .path = server.admin_repo_path });
+    var admin_repo = try AdminRepo.open(io, allocator, .{ .path = server.admin_repo_path });
     defer admin_repo.deinit(io, allocator);
-    const user = (try ui.activeUser(try evt.currentMoment(evt.admin_repo_opts, &admin_repo), &arena, user_id)) orelse return respondLoginRequired(request);
+    var ctx = try accountCtx(io, allocator, &arena, &admin_repo, server.users_dir, user_id);
+    // a removed account is logged out; refuse before reading the body
+    const user = ctx.user orelse return respondLoginRequired(request);
 
     const route = ui.RoutablePage.fromUrl(base) orelse return respondDeleteNotFound(request);
     const target: ui.Delete.Target = switch (route) {
@@ -1157,7 +1215,7 @@ fn handleDelete(io: std.Io, request: *std.http.Server.Request, allocator: std.me
     const confirm = (try parseFormField(arena.allocator(), body, "confirm")) orelse "";
     const password = (try parseFormField(arena.allocator(), body, "password")) orelse "";
 
-    const failure = ui.Delete.perform(io, allocator, server.users_dir, &admin_repo, user_id, target, confirm, password) catch |err| switch (err) {
+    const failure = ui.Delete.perform(&ctx, target, confirm, password) catch |err| switch (err) {
         error.NotFound => return respondDeleteNotFound(request),
         else => return err,
     };
@@ -2275,15 +2333,32 @@ fn handleUndo(io: std.Io, request: *std.http.Server.Request, allocator: std.mem.
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const repo_base = if (target.name.len == 0) "" else try arena.allocator().print("/{s}", .{target.name.slice()});
-    _ = (try authorizeWrite(io, allocator, &arena, request, host, repo_base, .owner, null)) orelse return;
-    const resolved = (try requestRepoSource(io, allocator, host, repo_base)) orelse return respondRepoNotFound(request);
-    defer resolved.deinit(allocator);
-    ui.Repo.Undo.execute(io, allocator, resolved.source, target.index orelse return respondRepoNotFound(request)) catch |err| switch (err) {
-        error.NotFound, error.InvalidHistoryIndex, error.TransactionNotFound => return respondRepoNotFound(request),
+    // no session is refused before any admin repo i/o, as it always was
+    if (!hasSession(request, host)) return respondLoginRequired(request);
+    var admin_repo: ?AdminRepo = null;
+    defer if (admin_repo) |*repo| repo.deinit(io, allocator);
+    var ctx = try requestCtx(io, allocator, &arena, request, host, &admin_repo);
+    const identity = requestIdentity(host, repo_base) orelse return respondRepoNotFound(request);
+    // refuse before anything else; the operation authorizes again
+    _ = (try respondUnauthorized(request, try ctx.authorize(identity, .owner, null))) orelse return;
+    const index = target.index orelse return respondRepoNotFound(request);
+    // an index naming no transaction an owner may undo answers as a missing repo did
+    (domain.Undo{ .repo = identity, .index = index }).run(&ctx) catch |err| switch (domain.classify(err).kind) {
+        .not_found, .unavailable_here => return respondRepoNotFound(request),
+        .login_required => return respondLoginRequired(request),
+        .forbidden => return respondForbidden(request),
         else => return err,
     };
     const location = try (ui.RoutablePage.repoUndoRoute(target.name.slice(), null) orelse return error.RouteTooLong).toUrl(&arena);
     try request.respond("", .{ .status = .see_other, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = location }} });
+}
+
+// sync the local repo `source` names, its context set up here so a setup
+// failure reaches the caller like the sync's own
+fn syncLocal(io: std.Io, allocator: std.mem.Allocator, arena: *std.heap.ArenaAllocator, source: ui.RepoSource) !domain.Sync.Result {
+    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
+    var ctx = domain.Ctx.initLocal(io, allocator, arena, source, now);
+    return try (domain.Sync{}).run(&ctx);
 }
 
 fn handleSync(
@@ -2301,12 +2376,10 @@ fn handleSync(
         return;
     }
 
-    var owned_failure: ?[]u8 = null;
-    defer if (owned_failure) |message| allocator.free(message);
-    const failure: ?[]const u8 = blk: {
-        owned_failure = ui.Repo.Events.sync(io, allocator, source) catch |err| break :blk @errorName(err);
-        break :blk owned_failure;
-    };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    // a failure, the sync's own, its setup's or the remote's words, goes to the flash cookie
+    const failure: ?[]const u8 = if (syncLocal(io, allocator, &arena, source)) |result| result.remote_failure else |err| @errorName(err);
     if (failure) |message| {
         var encoded: std.Io.Writer.Allocating = .init(allocator);
         defer encoded.deinit();

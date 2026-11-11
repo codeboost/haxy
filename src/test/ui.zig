@@ -1,6 +1,7 @@
 const std = @import("std");
 const evt = @import("../event.zig");
 const ui = @import("../ui.zig");
+const domain = @import("../domain.zig");
 const Commits = @import("../ui/Repo/Commits.zig");
 const Events = @import("../ui/Repo/Events.zig");
 const xit = @import("xit");
@@ -317,6 +318,16 @@ fn testCommitBase(comptime kind: xit.repo.RepoKind) !void {
     try std.testing.expectEqualStrings(&base, off_chain.commits[1].oid);
 }
 
+// sync the local git repo at `path` as the host does, which the remote
+// must not refuse
+fn syncLocal(path: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var ctx = domain.Ctx.initLocal(std.testing.io, std.testing.allocator, &arena, .{ .path = path, .repo_kind = .git }, 0);
+    const result = try (domain.Sync{}).run(&ctx);
+    try std.testing.expectEqual(null, result.remote_failure);
+}
+
 test "sync creates missing event branches and preserves head" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
@@ -359,7 +370,7 @@ test "sync creates missing event branches and preserves head" {
         }});
     }
 
-    try std.testing.expectEqual(null, try Events.sync(io, allocator, .{ .path = local_path, .repo_kind = .git }));
+    try syncLocal(local_path);
     {
         var local = try Repo.open(io, allocator, .{ .path = local_path });
         defer local.deinit(io, allocator);
@@ -380,14 +391,14 @@ test "sync creates missing event branches and preserves head" {
             .event = .{ .issue = .{ .title = "remote", .description = "", .labels = "" } },
         }});
     }
-    try std.testing.expectEqual(null, try Events.sync(io, allocator, .{ .path = local_path, .repo_kind = .git }));
+    try syncLocal(local_path);
     {
         var local = try Repo.open(io, allocator, .{ .path = local_path });
         defer local.deinit(io, allocator);
         try local.removeBranch(io, .{ .name = evt.events_ref.name });
         try evt.consume(.local, .repo, .git, .{}, io, allocator, &local, evt.events_ref, &.{});
     }
-    try std.testing.expectEqual(null, try Events.sync(io, allocator, .{ .path = local_path, .repo_kind = .git }));
+    try syncLocal(local_path);
 
     var local = try Repo.open(io, allocator, .{ .path = local_path });
     defer local.deinit(io, allocator);

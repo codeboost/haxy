@@ -8,6 +8,7 @@ const serve_ssh_protocol = @import("./serve_ssh_protocol.zig");
 const serve_ssh = @import("./serve_ssh.zig");
 const serve_http = @import("./serve_http.zig");
 const evt = @import("./event.zig");
+const domain = @import("./domain.zig");
 
 pub const Options = struct {
     web_listen: []const u8 = "127.0.0.1:8080",
@@ -27,7 +28,8 @@ pub const DeleteUserOptions = struct {
     data_dir: []const u8 = ".",
 };
 
-// delete the named user as their own delete tab does, minus the password check
+// delete the named user through the operation their delete tab runs, minus
+// the confirmation and password
 pub fn deleteUser(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -55,15 +57,19 @@ pub fn deleteUser(
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const moment = try evt.currentMoment(evt.admin_repo_opts, &admin_repo);
-    const user_id, const user = blk: {
-        if (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, moment, options.name)) |id| {
-            if (try ui.activeUser(moment, &arena, id)) |found| break :blk .{ id, found };
-        }
+    const user_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, moment, options.name)) orelse {
+        try err.print("no user named {s}\n", .{options.name});
+        return error.HandledError;
+    };
+    // the operator acts as the account; a removed one leaves the context without a user
+    const now = std.math.cast(i64, std.Io.Timestamp.now(io, .real).toSeconds()) orelse return error.TimestampOutOfRange;
+    var ctx = try domain.Ctx.initServer(io, allocator, &arena, &admin_repo, users_dir, user_id, now);
+    const user = ctx.user orelse {
         try err.print("no user named {s}\n", .{options.name});
         return error.HandledError;
     };
 
-    try evt.deleteUser(io, allocator, users_dir, &admin_repo, &user_id, .{ .name = user.event.name, .email = user.event.email });
+    try domain.DeleteUser.deleteAsOperator(&ctx);
     try out.print("deleted user {s}\n", .{user.event.name});
 }
 

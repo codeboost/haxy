@@ -101,15 +101,15 @@ test "notifs" {
     }
 
     // a read of a child the thread has moved past leaves it unread
-    try notify.markRead(io, allocator, users_dir, &recipient_id, &id_a, &child_ids[2]);
+    try std.testing.expectEqual(.out_of_date, try notify.markRead(io, allocator, users_dir, &recipient_id, &id_a, &child_ids[2]));
     try std.testing.expectEqual(2, try unreadCount(io, allocator, users_dir, &recipient_id));
-    try notify.markRead(io, allocator, users_dir, &recipient_id, &id_a, &child_ids[3]);
+    try std.testing.expectEqual(.marked, try notify.markRead(io, allocator, users_dir, &recipient_id, &id_a, &child_ids[3]));
     try std.testing.expectEqual(1, try unreadCount(io, allocator, users_dir, &recipient_id));
     for (try readRecent(io, allocator, &arena, users_dir, &recipient_id)) |item| {
         try std.testing.expectEqual(!std.mem.eql(u8, &item.notif.thread_id, &thread_a), item.unread);
     }
 
-    try notify.dismiss(io, allocator, users_dir, &recipient_id, &id_a);
+    try std.testing.expectEqual(.dismissed, try notify.dismiss(io, allocator, users_dir, &recipient_id, &id_a));
     {
         const recent = try readRecent(io, allocator, &arena, users_dir, &recipient_id);
         try std.testing.expectEqual(1, recent.len);

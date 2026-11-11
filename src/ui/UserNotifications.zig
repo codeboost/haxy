@@ -1,6 +1,5 @@
 const std = @import("std");
-const evt = @import("../event.zig");
-const notify = @import("../notify.zig");
+const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
 const inp = @import("./input.zig");
 const xit = @import("xit");
@@ -11,7 +10,7 @@ const Key = xitui.input.Key;
 const Grid = xitui.grid.Grid;
 const Focus = xitui.focus.Focus;
 
-pub const page_size = 20; // how many notifs one window shows
+pub const page_size = domain.ListNotifications.page_size; // how many notifs one window shows
 
 // a notif as the list shows it
 pub const Row = struct {
@@ -42,23 +41,23 @@ pub fn init(arena: *std.heap.ArenaAllocator, session: *ui.Session, tab: ui.Routa
     if (session.data.host_kind != .server) return result;
     const user_id = session.userId() orelse return result;
     result.ssh_keys = try ui.UserKeys.init(arena, session, &user_id, tab);
-    const io = session.io orelse return error.NoMoment;
-    const users_dir = session.users_dir orelse return error.NoMoment;
-    const gpa = arena.child_allocator;
+    if (session.io == null or session.users_dir == null) return error.NoMoment;
     const aa = arena.allocator();
 
-    var user_repo = (try evt.openUserRepo(io, gpa, users_dir, &user_id)) orelse return result;
-    defer user_repo.deinit(io, gpa);
-    const moment = (try notify.latestMoment(&user_repo)) orelse return result;
-    session.data.unread_notifs = try notify.unreadCount(moment);
+    var ctx = try session.ctx(arena);
+    const listed = (domain.ListNotifications{ .start = tab.start }).run(&ctx) catch |err| switch (err) {
+        // a removed account has no notifications to show
+        error.LoginRequired => return result,
+        else => |e| return e,
+    };
+    session.data.unread_notifs = listed.unread_count;
 
-    const items = try notify.readRecent(moment, arena, tab.start, page_size + 1);
-    if (items.len > page_size) result.next_start = tab.start + page_size;
-    const rows = try aa.alloc(Row, @min(items.len, page_size));
-    for (rows, items[0..rows.len]) |*row, item| {
-        const identity = try aa.print("{s}:{s}", .{ item.notif.owner_name, item.notif.repo_name });
-        const route = ui.RoutablePage.repoThreadCommentsRoute(item.notif.thread_kind, identity, &std.fmt.bytesToHex(item.notif.thread_id, .lower), 0) orelse return error.RouteTooLong;
-        row.* = .{ .title = item.notif.title, .url = try route.toUrl(arena), .identity = identity, .unread = item.unread };
+    if (listed.more) result.next_start = tab.start + page_size;
+    const rows = try aa.alloc(Row, listed.rows.len);
+    for (rows, listed.rows) |*row, notif| {
+        const identity = try aa.print("{s}:{s}", .{ notif.owner_name, notif.repo_name });
+        const route = ui.RoutablePage.repoThreadCommentsRoute(notif.thread_kind, identity, &notif.thread_id, 0) orelse return error.RouteTooLong;
+        row.* = .{ .title = notif.title, .url = try route.toUrl(arena), .identity = identity, .unread = notif.unread };
     }
     result.rows = rows;
     return result;

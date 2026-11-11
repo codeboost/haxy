@@ -12,6 +12,7 @@ const threads = @import("threads.zig");
 
 pub const PublishPatch = struct {
     pub const tool_name = "publish_patch";
+    pub const hosts = domain.server_only;
     pub const tool_description = "Publish one of the acting user's draft patches to the repository it targets. Server only.";
     pub const tool_schema_notes = .{
         .repo = domain.repo_note,
@@ -63,6 +64,7 @@ fn publish(
 
 pub const MergePatch = struct {
     pub const tool_name = "merge_patch";
+    pub const hosts = domain.server_only;
     pub const tool_description = "Merge an open patch into its target branch, as its commits or squashed into one. Server only.";
     pub const tool_schema_notes = .{
         .repo = domain.repo_note,
@@ -120,6 +122,7 @@ fn merge(
 
 pub const DeleteFork = struct {
     pub const tool_name = "delete_fork";
+    pub const hosts = domain.server_only;
     pub const tool_description = "Permanently delete one of the acting user's forks with its draft or published patch's fork data. Server only.";
     pub const tool_schema_notes = .{
         .identity = "The fork as \"forker:name\", the acting user's name and the forked repository's name.",
@@ -143,7 +146,8 @@ pub const DeleteFork = struct {
             .local => return error.UnavailableHere,
         };
         const user_id = ctx.user_id orelse return error.LoginRequired;
-        const user = ctx.user orelse unreachable;
+        // the password as it is now, which may have changed since the context was built
+        const user = try domain.currentUser(ctx);
         // the typed text is checked before the slow password check
         if (!std.mem.eql(u8, self.confirm, self.identity)) return error.WrongConfirm;
         if (!evt.User.verifyPassword(user.event.password_hash, self.password)) return error.WrongPassword;

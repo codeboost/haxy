@@ -15,9 +15,34 @@ pub const ListPatches = reads.ListPatches;
 pub const GetPatch = reads.GetPatch;
 const repos = @import("./domain/repos.zig");
 pub const RefreshLocal = repos.RefreshLocal;
+pub const CreateRepo = repos.CreateRepo;
+pub const UpdateRepoSettings = repos.UpdateRepoSettings;
+pub const DeleteRepo = repos.DeleteRepo;
+pub const Grant = repos.Grant;
+pub const Revoke = repos.Revoke;
+pub const Promote = repos.Promote;
+pub const Demote = repos.Demote;
+pub const ProtectBranch = repos.ProtectBranch;
+pub const UnprotectBranch = repos.UnprotectBranch;
+pub const SetDefaultBranch = repos.SetDefaultBranch;
+pub const Undo = repos.Undo;
+pub const Sync = repos.Sync;
+pub const branch_encoded_max_len = repos.branch_encoded_max_len;
+pub const isUnreservedRefByte = repos.isUnreservedRefByte;
+pub const eventsRemoteName = repos.eventsRemoteName;
 const notifications = @import("./domain/notifications.zig");
 pub const Subscribe = notifications.Subscribe;
 pub const Mute = notifications.Mute;
+pub const ListNotifications = notifications.ListNotifications;
+pub const MarkRead = notifications.MarkRead;
+pub const Dismiss = notifications.Dismiss;
+pub const setNotifyActions = notifications.setNotifyActions;
+const users = @import("./domain/users.zig");
+pub const RegisterUser = users.RegisterUser;
+pub const UpdateUserSettings = users.UpdateUserSettings;
+pub const AddKey = users.AddKey;
+pub const RemoveKey = users.RemoveKey;
+pub const DeleteUser = users.DeleteUser;
 const threads = @import("./domain/threads.zig");
 pub const ThreadKind = threads.ThreadKind;
 pub const repo_note = threads.repo_note;
@@ -37,6 +62,13 @@ const patches = @import("./domain/patches.zig");
 pub const PublishPatch = patches.PublishPatch;
 pub const MergePatch = patches.MergePatch;
 pub const DeleteFork = patches.DeleteFork;
+
+// the host kinds an operation runs on, which one that runs on only one
+// declares as `pub const hosts`, so an adapter can refuse it before preparing
+// anything. the operation's own UnavailableHere check stays the rule.
+pub const Hosts = []const evt.HostKind;
+pub const server_only: Hosts = &.{.server};
+pub const local_only: Hosts = &.{.local};
 
 // where a context's repos live
 pub const Host = union(evt.HostKind) {
@@ -221,6 +253,16 @@ pub fn activeUser(
 ) !?evt.User.Record {
     const user = (try evt.User.readById(evt.AdminDB, evt.admin_repo_opts.hash, moment, arena, &user_id)) orelse return null;
     return if (user.removed) null else user;
+}
+
+// the acting account as the admin repo holds it now, not as the context saw it
+// when it was built: a check of its password must see a change made since.
+// one removed in between is logged out.
+pub fn currentUser(ctx: *Ctx) !evt.User.Record {
+    const user_id = ctx.user_id orelse return error.LoginRequired;
+    const admin = ctx.admin orelse return error.LoginRequired;
+    const moment = try evt.currentMoment(evt.admin_repo_opts, admin);
+    return (try activeUser(moment, ctx.arena, user_id)) orelse error.LoginRequired;
 }
 
 // events created in local mode have no account behind them, so the commit
@@ -427,6 +469,11 @@ pub const Error = error{
     // protected branches
     BranchProtected,
     TooManyProtectedBranches,
+    // branches settings: a branch the repo lacks
+    UnknownBranch,
+    BranchNameTooLong,
+    // repo settings: a tab role no form offers
+    InvalidTabRole,
     // ssh keys
     InvalidKey,
     UnsupportedKey,
@@ -440,6 +487,18 @@ pub const Error = error{
     UnknownAssignee,
     NotAnEmail,
     AlreadyAssigned,
+    // repo members
+    UnknownUser,
+    AlreadyMember,
+    // a row action on a user who holds no grant
+    NotAMember,
+    // undo: an index naming no transaction the repo may undo, under the
+    // names xit gives them
+    InvalidHistoryIndex,
+    TransactionNotFound,
+    // sync: the local repo has no remote, or one with no url
+    RemoteNotFound,
+    UrlNotFound,
     // authorization and capability
     NotFound,
     LoginRequired,
@@ -450,7 +509,16 @@ pub const Error = error{
     MergedForkKept,
     PublishedForkKept,
     ForkRemovedDirKept,
+    // a repo or account deletion whose record is gone but whose directory stays
+    RepoRemovedDirKept,
+    UserRemovedDirKept,
+    // a sync that merged the remote's events locally, then failed before
+    // its push went through, or after it
+    SyncMergedNotPushed,
+    SyncPushedNotRefetched,
     MutedNotDismissed,
+    // a notification gained a newer child since the caller saw it
+    NotificationOutOfDate,
 };
 
 // what kind of failure an error is, for an adapter to word or map
@@ -483,6 +551,8 @@ pub fn classify(err: anyerror) Failure {
     const expected = asExpected(err) orelse return .{ .kind = .internal };
     const changed = switch (expected) {
         error.CommittedUnconsumed, error.MergedForkKept, error.PublishedForkKept, error.ForkRemovedDirKept, error.MutedNotDismissed => true,
+        error.RepoRemovedDirKept, error.UserRemovedDirKept => true,
+        error.SyncMergedNotPushed, error.SyncPushedNotRefetched => true,
         else => false,
     };
     return .{ .changed = changed, .kind = switch (expected) {
@@ -513,6 +583,23 @@ pub fn classify(err: anyerror) Failure {
         // the patch's code clashes with its target, or the patch moved under
         // the merge: both are the repo's state, which a person resolves
         error.MergeConflict, error.PatchOutOfDate => .conflict,
+        // activity the caller hasn't seen keeps it unread, as on the page
+        error.NotificationOutOfDate => .conflict,
+        // a member action naming nobody
+        error.UnknownUser => .invalid_input,
+        // granting membership to someone who holds it
+        error.AlreadyMember => .conflict,
+        error.NotAMember => .not_found,
+        // the input names no branch of the repo
+        error.UnknownBranch => .invalid_input,
+        // a branch name past the length a page can link to
+        error.BranchNameTooLong => .invalid_input,
+        error.InvalidTabRole => .invalid_input,
+        // the history has no such transaction, or none an owner may undo:
+        // like a missing thread, nothing the index names is there
+        error.InvalidHistoryIndex, error.TransactionNotFound => .not_found,
+        // the repo's config names no remote to sync with
+        error.RemoteNotFound, error.UrlNotFound => .not_found,
         // the patch is closed, merged already or has no revision yet: its
         // state, not the input, stands in the way
         error.PatchClosed, error.PatchAlreadyMerged, error.PatchNotPushed => .conflict,
@@ -532,6 +619,10 @@ pub fn classify(err: anyerror) Failure {
         error.ForkRemovedDirKept,
         error.MutedNotDismissed,
         => .internal,
+        // a repo or account deletion that tombstoned the record but kept its directory
+        error.RepoRemovedDirKept, error.UserRemovedDirKept => .internal,
+        // a sync that failed, but not in the remote's words, after merging
+        error.SyncMergedNotPushed, error.SyncPushedNotRefetched => .internal,
     } };
 }
 

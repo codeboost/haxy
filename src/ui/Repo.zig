@@ -2,6 +2,7 @@ const std = @import("std");
 const evt = @import("../event.zig");
 const pch = @import("../patch.zig");
 const notify = @import("../notify.zig");
+const domain = @import("../domain.zig");
 const ui = @import("../ui.zig");
 const xit = @import("xit");
 const rp = xit.repo;
@@ -449,54 +450,51 @@ fn readNotify(
     issues: *Issues,
     patches: *Patches,
 ) !void {
-    const user_id = session.userId() orelse return;
-    const io = session.io orelse return error.NoMoment;
-    const users_dir = session.users_dir orelse return error.NoMoment;
-    const gpa = arena.child_allocator;
+    if (session.userId() == null) return;
+    var ctx = try session.ctx(arena);
+    // a removed account is dropped from the context
+    const user_id = ctx.user_id orelse return;
+    const server = switch (ctx.host) {
+        .server => |server| server,
+        .local => return,
+    };
 
-    {
-        // the owner's plain data, which holds the tier index
-        var owner_repo = (try evt.openUserRepo(io, gpa, users_dir, owner_id)) orelse return error.NotFound;
-        defer owner_repo.deinit(io, gpa);
-        const owner_moment = try notify.latestMoment(&owner_repo);
-
-        try setNotifyActions(arena, &discussions.recent, owner_moment, repo_id, &user_id);
-        for ([_]*Issues.Window{ &issues.open, &issues.closed, &issues.conflicts }) |window| try setNotifyActions(arena, window, owner_moment, repo_id, &user_id);
-        for ([_]*Patches.Window{ &patches.open, &patches.closed, &patches.merged, &patches.conflicts }) |window| try setNotifyActions(arena, window, owner_moment, repo_id, &user_id);
-    }
+    // drafts live in their forks, so they have no button
+    try domain.setNotifyActions(&ctx, owner_id, repo_id, .{
+        &discussions.recent,
+        &issues.open,
+        &issues.closed,
+        &issues.conflicts,
+        &patches.open,
+        &patches.closed,
+        &patches.merged,
+        &patches.conflicts,
+    });
 
     if (viewed_thread.len == 0) return;
-    var user_repo = (try evt.openUserRepo(io, gpa, users_dir, &user_id)) orelse return;
-    defer user_repo.deinit(io, gpa);
-    const latest = (try notify.latestMoment(&user_repo)) orelse return;
     const notif_id = notify.idOf(repo_id, &try evt.parseEventId(viewed_thread));
-    const item = (try notify.readItem(latest, arena, &notif_id)) orelse return;
-    if (!item.unread) return;
+    const last_child_id = blk: {
+        var user_repo = (try evt.openUserRepo(ctx.io, ctx.gpa, server.users_dir, &user_id)) orelse return;
+        defer user_repo.deinit(ctx.io, ctx.gpa);
+        const latest = (try notify.latestMoment(&user_repo)) orelse return;
+        const item = (try notify.readItem(latest, arena, &notif_id)) orelse return;
+        if (!item.unread) return;
+        break :blk item.notif.last_child_id;
+    };
     // the page reads this moment or a newer one, so a child in it is shown
     const moment = try evt.currentMoment(repo_opts, repo);
     const kinds_cursor = try moment.getCursor(hash.hashInt(repo_opts.hash, evt.event_index_key)) orelse return error.CursorNotFound;
     const kinds = try evt.EventDB(repo_opts.hash).HashMap(.read_only).init(kinds_cursor);
     // a child the page can't show leaves it unread
-    if (try evt.readEventKind(repo_opts.hash, kinds, &item.notif.last_child_id) == null) return;
-    try notify.markRead(io, gpa, users_dir, &user_id, &notif_id, &item.notif.last_child_id);
-}
-
-// set the viewer's notify button on each of a window's threads
-fn setNotifyActions(
-    arena: *std.heap.ArenaAllocator,
-    window: anytype,
-    owner_moment: ?evt.UserDB.HashMap(.read_only),
-    repo_id: *const [evt.event_id_size]u8,
-    user_id: *const [evt.event_id_size]u8,
-) !void {
-    const items = try arena.allocator().dupe(std.meta.Elem(@TypeOf(window.items)), window.items);
-    for (items) |*entry| {
-        const notif_id = notify.idOf(repo_id, &try evt.parseEventId(entry.id));
-        // muting drops the user from every tier, so membership alone decides
-        const notified = if (owner_moment) |moment| try notify.isNotified(moment, &notif_id, user_id) else false;
-        entry.notify_action = if (notified) .mute else .subscribe;
-    }
-    window.items = items;
+    if (try evt.readEventKind(repo_opts.hash, kinds, &last_child_id) == null) return;
+    (domain.MarkRead{
+        .notification_id = &std.fmt.bytesToHex(notif_id, .lower),
+        .last_child_id = &std.fmt.bytesToHex(last_child_id, .lower),
+    }).run(&ctx) catch |err| switch (err) {
+        // a newer child arrived since the read above, which the page doesn't show
+        error.NotificationOutOfDate => {},
+        else => |e| return e,
+    };
 }
 
 // the viewer a tab's comment bar sees, which is none below the tab's role

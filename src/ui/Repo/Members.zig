@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const evt = @import("../../event.zig");
+const domain = @import("../../domain.zig");
 const ui = @import("../../ui.zig");
 const inp = @import("../input.zig");
 const Comment = @import("./Comment.zig");
@@ -85,51 +86,6 @@ fn confirmRoute(identity: []const u8, start: usize, name: []const u8, action: Ac
     route.repo_members.user = ui.RoutablePage.Array(evt.User.name_max_len).from(name) orelse return error.RouteTooLong;
     route.repo_members.confirm = action;
     return route;
-}
-
-// act on `name`'s role in the repo `identity` names as `actor`, one of its
-// owners. returns why an add wrote nothing, or null once written
-pub fn perform(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    admin_moment: evt.AdminDB.HashMap(.read_only),
-    users_dir: []const u8,
-    actor: ui.Actor,
-    identity: []const u8,
-    action: Action,
-    name: []const u8,
-) !?ui.Session.FormFeedback.MembersFailure {
-    const owner_id = actor.repo_user_id orelse return error.NotFound;
-    const parsed = ui.RoutablePage.RepoIdentity.parse(identity) orelse return error.NotFound;
-    const user_id = (try evt.User.readIdByName(evt.AdminDB, evt.admin_repo_opts.hash, admin_moment, name)) orelse
-        return if (action == .grant) .not_found else error.EventNotFound;
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const repo_id, const role = blk: {
-        var user_repo = (try evt.openUserRepo(io, allocator, users_dir, &owner_id)) orelse return error.NotFound;
-        defer user_repo.deinit(io, allocator);
-        const moment = (try evt.userMoment(&user_repo)) orelse return error.NotFound;
-        const found = (try evt.Repo.readByName(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, parsed.name)) orelse return error.NotFound;
-        break :blk .{ found.event_id, try evt.Grant.readRole(evt.UserDB, evt.user_repo_opts.hash, moment, &arena, &found.event_id, &user_id) };
-    };
-
-    switch (action) {
-        // a reader becomes a member; anyone else with a role, and the
-        // creator, who holds no grant, is already added
-        .grant => {
-            const already_added = if (role) |held| held != .read else std.mem.eql(u8, &user_id, &owner_id);
-            if (already_added) return .already_added;
-            try evt.grantRole(io, allocator, users_dir, &owner_id, &repo_id, &user_id, .write, actor.author);
-        },
-        .revoke => try evt.revokeRole(io, allocator, users_dir, &owner_id, &repo_id, &user_id, actor.author),
-        // only a listed grant changes role
-        .promote, .demote => {
-            if (role == null) return error.EventNotFound;
-            try evt.grantRole(io, allocator, users_dir, &owner_id, &repo_id, &user_id, if (action == .promote) .owner else .write, actor.author);
-        },
-    }
-    return null;
 }
 
 // where an action lands: the same window of the list, or the files tab once
@@ -343,22 +299,29 @@ pub const View = struct {
     }
 
     // the terminal performs the action itself; the web posts the form instead
-    fn act(self: *View, allocator: std.mem.Allocator, action: Action, name: []const u8) !void {
+    fn act(self: *View, _: std.mem.Allocator, action: Action, name: []const u8) !void {
         if (comptime wasm) return;
-        const io = self.session.io orelse return;
-        const users_dir = self.session.users_dir orelse return;
-        const admin_repo = self.session.admin_repo orelse return;
+        if (self.session.io == null or self.session.users_dir == null or self.session.admin_repo == null) return;
+        // the actor names where the page lands, and a session that may no
+        // longer manage members does nothing
         const actor = (try self.session.authorize(self.data.identity, .owner, null)) orelse return;
-        const moment = try evt.currentMoment(evt.admin_repo_opts, admin_repo);
-        const failure = perform(io, allocator, moment, users_dir, actor, self.data.identity, action, name) catch |err| switch (err) {
-            // a stale row; the refresh below shows the list as it is
-            error.EventNotFound => null,
-            else => return err,
+        var ctx = try self.session.ctx(self.session.page_arena);
+        const result = switch (action) {
+            .grant => (domain.Grant{ .repo = self.data.identity, .user = name }).run(&ctx),
+            .revoke => (domain.Revoke{ .repo = self.data.identity, .user = name }).run(&ctx),
+            .promote => (domain.Promote{ .repo = self.data.identity, .user = name }).run(&ctx),
+            .demote => (domain.Demote{ .repo = self.data.identity, .user = name }).run(&ctx),
         };
-        if (failure) |value| {
-            self.session.data.form_feedback = .{ .repo_members = .{ .failure = value, .name = try self.session.arena.allocator().dupe(u8, name) } };
-            return;
-        }
+        result catch |err| {
+            if (ui.Session.FormFeedback.MembersFailure.fromError(err)) |failure| {
+                self.session.data.form_feedback = .{ .repo_members = .{ .failure = failure, .name = try self.session.arena.allocator().dupe(u8, name) } };
+                return;
+            }
+            // access lost since the check above leaves the form, like failing it
+            if (ui.lostAccess(err)) return;
+            // a stale row; the refresh below shows the list as it is
+            if (err != error.NotAMember) return err;
+        };
         try self.session.navigate(landingRoute(self.data.identity, self.data.start, actor, action, name) orelse return error.RouteTooLong);
     }
 

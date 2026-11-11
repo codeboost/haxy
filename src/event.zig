@@ -2397,9 +2397,17 @@ pub fn deleteRepo(
         defer user_repo.deinit(io, allocator);
         try remove(.{ .server = .{ .users_dir = users_dir } }, .user, .xit, user_repo_opts, io, allocator, &user_repo, repo_id, .repo, author);
     }
-    const path = try repoPath(allocator, users_dir, owner_id, repo_id);
+    // the repo is tombstoned now, so a failure from here on must not read as
+    // nothing removed
+    const path = repoPath(allocator, users_dir, owner_id, repo_id) catch |err| return dirKept("repo", repo_id, err, error.RepoRemovedDirKept);
     defer allocator.free(path);
-    try std.Io.Dir.cwd().deleteTree(io, path);
+    std.Io.Dir.cwd().deleteTree(io, path) catch |err| return dirKept("repo", repo_id, err, error.RepoRemovedDirKept);
+}
+
+// a removal whose record is tombstoned but whose directory stays
+fn dirKept(comptime what: []const u8, id: *const [event_id_size]u8, err: anyerror, comptime kept: anyerror) @TypeOf(kept) {
+    std.log.warn(what ++ " {x} removed but its directory kept: {t}", .{ id, err });
+    return kept;
 }
 
 // grant `user_id` `role` on the repo `repo_id` in its owner's user repo,
@@ -2596,9 +2604,11 @@ pub fn deleteUser(
     author: CommitAuthor,
 ) !void {
     try remove(.{ .server = .{ .users_dir = users_dir } }, .admin, .xit, admin_repo_opts, io, allocator, admin_repo, user_id, .user, author);
-    const path = try std.Io.Dir.path.join(allocator, &.{ users_dir, &std.fmt.bytesToHex(user_id.*, .lower) });
+    // the account is tombstoned now, so a failure from here on must not read
+    // as nothing removed
+    const path = std.Io.Dir.path.join(allocator, &.{ users_dir, &std.fmt.bytesToHex(user_id.*, .lower) }) catch |err| return dirKept("user", user_id, err, error.UserRemovedDirKept);
     defer allocator.free(path);
-    try std.Io.Dir.cwd().deleteTree(io, path);
+    std.Io.Dir.cwd().deleteTree(io, path) catch |err| return dirKept("user", user_id, err, error.UserRemovedDirKept);
 }
 
 // add an authorized_keys line to the user's ssh keys

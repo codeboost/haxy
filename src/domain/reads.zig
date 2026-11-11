@@ -43,10 +43,11 @@ pub const ListIssues = struct {
                 .closed => .closed,
             },
         }, loadIssues);
-        const window = issues.window(self.status).*;
+        var window = issues.window(self.status).*;
         // the loader roots the named issue's own status, so a `from` in
         // another status leaves this window at its start
         if (self.from.len != 0 and (window.items.len == 0 or !std.mem.eql(u8, window.items[0].id, self.from))) return error.NotFound;
+        try setNotifyActions(ctx, resolved, .{&window});
         return window;
     }
 };
@@ -70,7 +71,7 @@ pub const GetIssue = struct {
     // the window rooted at the issue, with the issue selected
     pub fn run(self: GetIssue, ctx: *domain.Ctx) !Issues.IssueWithId {
         const resolved = try resolveTab(ctx, self.repo, .issue);
-        const issues = try domain.withRepo(ctx, resolved, LoadArgs{
+        var issues = try domain.withRepo(ctx, resolved, LoadArgs{
             .resolved = resolved,
             .identity = self.repo,
             .search = "",
@@ -78,6 +79,8 @@ pub const GetIssue = struct {
             .comments_start = self.comments_from,
             .view = .open,
         }, loadIssues);
+        // the windows the selected issue is looked up in
+        try setNotifyActions(ctx, resolved, .{ &issues.open, &issues.closed });
         return (issues.selectedThread() orelse return error.NotFound).*;
     }
 };
@@ -101,12 +104,13 @@ pub const GetDiscussion = struct {
     // the window rooted at the discussion, with the discussion selected
     pub fn run(self: GetDiscussion, ctx: *domain.Ctx) !Discussions.DiscussionWithId {
         const resolved = try resolveTab(ctx, self.repo, .discuss);
-        const discussions = try domain.withRepo(ctx, resolved, DiscussionArgs{
+        var discussions = try domain.withRepo(ctx, resolved, DiscussionArgs{
             .resolved = resolved,
             .identity = self.repo,
             .selected_id = self.id,
             .comments_start = self.comments_from,
         }, loadDiscussions);
+        try setNotifyActions(ctx, resolved, .{&discussions.recent});
         return (discussions.selectedThread() orelse return error.NotFound).*;
     }
 };
@@ -143,7 +147,7 @@ pub const ListPatches = struct {
                 inline else => |view| @field(ui.RoutablePage.PatchesView, @tagName(view)),
             },
         }, loadPatches);
-        const window = switch (self.view) {
+        var window = switch (self.view) {
             .open => patches.open,
             .closed => patches.closed,
             .merged => patches.merged,
@@ -153,6 +157,8 @@ pub const ListPatches = struct {
         // the loader roots the named patch's own window, so a `from` in
         // another view leaves this window at its start
         if (self.from.len != 0 and (window.items.len == 0 or !std.mem.eql(u8, window.items[0].id, self.from))) return error.NotFound;
+        // a draft lives in its fork, so it has no notify button, as on the page
+        if (self.view != .drafts) try setNotifyActions(ctx, resolved, .{&window});
         return window;
     }
 };
@@ -176,7 +182,7 @@ pub const GetPatch = struct {
     // the window rooted at the patch, with the patch selected
     pub fn run(self: GetPatch, ctx: *domain.Ctx) !Patches.PatchWithId {
         const resolved = try resolveTab(ctx, self.repo, .patch);
-        const patches = try domain.withRepo(ctx, resolved, PatchArgs{
+        var patches = try domain.withRepo(ctx, resolved, PatchArgs{
             .resolved = resolved,
             .identity = self.repo,
             .search = "",
@@ -184,6 +190,8 @@ pub const GetPatch = struct {
             .comments_start = self.comments_from,
             .view = .open,
         }, loadPatches);
+        // a draft lives in its fork, so it has no notify button, as on the page
+        try setNotifyActions(ctx, resolved, .{ &patches.open, &patches.closed, &patches.merged });
         return (patches.selectedThread() orelse return error.NotFound).*;
     }
 };
@@ -241,6 +249,15 @@ fn resolveTab(ctx: *domain.Ctx, identity: []const u8, kind: evt.EventKind) !doma
     const resolved = (try domain.resolveRepo(ctx, identity)) orelse return error.NotFound;
     if (!resolved.hasTab(kind)) return error.NotFound;
     return resolved;
+}
+
+// the acting user's notify buttons on the threads of the resolved repo's
+// `windows`, as the page sets them. local mode has none.
+fn setNotifyActions(ctx: *domain.Ctx, resolved: domain.Resolved, windows: anytype) !void {
+    if (ctx.host != .server) return;
+    const owner_id = try evt.parseEventId(&resolved.record.event.user_id);
+    const repo_id = try evt.parseEventId(std.Io.Dir.path.basename(resolved.source.path));
+    try domain.setNotifyActions(ctx, &owner_id, &repo_id, windows);
 }
 
 // `text` with its `%` escaped, so the loaders' percent-decoding gives it back
